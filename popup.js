@@ -1263,7 +1263,28 @@ btnAnalyze.addEventListener('click', async () => {
             const price = priceInput.getAttribute('value') || priceInput.value || '';
             const commentsEl = form ? form.querySelector('textarea[name="comments"], textarea[name="comment"], input[name="comments"]') : doc.querySelector('textarea[name="comments"], textarea[name="comment"]');
             const comments = commentsEl ? (commentsEl.value || commentsEl.textContent || '') : '';
-            return { price, comments };
+            // v2.2.5: capture variant flags from form so directUpdate can preserve them
+            // CM stock-listing form has checkboxes: isReverseHolo, isFoil, isSigned, isAltered, isFirstEd, isPlayset
+            // Some are absent from form depending on game/expansion — undefined/null means "do not pass"
+            const readChk = (name) => {
+              const el = (form || doc).querySelector(`input[name="${name}"]`);
+              if (!el) return null;
+              if (el.type === 'checkbox' || el.type === 'radio') return el.checked;
+              const v = el.value || '';
+              return v === '1' || v.toLowerCase() === 'true' || v.toLowerCase() === 'y';
+            };
+            const flags = {
+              isReverseHolo: readChk('isReverseHolo'),
+              isFoil: readChk('isFoil'),
+              isSigned: readChk('isSigned'),
+              isAltered: readChk('isAltered'),
+              isFirstEd: readChk('isFirstEd'),
+              isPlayset: readChk('isPlayset'),
+            };
+            // Capture editAmount too (CM-side current amount, may differ from CSV if user partially sold)
+            const amountEl = (form || doc).querySelector('input[name="editAmount"], input[name="amount"]');
+            const editAmount = amountEl ? (amountEl.value || amountEl.getAttribute('value') || '') : '';
+            return { price, comments, flags, editAmount };
           } catch (e) {
             if (e?.message === 'Session expired') throw e; // Session-Errors propagieren
             if (attempt < 1) { attempt++; await sleep(2500); continue; }
@@ -1349,7 +1370,10 @@ btnAnalyze.addEventListener('click', async () => {
           }
         }));
         for (const r of results) {
-          out[r.articleId] = r.state ? { price: r.state.price, comments: r.state.comments } : { price: null, comments: null };
+          // v2.2.5: pipe variant flags + editAmount through so directUpdate can preserve them
+          out[r.articleId] = r.state
+            ? { price: r.state.price, comments: r.state.comments, flags: r.state.flags || null, editAmount: r.state.editAmount || '' }
+            : { price: null, comments: null, flags: null, editAmount: '' };
           if (!r.state) consecutiveFails++;
           else consecutiveFails = 0;
           if (r.fatal === 'Session expired') {
@@ -1377,7 +1401,8 @@ btnAnalyze.addEventListener('click', async () => {
         if (newId && newId !== it.articleId) {
           const state = await fetchArticleState(newId);
           if (state) {
-            out[it.articleId] = { price: state.price, comments: state.comments, rebindTo: newId };
+            // v2.2.5: also pipe flags + editAmount in rebind path
+            out[it.articleId] = { price: state.price, comments: state.comments, flags: state.flags || null, editAmount: state.editAmount || '', rebindTo: newId };
           }
         }
         window.__cmUpdateProgress = { phase: 'rebind', done: i + 1, total: notFound.length };
@@ -1452,6 +1477,11 @@ btnAnalyze.addEventListener('click', async () => {
     }
     u.oldPrice = parseFormPrice(oldStr);
     u.oldComments = r.comments || '';
+    // v2.2.5: pipe variant flags + editAmount from fetched state to update-object
+    // Used by directUpdate to preserve isFoil/isSigned/isAltered/isFirstEd/isPlayset on bulk-update.
+    // isReverseHolo: CSV value takes priority (user might have toggled in CSV); fallback to fetch.
+    u._fetchedFlags = r.flags || null;
+    u._fetchedAmount = r.editAmount || '';
 
     // v2.1: Delete-Flag — wenn delete=Y, alles andere ignorieren, status=delete
     if (u.wantsDelete) {
@@ -1846,15 +1876,17 @@ async function runBulkUpdate(args) {
     fd.append('price', u.newPrice.toFixed(2));
     // editAmount: aus CSV oder fallback 1
     fd.append('editAmount', String(u.amount || 1));
-    // v2.2.4: isReverseHolo MUST be passed — otherwise CM strips reverse-holo flag (or rejects update)
-    // Reported by LUPZN: reverse-holo cards were silently skipped/dropped during bulk-update
+    // v2.2.4/2.2.5: variant flags MUST be passed — otherwise CM strips them (or rejects update)
+    // Reported by LUPZN: reverse-holo cards were silently skipped/dropped during bulk-update.
+    // Strategy: CSV value (u.reverseHolo) priority for isReverseHolo (user can toggle in CSV).
+    // Other flags (foil/signed/altered/firstEd/playset) pulled from CM-fetched state (CSV doesn't have them).
+    const flags = u._fetchedFlags || {};
     fd.append('isReverseHolo', u.reverseHolo ? '1' : '0');
-    // v2.2.4: variant flags for completeness — pass-through if available on update-object
-    if (u.isFoil != null) fd.append('isFoil', u.isFoil ? '1' : '0');
-    if (u.isSigned != null) fd.append('isSigned', u.isSigned ? '1' : '0');
-    if (u.isAltered != null) fd.append('isAltered', u.isAltered ? '1' : '0');
-    if (u.isFirstEd != null) fd.append('isFirstEd', u.isFirstEd ? '1' : '0');
-    if (u.isPlayset != null) fd.append('isPlayset', u.isPlayset ? '1' : '0');
+    if (flags.isFoil != null) fd.append('isFoil', flags.isFoil ? '1' : '0');
+    if (flags.isSigned != null) fd.append('isSigned', flags.isSigned ? '1' : '0');
+    if (flags.isAltered != null) fd.append('isAltered', flags.isAltered ? '1' : '0');
+    if (flags.isFirstEd != null) fd.append('isFirstEd', flags.isFirstEd ? '1' : '0');
+    if (flags.isPlayset != null) fd.append('isPlayset', flags.isPlayset ? '1' : '0');
     const res = await fetch(`/${lang}/${game}/AjaxAction/Article_EditSingleArticle`, {
       method: 'POST',
       credentials: 'include',
@@ -1976,8 +2008,13 @@ async function runBulkUpdate(args) {
 
   const parseCurrentPrice = (html) => {
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    const form = doc.querySelector('form[id^="Edit"]');
-    const priceInput = form?.querySelector('input[name="price"]');
+    // v2.2.5: robust form-detection fallback for ext-articles + reverse-holo (consistent with fetchArticleState)
+    let form = doc.querySelector('form[id^="Edit"]');
+    let priceInput = form?.querySelector('input[name="price"]');
+    if (!priceInput) {
+      const anyPriceInput = doc.querySelector('input[name="price"]');
+      if (anyPriceInput) priceInput = anyPriceInput;
+    }
     if (!priceInput) return null;
     const v = priceInput.getAttribute('value') || priceInput.value || '';
     return parseFloat(v.replace(',', '.')) || null;
@@ -2009,8 +2046,17 @@ async function runBulkUpdate(args) {
     document.body.appendChild(trigger);
 
     const formAppeared = new Promise(resolve => {
+      // v2.2.5: helper finds form via primary selector OR via price-input fallback (ext-articles)
+      const findForm = () => {
+        let f = modalContainer.querySelector('form[id^="Edit"]');
+        if (!f) {
+          const anyPriceInput = modalContainer.querySelector('input[name="price"]');
+          if (anyPriceInput) f = anyPriceInput.closest('form');
+        }
+        return f;
+      };
       const obs = new MutationObserver(() => {
-        const f = modalContainer.querySelector('form[id^="Edit"]');
+        const f = findForm();
         if (f && f.querySelector('input[name="price"]')) {
           obs.disconnect();
           resolve(f);
@@ -2018,7 +2064,7 @@ async function runBulkUpdate(args) {
       });
       obs.observe(modalContainer, { childList: true, subtree: true });
       modalContainer.addEventListener('shown.bs.modal', () => {
-        const f = modalContainer.querySelector('form[id^="Edit"]');
+        const f = findForm();
         if (f) { obs.disconnect(); resolve(f); }
       }, { once: true });
     });

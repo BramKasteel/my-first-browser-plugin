@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ---
 
+## [2.2.5] — 2026-05-06
+
+Codebase audit + variant-flag preservation hardening.
+
+### Fixed
+
+- **`directUpdate` now preserves all variant flags** (`isFoil`, `isSigned`, `isAltered`, `isFirstEd`, `isPlayset`) from the article's current Cardmarket state, not just `isReverseHolo` from CSV. Previously these flags were never sent → CM may have stripped them silently for foil/signed/altered cards. Now `fetchArticleState` reads each flag's checkbox/input from the modal-form HTML and pipes the values through to `directUpdate` so the listing keeps its variant attributes after bulk price/comment update.
+- **Robust form-detection** propagated to all 4 modal-parsing call sites (was already in 2 of them: `fetchArticleState`, `fastUpdate`; now also in `parseCurrentPrice` and `openModalAndGetFormCore`'s mutation observer + shown-handler). Consistent `form[id^="Edit"] || closest("form") of input[name="price"]` fallback everywhere.
+
+### Internal
+
+- i18n key coverage audit: all 82 keys referenced in popup.js + popup.html exist in both DE and EN messages.json (no missing translations).
+- 20 unused i18n keys retained in messages.json for future log-message localization (csv_*, update_*, wants_*, cf_*).
+
+---
+
 ## [2.2.4] — 2026-05-06
 
 Reverse-Holo bulk-update fix + Fast-Mode form-detection robustness.
