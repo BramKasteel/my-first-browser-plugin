@@ -6,6 +6,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ---
 
+## [2.2.3] — 2026-05-06
+
+Likely fix for the extension-set bulk-update issue.
+
+### Fixed
+
+- **Robust modal-form detection.** Previous selector `form[id^="Edit"]` missed extension-articles whose form id pattern differs. Now falls back to "any form containing an `input[name="price"]`" — should catch regular articles, extension articles, language-variants, and any future form-id changes from Cardmarket.
+- Comments-textarea lookup also relaxed to fall back to document-level if no enclosing form is found.
+
+### Added — Diagnostics
+
+- When the modal-form parser fails for any article, captures up to 3 sample diagnostics: article ID, all form IDs found, all input/textarea names found, plus first 800 chars of HTML. Logged to popup + browser console for paste-back debugging.
+
+### v2.2.2 (rolled into 2.2.3)
+
+Diagnostic release for the extension-set bulk-update issue surfaced by LUPZN. Verified via DevTools trace that the modal URL is identical for ext-articles (`/Modal/Article_EditArticleModal?idArticle=X`) and returns 200 OK — root cause is form-detection, not endpoint mismatch.
+
+---
+
 ## [2.2.2] — 2026-05-06
 
 Diagnostic release for extension-set bulk-update issue.

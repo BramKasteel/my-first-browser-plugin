@@ -1161,7 +1161,7 @@ btnAnalyze.addEventListener('click', async () => {
   if (fetchCount > 500 && !isSlowMode) {
     ulog(`⚠ ${fetchCount} Items ohne Slow Mode — Cloudflare könnte aggressiv blocken. Bei vielen "not-found" → Slow Mode aktivieren + retry.`, 'err');
   }
-  const [{ result: fetchResult }] = await chrome.scripting.executeScript({
+  let [{ result: fetchResult }] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     world: 'MAIN',
     args: [itemsToFetch.map(u => ({
@@ -1226,18 +1226,42 @@ btnAnalyze.addEventListener('click', async () => {
               continue;
             }
             const doc = new DOMParser().parseFromString(html, 'text/html');
-            const form = doc.querySelector('form[id^="Edit"]');
-            const priceInput = form?.querySelector('input[name="price"]');
+            // v2.2.3: robust form-detection — extension-articles use different form id patterns
+            // Primary: form id starts with "Edit" (regular articles, e.g. EditSingleArticle...)
+            // Fallback: any form containing price input (catches extension-articles, language-variants, etc)
+            let form = doc.querySelector('form[id^="Edit"]');
+            let priceInput = form?.querySelector('input[name="price"]');
             if (!priceInput) {
-              // Form fehlt im 200-Response — könnte Login-Redirect oder leerer Modal sein
+              // Fallback to any form with price input
+              const anyPriceInput = doc.querySelector('input[name="price"]');
+              if (anyPriceInput) {
+                form = anyPriceInput.closest('form');
+                priceInput = anyPriceInput;
+              }
+            }
+            if (!priceInput) {
+              // Form fehlt im 200-Response — Login-Redirect oder unbekanntes Modal-Format
               if (/login|signin|anmelden/i.test(html.slice(0, 2000))) {
                 window.__cmUpdateProgress = Object.assign({}, window.__cmUpdateProgress || {}, { sessionExpired: true, lastErr: 'Login-Redirect erkannt — Session abgelaufen' });
                 throw new Error('Session expired');
               }
+              // v2.2.3: Diagnostic — log first article-id with no price-input + html sample for ext-set debugging
+              if (!window.__cmModalNullSamples) window.__cmModalNullSamples = [];
+              if (window.__cmModalNullSamples.length < 3) {
+                const sample = {
+                  articleId: id,
+                  hasForm: !!doc.querySelector('form'),
+                  formIds: [...doc.querySelectorAll('form')].map(f => f.id || '(no-id)').slice(0, 5),
+                  inputNames: [...doc.querySelectorAll('input, textarea')].map(el => el.name).filter(Boolean).slice(0, 20),
+                  htmlSnippet: html.slice(0, 800),
+                };
+                window.__cmModalNullSamples.push(sample);
+                console.warn('[CMSE] modal-form not found for articleId=' + id, sample);
+              }
               return null;
             }
             const price = priceInput.getAttribute('value') || priceInput.value || '';
-            const commentsEl = form.querySelector('textarea[name="comments"], textarea[name="comment"], input[name="comments"]');
+            const commentsEl = form ? form.querySelector('textarea[name="comments"], textarea[name="comment"], input[name="comments"]') : doc.querySelector('textarea[name="comments"], textarea[name="comment"]');
             const comments = commentsEl ? (commentsEl.value || commentsEl.textContent || '') : '';
             return { price, comments };
           } catch (e) {
@@ -1359,9 +1383,17 @@ btnAnalyze.addEventListener('click', async () => {
         window.__cmUpdateProgress = { phase: 'rebind', done: i + 1, total: notFound.length };
       }
 
-      return out;
+      // v2.2.3: surface modal-null samples for diagnostic
+      return { __out: out, __modalNullSamples: window.__cmModalNullSamples || [] };
     },
   });
+
+  // v2.2.3: unwrap diagnostic envelope (backwards-compat: if older format, use directly)
+  let modalNullSamples = [];
+  if (fetchResult && fetchResult.__out) {
+    modalNullSamples = fetchResult.__modalNullSamples || [];
+    fetchResult = fetchResult.__out;
+  }
 
   // v2.1: defensive check — wenn injected fetch silent failed, fetchResult ist undefined
   if (!fetchResult || typeof fetchResult !== 'object') {
@@ -1487,6 +1519,15 @@ btnAnalyze.addEventListener('click', async () => {
       const warn = `⚠ ${notFoundFinal.length} von ${updates.length} ArticleIDs (${pctNotFound.toFixed(0)}%) auch nach Rebind-Versuch nicht gefunden. Wahrscheinlich: CSV-Export ist veraltet, Listings wurden verkauft/gelöscht, oder idProduct-Spalte fehlt. Empfehlung: frisch exportieren.`;
       ulog(warn, 'err');
     }
+  }
+
+  // v2.2.3: surface modal-null diagnostic samples (collected during fetch when form-detection failed)
+  if (modalNullSamples && modalNullSamples.length > 0) {
+    ulog(`🔬 v2.2.3 Diagnostic: ${modalNullSamples.length} Modal-Form Detection-Failure(s) (Sample HTML log to console):`, 'err');
+    for (const s of modalNullSamples) {
+      ulog(`   articleId=${s.articleId} hasForm=${s.hasForm} formIds=[${(s.formIds || []).join(', ')}] inputs=[${(s.inputNames || []).slice(0, 8).join(', ')}]`, 'err');
+    }
+    ulog(`   → Vollständige HTML-Samples in Browser-Console (F12 auf CM-Tab) — bitte einen Sample posten für v2.2.4-fix.`, 'err');
   }
 
   // v2.2.2: Per-Expansion status-breakdown — surfaces patterns like "Ergänzungen alle not-found"
