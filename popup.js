@@ -1846,6 +1846,15 @@ async function runBulkUpdate(args) {
     fd.append('price', u.newPrice.toFixed(2));
     // editAmount: aus CSV oder fallback 1
     fd.append('editAmount', String(u.amount || 1));
+    // v2.2.4: isReverseHolo MUST be passed — otherwise CM strips reverse-holo flag (or rejects update)
+    // Reported by LUPZN: reverse-holo cards were silently skipped/dropped during bulk-update
+    fd.append('isReverseHolo', u.reverseHolo ? '1' : '0');
+    // v2.2.4: variant flags for completeness — pass-through if available on update-object
+    if (u.isFoil != null) fd.append('isFoil', u.isFoil ? '1' : '0');
+    if (u.isSigned != null) fd.append('isSigned', u.isSigned ? '1' : '0');
+    if (u.isAltered != null) fd.append('isAltered', u.isAltered ? '1' : '0');
+    if (u.isFirstEd != null) fd.append('isFirstEd', u.isFirstEd ? '1' : '0');
+    if (u.isPlayset != null) fd.append('isPlayset', u.isPlayset ? '1' : '0');
     const res = await fetch(`/${lang}/${game}/AjaxAction/Article_EditSingleArticle`, {
       method: 'POST',
       credentials: 'include',
@@ -1865,7 +1874,12 @@ async function runBulkUpdate(args) {
     if (!res.ok) throw new Error(`fast: modal HTTP ${res.status}`);
     const html = await res.text();
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    const form = doc.querySelector('form[id^="Edit"]');
+    // v2.2.4: robust form-detection (same fallback as fetchArticleState in v2.2.3)
+    let form = doc.querySelector('form[id^="Edit"]');
+    if (!form) {
+      const anyPriceInput = doc.querySelector('input[name="price"]');
+      if (anyPriceInput) form = anyPriceInput.closest('form');
+    }
     if (!form) throw new Error('fast: no edit form');
     const action = form.getAttribute('action') || '';
     if (!action) throw new Error('fast: form has no action');

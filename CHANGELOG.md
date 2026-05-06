@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ---
 
+## [2.2.4] — 2026-05-06
+
+Reverse-Holo bulk-update fix + Fast-Mode form-detection robustness.
+
+### Fixed
+
+- **Reverse-Holo cards silently skipped/dropped during bulk-update.** Reported by LUPZN. Root cause: `directUpdate()` (the verified Direct AJAX endpoint) never passed the `isReverseHolo` form field to `/AjaxAction/Article_EditSingleArticle`, so Cardmarket either rejected the update or stripped the reverse-holo flag from the listing. Fixed: `directUpdate` now passes `isReverseHolo` (`1`/`0` derived from CSV's `ReverseHolo` Y/N column) on every update, plus pass-through fields for `isFoil` / `isSigned` / `isAltered` / `isFirstEd` / `isPlayset` if available on the update object.
+- **Fast Mode form-detection** updated to match v2.2.3's robust selector. Previous `form[id^="Edit"]` query missed extension-articles and any other modal whose form-id pattern differs. Now falls back to "any form containing `input[name="price"]`".
+
+---
+
 ## [2.2.3] — 2026-05-06
 
 Likely fix for the extension-set bulk-update issue.
