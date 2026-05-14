@@ -31,6 +31,14 @@
       color: var(--text);
     }
 
+    body.detached {
+      width: auto;
+      min-width: 420px;
+      min-height: 100vh;
+      resize: both;
+      overflow: auto;
+    }
+
     main {
       padding: 18px;
       display: grid;
@@ -175,9 +183,13 @@
     }
 
     button:disabled {
-      cursor: wait;
+      cursor: not-allowed;
       filter: saturate(0.75);
       opacity: 0.8;
+    }
+
+    button.is-busy:disabled {
+      cursor: wait;
     }
 
     input[type="number"],
@@ -521,29 +533,34 @@
         </div>
       </section>
 
-      <section class="panel config-grid">
-        <div class="panel-header">
-          <h2 class="panel-title">Rate Probe</h2>
-          <button id="probeRateLimits" class="secondary mini-button">Run Safe Rate Probe</button>
+      <details class="collapsible is-ready">
+        <summary>Advanced rate probe</summary>
+        <div class="collapsible-body">
+          <section class="panel config-grid">
+            <div class="panel-header">
+              <h2 class="panel-title">Rate Probe</h2>
+              <button id="probeRateLimits" class="secondary mini-button">Run Safe Rate Probe</button>
+            </div>
+            <div class="config-row">
+              <label class="config-label" for="sellerDelayMs">
+                <span>Seller request delay (ms)</span>
+                <input id="sellerDelayMs" type="number" min="250" step="50" value="2000">
+              </label>
+              <label class="config-label" for="probeRequestCount">
+                <span>Probe runs per delay stage</span>
+                <input id="probeRequestCount" type="number" min="1" max="8" step="1" value="3">
+              </label>
+            </div>
+            <div class="config-row">
+              <label class="config-label" for="probePageBudget">
+                <span>Probe page budget per run</span>
+                <input id="probePageBudget" type="number" min="1" max="3" step="1" value="2">
+              </label>
+            </div>
+            <p class="subtle">Probe mode tests one item serially at staged delays, applies small random jitter, stops on first warning, and recommends conservative seller delay.</p>
+          </section>
         </div>
-        <div class="config-row">
-          <label class="config-label" for="sellerDelayMs">
-            <span>Seller request delay (ms)</span>
-            <input id="sellerDelayMs" type="number" min="250" step="50" value="2000">
-          </label>
-          <label class="config-label" for="probeRequestCount">
-            <span>Probe runs per delay stage</span>
-            <input id="probeRequestCount" type="number" min="1" max="8" step="1" value="3">
-          </label>
-        </div>
-        <div class="config-row">
-          <label class="config-label" for="probePageBudget">
-            <span>Probe page budget per run</span>
-            <input id="probePageBudget" type="number" min="1" max="3" step="1" value="2">
-          </label>
-        </div>
-        <p class="subtle">Probe mode tests one item serially at staged delays, applies small random jitter, stops on the first warning, and recommends a conservative seller delay.</p>
-      </section>
+      </details>
 
       <section class="panel">
         <div class="panel-header">

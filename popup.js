@@ -23,6 +23,7 @@ const resultPanels = [...document.querySelectorAll('[data-result-panel]')];
 const urlParams = new URLSearchParams(window.location.search);
 const isDetached = urlParams.get('detached') === '1';
 const autoStartMode = urlParams.get('autoStart') || '';
+const keepPopupMode = urlParams.get('popup') === '1';
 const forcedTabId = urlParams.get('tabId') ? parseInt(urlParams.get('tabId'), 10) : null;
 
 let latestExtractPayload = null;
@@ -84,11 +85,24 @@ function appendStatus(message, tone = '') {
   }
 }
 
+function hasLoadedWantItems() {
+  return latestExtractedItems.length > 0;
+}
+
+function syncSellerActionButtons(isBusy = false) {
+  const hasItems = hasLoadedWantItems();
+  scrapeFirstItemButton.disabled = isBusy || !hasItems;
+  scrapeAllItemsButton.disabled = isBusy || !hasItems;
+  scrapeFirstItemButton.classList.toggle('is-busy', isBusy);
+  scrapeAllItemsButton.classList.toggle('is-busy', isBusy);
+  scrapeAllItemsButton.classList.toggle('secondary', !hasItems);
+}
+
 function setBusy(isBusy) {
   extractItemsButton.disabled = isBusy;
-  scrapeFirstItemButton.disabled = isBusy;
-  scrapeAllItemsButton.disabled = isBusy;
+  extractItemsButton.classList.toggle('is-busy', isBusy);
   probeRateLimitsButton.disabled = isBusy;
+  probeRateLimitsButton.classList.toggle('is-busy', isBusy);
   sellerDelayInput.disabled = isBusy;
   probeRequestCountInput.disabled = isBusy;
   probePageBudgetInput.disabled = isBusy;
@@ -96,6 +110,8 @@ function setBusy(isBusy) {
     input.disabled = isBusy;
   });
   copyPayloadButton.disabled = isBusy;
+  copyPayloadButton.classList.toggle('is-busy', isBusy);
+  syncSellerActionButtons(isBusy);
 }
 
 function setRunState({ active, message, tone = '' }) {
@@ -739,10 +755,13 @@ async function getTargetTab() {
 }
 
 async function openDetachedPopup({ autoStart = '' } = {}) {
-  const tab = await ensureCardmarketTab();
   const params = new URLSearchParams({ detached: '1' });
   if (autoStart) params.set('autoStart', autoStart);
-  if (tab.id) params.set('tabId', String(tab.id));
+
+  const tab = await getTargetTab();
+  if (tab?.id && /https:\/\/www\.cardmarket\.com\//.test(tab.url || '')) {
+    params.set('tabId', String(tab.id));
+  }
 
   await saveSellerSettings();
   await chrome.windows.create({
@@ -751,6 +770,18 @@ async function openDetachedPopup({ autoStart = '' } = {}) {
     width: 460,
     height: 920,
   });
+}
+
+async function autoDetachDefaultPopup() {
+  if (isDetached || keepPopupMode) return;
+
+  try {
+    appendStatus('Opening dedicated plugin window by default so long scrapes keep running.', 'good');
+    await openDetachedPopup();
+    window.close();
+  } catch (error) {
+    appendStatus(`Could not open dedicated plugin window: ${error.message}`, 'bad');
+  }
 }
 
 async function executeInTab(tabId, func, args = []) {
@@ -800,6 +831,7 @@ async function handleExtractItems() {
       { label: 'Desktop rows seen', value: String(result.debug.desktopRows || 0) },
     ]);
     latestExtractedItems = result.items;
+    syncSellerActionButtons();
     renderItems(result.items.slice(0, 8), result.totalVisible);
     renderSellers([], 0, result.items[0]?.productName || 'the first item');
     renderPayload(result);
@@ -807,6 +839,8 @@ async function handleExtractItems() {
     appendStatus(`Extracted ${result.totalVisible} visible want items from the current page.`, result.totalVisible ? 'good' : 'bad');
     finishRun(`Extracted ${result.totalVisible} visible want items.`, result.totalVisible ? 'good' : 'bad');
   } catch (error) {
+    latestExtractedItems = [];
+    syncSellerActionButtons();
     appendStatus(error.message, 'bad');
     finishRun(error.message, 'bad');
   } finally {
@@ -883,8 +917,8 @@ async function handleScrapeAllItems() {
         throw new Error('Extract want items first so the popup has products to scrape.');
       }
 
-      appendStatus('Opening a pinned scrape window so the batch keeps running after this popup closes...', 'good');
-      finishRun('Opening pinned scrape window for batch run.', 'good');
+      appendStatus('Opening batch scrape workspace so run keeps going after this popup closes...', 'good');
+      finishRun('Opening batch scrape workspace.', 'good');
         await saveDetachedBatchState(latestExtractedItems);
       await openDetachedPopup({ autoStart: 'scrapeAll' });
       window.close();
@@ -1397,12 +1431,13 @@ renderItems([], 0);
 renderSellers([], 0);
 renderPayload(null);
 renderSellerCountryFilterList();
+syncSellerActionButtons();
 scrapeAllItemsButton.textContent = isDetached
   ? 'Scrape Sellers For All Extracted Items'
-  : 'Scrape Sellers For All Extracted Items In Pinned Window';
+  : 'Scrape Sellers For All Extracted Items';
 appendStatus(isDetached
-  ? 'Pinned scrape window loaded. It stays open while you click back into Cardmarket.'
-  : 'Popup loaded. Long batch scrapes run in a pinned window so they do not stop when this popup closes.');
+  ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'
+  : 'Popup loaded. Extension opens batch scrape workspace by default for long runs.');
 
 Promise.allSettled([
   loadSellerSettings(),
@@ -1414,8 +1449,9 @@ Promise.allSettled([
   if (isDetached && autoStartMode === 'scrapeAll') {
     loadDetachedBatchState().then((items) => {
       latestExtractedItems = items;
+      syncSellerActionButtons();
       if (!latestExtractedItems.length) {
-        appendStatus('Pinned scrape window could not auto-start because no extracted items were passed from popup.', 'bad');
+        appendStatus('Batch scrape workspace could not auto-start because no extracted items were passed from popup.', 'bad');
         return;
       }
 
@@ -1425,8 +1461,12 @@ Promise.allSettled([
         appendStatus(error.message, 'bad');
       });
     }).catch(() => {
-      appendStatus('Pinned scrape window could not load extracted items for auto-start.', 'bad');
+      appendStatus('Batch scrape workspace could not load extracted items for auto-start.', 'bad');
     });
+  }
+
+  if (!isDetached && !keepPopupMode) {
+    autoDetachDefaultPopup();
   }
 });
 
