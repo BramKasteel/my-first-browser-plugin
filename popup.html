@@ -149,6 +149,30 @@
       margin: 0;
     }
 
+    .country-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 10px;
+      max-height: 180px;
+      overflow: auto;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(159, 176, 190, 0.12);
+      background: rgba(17, 22, 27, 0.92);
+    }
+
+    .country-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text);
+    }
+
+    .country-option input {
+      margin: 0;
+    }
+
     .summary {
       display: grid;
       gap: 8px;
@@ -298,10 +322,10 @@
         <input id="matchWantLanguage" type="checkbox" checked>
         <span>Only keep sellers whose card language matches the selected want item</span>
       </label>
-      <label class="config-label" for="sellerLocationFilter">
+      <div class="config-label">
         <span>Seller country filter</span>
-        <input id="sellerLocationFilter" type="text" placeholder="Germany, Netherlands, BE">
-      </label>
+        <div id="sellerLocationFilterList" class="country-list" role="group" aria-label="Seller country filter"></div>
+      </div>
     </section>
 
     <section class="panel">

@@ -4,7 +4,7 @@ const inspectFiltersButton = document.getElementById('inspectFilters');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
 const useSellerCacheInput = document.getElementById('useSellerCache');
 const matchWantLanguageInput = document.getElementById('matchWantLanguage');
-const sellerLocationFilterInput = document.getElementById('sellerLocationFilter');
+const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
 const clearSellerCacheButton = document.getElementById('clearSellerCache');
 const copyPayloadButton = document.getElementById('copyPayload');
 const summaryEl = document.getElementById('summary');
@@ -19,9 +19,47 @@ let latestExtractedItems = [];
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const LAST_EXTRACTED_ITEMS_KEY = 'lastExtractedItems';
 const SELLER_CACHE_PREFIX = 'sellerCache:';
-const SELLER_CACHE_VERSION = 'v5';
+const SELLER_CACHE_VERSION = 'v6';
 const SELLER_CACHE_TTL_MS = 30 * 60 * 1000;
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
+const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
+const SELLER_COUNTRY_OPTIONS = [
+  'Austria',
+  'Belgium',
+  'Bulgaria',
+  'Canada',
+  'Croatia',
+  'Cyprus',
+  'Czechia',
+  'Denmark',
+  'Estonia',
+  'Finland',
+  'France',
+  'Germany',
+  'Greece',
+  'Hungary',
+  'Iceland',
+  'Ireland',
+  'Italy',
+  'Japan',
+  'Latvia',
+  'Liechtenstein',
+  'Lithuania',
+  'Luxembourg',
+  'Malta',
+  'Netherlands',
+  'Norway',
+  'Poland',
+  'Portugal',
+  'Romania',
+  'Singapore',
+  'Slovakia',
+  'Slovenia',
+  'Spain',
+  'Sweden',
+  'Switzerland',
+  'United Kingdom',
+];
 
 function appendStatus(message, tone = '') {
   const entry = document.createElement('li');
@@ -37,7 +75,9 @@ function setBusy(isBusy) {
   sellerDelayInput.disabled = isBusy;
   useSellerCacheInput.disabled = isBusy;
   matchWantLanguageInput.disabled = isBusy;
-  sellerLocationFilterInput.disabled = isBusy;
+  sellerLocationFilterListEl.querySelectorAll('input').forEach((input) => {
+    input.disabled = isBusy;
+  });
   clearSellerCacheButton.disabled = isBusy;
   copyPayloadButton.disabled = isBusy;
 }
@@ -65,7 +105,8 @@ async function loadSellerSettings() {
   sellerDelayInput.value = String(Math.max(1000, parseInt(settings.delayMs, 10) || 2000));
   useSellerCacheInput.checked = settings.useCache !== false;
   matchWantLanguageInput.checked = settings.matchWantLanguage !== false;
-  sellerLocationFilterInput.value = typeof settings.sellerLocationFilter === 'string' ? settings.sellerLocationFilter : '';
+  const selectedCountries = getStoredSellerCountries(settings);
+  setSelectedSellerCountries(selectedCountries.length ? selectedCountries : DEFAULT_SELLER_COUNTRIES);
 }
 
 async function loadLastExtractedItems() {
@@ -91,19 +132,62 @@ async function saveSellerSettings() {
       delayMs: Math.max(1000, parseInt(sellerDelayInput.value, 10) || 2000),
       useCache: useSellerCacheInput.checked,
       matchWantLanguage: matchWantLanguageInput.checked,
-      sellerLocationFilter: sellerLocationFilterInput.value.trim(),
+      sellerLocationFilter: getSelectedSellerCountries(),
     },
   });
 }
 
 function getActiveSellerFilters(item) {
   const requestedLanguages = matchWantLanguageInput.checked ? getItemLanguages(item) : [];
-  const allowedCountries = parseCountryFilterInput(sellerLocationFilterInput.value);
+  const allowedCountries = getSelectedSellerCountries();
   return {
     requestedLanguages,
     allowedCountries,
-    locationFilterText: sellerLocationFilterInput.value.trim(),
+    locationFilterText: allowedCountries.join(', '),
   };
+}
+
+function renderSellerCountryFilterList() {
+  sellerLocationFilterListEl.replaceChildren();
+  SELLER_COUNTRY_OPTIONS.forEach((country) => {
+    const option = document.createElement('label');
+    option.className = 'country-option';
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = 'sellerCountryFilter';
+    input.value = country;
+    input.checked = DEFAULT_SELLER_COUNTRIES.includes(country);
+
+    const text = document.createElement('span');
+    text.textContent = country;
+
+    option.append(input, text);
+    sellerLocationFilterListEl.appendChild(option);
+  });
+}
+
+function getSelectedSellerCountries() {
+  return [...sellerLocationFilterListEl.querySelectorAll('input[name="sellerCountryFilter"]:checked')]
+    .map((input) => normalizeCountryName(input.value))
+    .filter(Boolean);
+}
+
+function setSelectedSellerCountries(countries) {
+  const selected = new Set((countries || []).map((value) => normalizeCountryName(value)).filter(Boolean));
+  sellerLocationFilterListEl.querySelectorAll('input[name="sellerCountryFilter"]').forEach((input) => {
+    input.checked = selected.has(normalizeCountryName(input.value));
+  });
+}
+
+function getStoredSellerCountries(settings) {
+  if (Array.isArray(settings.sellerLocationFilter)) {
+    return settings.sellerLocationFilter.map((value) => normalizeCountryName(value)).filter(Boolean);
+  }
+  if (typeof settings.sellerLocationFilter === 'string') {
+    return parseCountryFilterInput(settings.sellerLocationFilter);
+  }
+  return [];
 }
 
 function applySellerFilters(result, item) {
@@ -165,6 +249,12 @@ function getCardmarketCountryIds(value) {
     .split(',')
     .map((part) => getCardmarketCountryId(part))
     .filter(Boolean);
+}
+
+function getCardmarketCountryIdsFromCountries(countries) {
+  return [...new Set((countries || [])
+    .map((country) => getCardmarketCountryId(country))
+    .filter(Boolean))];
 }
 
 function normalizeLanguageName(value) {
@@ -415,6 +505,10 @@ function getCardmarketCountryId(value) {
   return ids[normalized] || '';
 }
 
+function getCountryNameById(countryId) {
+  return SELLER_COUNTRY_OPTIONS.find((country) => getCardmarketCountryId(country) === String(countryId)) || '';
+}
+
 async function getSellerCacheEntry(cacheKey) {
   const storageArea = await getStorageArea();
   const stored = await storageArea.get(cacheKey);
@@ -654,8 +748,9 @@ async function handleScrapeFirstItem() {
 
     const tabUrl = tab.url || '';
     const requestLanguageId = matchWantLanguageInput.checked ? getCardmarketLanguageId(getSingleItemLanguage(firstItem)) : '';
-  const requestCountryIds = getCardmarketCountryIds(sellerLocationFilterInput.value);
-  const cacheKey = `${SELLER_CACHE_PREFIX}${SELLER_CACHE_VERSION}:${tabUrl.split('?')[0]}:${firstItem.idProduct}:lang=${requestLanguageId || 'all'}:country=${requestCountryIds.join(',') || 'all'}`;
+    const selectedCountries = getSelectedSellerCountries();
+    const requestCountryIds = getCardmarketCountryIdsFromCountries(selectedCountries);
+    const cacheKey = `${SELLER_CACHE_PREFIX}${SELLER_CACHE_VERSION}:${tabUrl.split('?')[0]}:${firstItem.idProduct}:lang=${requestLanguageId || 'all'}:country=${requestCountryIds.join(',') || 'all'}`;
     let result = null;
     let fromCache = false;
 
@@ -668,18 +763,48 @@ async function handleScrapeFirstItem() {
     }
 
     if (!result) {
-      result = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+      const baseRequestFilters = {
+        languageId: requestLanguageId,
+        sellerCountryIds: requestCountryIds,
+      };
+      const baseResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
         item: firstItem,
         delay: delayMs,
         previewLimit: 12,
-        requestFilters: {
-          languageId: requestLanguageId,
-          sellerCountryIds: requestCountryIds,
-        },
+        requestFilters: baseRequestFilters,
       }]);
-      if (!result) {
+      if (!baseResult) {
         throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
       }
+      result = baseResult;
+
+      const countryScopes = buildSellerCountryScopes({
+        requestCountryIds,
+        availableSellerFilters: baseResult.availableSellerFilters,
+      });
+      const shouldPartitionByCountry = shouldPartitionSellerScrape(baseResult, countryScopes);
+      if (shouldPartitionByCountry) {
+        const partitionLabels = countryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
+        appendStatus(`Broad seller scope looks capped. Retrying in ${countryScopes.length} country partitions: ${partitionLabels.join(', ')}.`, 'good');
+        const partitionResults = [];
+        for (const scope of countryScopes) {
+          const scopeResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+            item: firstItem,
+            delay: delayMs,
+            previewLimit: 12,
+            requestFilters: {
+              languageId: requestLanguageId,
+              sellerCountryIds: [scope.countryId],
+            },
+          }]);
+          if (scopeResult) {
+            scopeResult.partitionLabel = scope.label;
+            partitionResults.push(scopeResult);
+          }
+        }
+        result = mergeSellerScopeResults(baseResult, partitionResults);
+      }
+
       if (result.rateLimited) {
         await setSellerCooldownUntil(Date.now() + SELLER_COOLDOWN_MS);
       }
@@ -705,6 +830,7 @@ async function handleScrapeFirstItem() {
       { label: 'Product id', value: firstItem.idProduct },
       { label: 'Seller rows', value: sellerCountLabel, tone: filteredResult.totalSellers ? 'good' : 'bad' },
       { label: 'Pages fetched', value: String(filteredResult.pagesFetched || 0) },
+      { label: 'Seller scopes', value: String(filteredResult.partitionCount || 1) },
       { label: 'Market path', value: filteredResult.marketPath || '-' },
       { label: 'Filters', value: filterSummary.join(' | ') || 'none' },
       { label: 'Used cache', value: fromCache ? 'yes' : 'no', tone: fromCache ? 'good' : '' },
@@ -724,6 +850,79 @@ async function handleScrapeFirstItem() {
   } finally {
     setBusy(false);
   }
+}
+
+function shouldPartitionSellerScrape(baseResult, countryScopes) {
+  if (!baseResult || baseResult.error) return false;
+  if (!countryScopes.length) return false;
+  if (countryScopes.length === 1 && (baseResult.requestFilters?.sellerCountryIds || []).length === 1) return false;
+  if ((baseResult.requestFilters?.sellerCountryIds || []).length > 1) return true;
+  if (baseResult.ajaxDebug?.maxPaginatedResultsReached) return true;
+  return (baseResult.totalSellers || 0) >= 250;
+}
+
+function buildSellerCountryScopes({ requestCountryIds, availableSellerFilters }) {
+  const explicitIds = [...new Set((requestCountryIds || []).filter(Boolean))];
+  if (explicitIds.length > 1) {
+    return explicitIds.map((countryId) => ({ countryId, label: `country:${countryId}` }));
+  }
+  if (explicitIds.length === 1) return [{ countryId: explicitIds[0], label: `country:${explicitIds[0]}` }];
+
+  const sellerCountryOptions = Array.isArray(availableSellerFilters?.sellerCountry)
+    ? availableSellerFilters.sellerCountry
+    : [];
+  const discoveredIds = [...new Set(sellerCountryOptions
+    .map((entry) => String(entry?.value || '').trim())
+    .filter((value) => /^\d+$/.test(value)))];
+
+  return discoveredIds.map((countryId) => ({ countryId, label: `country:${countryId}` }));
+}
+
+function mergeSellerScopeResults(baseResult, partitionResults) {
+  const allResults = [baseResult, ...(partitionResults || [])].filter(Boolean);
+  const mergedSellers = [];
+  const seenArticleIds = new Set();
+  const attemptedUrls = [];
+  const seenAttempts = new Set();
+  let pagesFetched = 0;
+  let rateLimited = false;
+  let firstError = '';
+
+  allResults.forEach((result, index) => {
+    pagesFetched += result.pagesFetched || 0;
+    rateLimited = rateLimited || !!result.rateLimited;
+    if (!firstError && result.error) firstError = result.error;
+    (result.attemptedUrls || []).forEach((attempt) => {
+      const scopedAttempt = index === 0 ? attempt : `${result.partitionLabel || 'partition'} -> ${attempt}`;
+      if (seenAttempts.has(scopedAttempt)) return;
+      seenAttempts.add(scopedAttempt);
+      attemptedUrls.push(scopedAttempt);
+    });
+    (result.sellers || []).forEach((seller) => {
+      if (!seller?.articleId || seenArticleIds.has(seller.articleId)) return;
+      seenArticleIds.add(seller.articleId);
+      mergedSellers.push(seller);
+    });
+  });
+
+  return {
+    ...baseResult,
+    error: firstError,
+    sellers: mergedSellers,
+    sellerPreview: mergedSellers.slice(0, 12),
+    totalSellers: mergedSellers.length,
+    pagesFetched,
+    attemptedUrls,
+    partitionCount: allResults.length,
+    partitions: allResults.map((result, index) => ({
+      label: index === 0 ? 'base' : (result.partitionLabel || `partition-${index}`),
+      sellerCount: result.totalSellers || 0,
+      pagesFetched: result.pagesFetched || 0,
+      rateLimited: !!result.rateLimited,
+      error: result.error || '',
+      requestFilters: result.requestFilters || null,
+    })),
+  };
 }
 
 async function handleCopyPayload() {
@@ -771,7 +970,11 @@ copyPayloadButton.addEventListener('click', handleCopyPayload);
 sellerDelayInput.addEventListener('change', saveSellerSettings);
 useSellerCacheInput.addEventListener('change', saveSellerSettings);
 matchWantLanguageInput.addEventListener('change', saveSellerSettings);
-sellerLocationFilterInput.addEventListener('change', saveSellerSettings);
+sellerLocationFilterListEl.addEventListener('change', (event) => {
+  if (event.target instanceof HTMLInputElement && event.target.name === 'sellerCountryFilter') {
+    saveSellerSettings();
+  }
+});
 clearSellerCacheButton.addEventListener('click', async () => {
   setBusy(true);
   try {
@@ -791,6 +994,7 @@ renderSummary([
 renderItems([], 0);
 renderSellers([], 0);
 renderPayload(null);
+renderSellerCountryFilterList();
 appendStatus('Popup loaded. Start with "Extract Visible Want Items".');
 loadSellerSettings().catch(() => {
   appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
@@ -1190,7 +1394,7 @@ function extractVisibleWantItems({ previewLimit }) {
 async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {} }) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const SELLER_PAGE_SIZE_HINT = 50;
-  const MAX_SELLER_PAGES = 3;
+  const MAX_SELLER_PAGES = 20;
   const pathParts = location.pathname.split('/').filter(Boolean);
   const lang = pathParts[0] || 'en';
   const game = pathParts[1] || 'Magic';
@@ -1205,6 +1409,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
   let debugSnippet = '';
   let selectedBase = null;
   let baseCandidates = buildInitialBaseCandidates();
+  let availableSellerFilters = null;
 
   while (page <= MAX_SELLER_PAGES) {
     const candidatesForPage = selectedBase ? [selectedBase] : [...baseCandidates];
@@ -1241,6 +1446,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
 
       if (page === 1) {
         totalPagesSeen = detectTotalPages(doc) || 1;
+        availableSellerFilters = inspectAvailableSellerFiltersInDocument(doc, request.url);
       }
 
       const nextLoadMorePage = ajaxMeta?.newPage || ((request.method || 'GET').toUpperCase() === 'POST' ? page + 1 : page);
@@ -1288,6 +1494,8 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     sellerPreview: sellers.slice(0, previewLimit || 12),
     totalSellers: sellers.length,
     pagesFetched,
+    requestFilters,
+    availableSellerFilters,
     marketPath: selectedBase?.url || marketPath,
     attemptedUrls,
     debugSnippet,
@@ -1406,6 +1614,117 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
       url.searchParams.set('sellerCountry', activeFilters.sellerCountryIds.join(','));
     }
     return url.toString();
+  }
+
+  function inspectAvailableSellerFiltersInDocument(doc, currentUrl) {
+    const textValue = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+    const relevantFieldPattern = /^(sellerCountry|sellerType|sellerReputation|maxShippingTime|idExpansion|language|minCondition|extra\[.+\]|apply)$/i;
+    const filterForm = doc.querySelector('form[action*="Product_Filter_FilterMetacard"], form[action*="FilterMetacard"]');
+    const nodes = [...doc.querySelectorAll('input[name], select[name], textarea[name]')]
+      .filter((node) => relevantFieldPattern.test(node.name || ''));
+    const filters = {};
+
+    for (const node of nodes) {
+      const rawName = node.name || '';
+      const fieldKey = rawName.replace(/\[.*\]$/, '');
+      if (!filters[fieldKey]) filters[fieldKey] = [];
+
+      if (node.tagName === 'SELECT') {
+        const options = [...node.options].map((option) => ({
+          rawName,
+          value: option.value,
+          label: textValue(option.textContent),
+          selected: option.selected,
+        })).filter((option) => option.value || option.label);
+        filters[fieldKey].push(...options);
+        continue;
+      }
+
+      filters[fieldKey].push({
+        rawName,
+        value: node.value || '',
+        label: extractInputLabel(node),
+        checked: node.checked === true,
+        type: node.type || node.tagName.toLowerCase(),
+      });
+    }
+
+    Object.keys(filters).forEach((key) => {
+      const seenMarkers = new Set();
+      filters[key] = filters[key].filter((entry) => {
+        const marker = `${entry.rawName}|${entry.value}|${entry.label || ''}`;
+        if (seenMarkers.has(marker)) return false;
+        seenMarkers.add(marker);
+        return true;
+      });
+    });
+
+    mergeActiveValues(filters, collectActiveQuery(currentUrl), 'url');
+    mergeActiveValues(filters, collectFormData(filterForm), 'form');
+    return filters;
+
+    function collectActiveQuery(urlValue) {
+      const url = new URL(urlValue, location.origin);
+      const values = {};
+      url.searchParams.forEach((value, key) => {
+        if (!relevantFieldPattern.test(key)) return;
+        if (!values[key]) values[key] = [];
+        values[key].push(value);
+      });
+      return values;
+    }
+
+    function collectFormData(form) {
+      const values = {};
+      if (!form) return values;
+      for (const field of form.querySelectorAll('input[name], select[name], textarea[name]')) {
+        const rawName = field.name || '';
+        if (!relevantFieldPattern.test(rawName) || field.disabled) continue;
+        if ((field.type === 'checkbox' || field.type === 'radio') && !field.checked) continue;
+        if (!values[rawName]) values[rawName] = [];
+        values[rawName].push(field.value || '');
+      }
+      return values;
+    }
+
+    function mergeActiveValues(targetFilters, activeValues, source) {
+      Object.entries(activeValues).forEach(([rawName, values]) => {
+        const fieldKey = rawName.replace(/\[.*\]$/, '');
+        if (!targetFilters[fieldKey]) targetFilters[fieldKey] = [];
+        const seenMarkers = new Set(targetFilters[fieldKey].map((entry) => `${entry.rawName}|${entry.value}`));
+        values.forEach((value) => {
+          const marker = `${rawName}|${value}`;
+          if (seenMarkers.has(marker)) return;
+          seenMarkers.add(marker);
+          targetFilters[fieldKey].push({
+            rawName,
+            value,
+            label: '',
+            active: true,
+            source,
+          });
+        });
+      });
+    }
+
+    function extractInputLabel(node) {
+      const directLabel = node.closest('label');
+      if (directLabel) return textValue(directLabel.textContent);
+
+      const id = node.getAttribute('id');
+      if (id) {
+        const forLabel = doc.querySelector(`label[for="${CSS.escape(id)}"]`);
+        if (forLabel) return textValue(forLabel.textContent);
+      }
+
+      const wrapper = node.closest('.form-check, .checkbox, .radio, .filter-row, li, .list-group-item, .form-group');
+      if (wrapper) return textValue(wrapper.textContent);
+
+      const siblingText = [node.nextSibling, node.previousSibling]
+        .map((sibling) => textValue(sibling?.textContent || ''))
+        .find(Boolean);
+      return siblingText || '';
+    }
   }
 
   function extractLoadMoreMeta(doc, form, button, currentUrl) {
