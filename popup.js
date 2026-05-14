@@ -1,6 +1,6 @@
-const checkPageButton = document.getElementById('checkPage');
 const extractItemsButton = document.getElementById('extractItems');
 const scrapeFirstItemButton = document.getElementById('scrapeFirstItem');
+const inspectFiltersButton = document.getElementById('inspectFilters');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
 const useSellerCacheInput = document.getElementById('useSellerCache');
 const matchWantLanguageInput = document.getElementById('matchWantLanguage');
@@ -31,9 +31,9 @@ function appendStatus(message, tone = '') {
 }
 
 function setBusy(isBusy) {
-  checkPageButton.disabled = isBusy;
   extractItemsButton.disabled = isBusy;
   scrapeFirstItemButton.disabled = isBusy;
+  inspectFiltersButton.disabled = isBusy;
   sellerDelayInput.disabled = isBusy;
   useSellerCacheInput.disabled = isBusy;
   matchWantLanguageInput.disabled = isBusy;
@@ -97,10 +97,10 @@ async function saveSellerSettings() {
 }
 
 function getActiveSellerFilters(item) {
-  const requestedLanguage = matchWantLanguageInput.checked ? textOf(item?.language) : '';
+  const requestedLanguages = matchWantLanguageInput.checked ? getItemLanguages(item) : [];
   const allowedCountries = parseCountryFilterInput(sellerLocationFilterInput.value);
   return {
-    requestedLanguage,
+    requestedLanguages,
     allowedCountries,
     locationFilterText: sellerLocationFilterInput.value.trim(),
   };
@@ -110,8 +110,9 @@ function applySellerFilters(result, item) {
   const filters = getActiveSellerFilters(item);
   const rawSellers = Array.isArray(result?.sellers) ? result.sellers : [];
   const filteredSellers = rawSellers.filter((seller) => {
-    if (filters.requestedLanguage) {
-      if (normalizeLanguageName(seller.language) !== normalizeLanguageName(filters.requestedLanguage)) {
+    if (filters.requestedLanguages.length) {
+      const sellerLanguage = normalizeLanguageName(seller.language);
+      if (!filters.requestedLanguages.some((language) => sellerLanguage === normalizeLanguageName(language))) {
         return false;
       }
     }
@@ -130,18 +131,39 @@ function applySellerFilters(result, item) {
     totalSellers: filteredSellers.length,
     unfilteredTotalSellers: rawSellers.length,
     filtersApplied: {
-      matchWantLanguage: !!filters.requestedLanguage,
-      requestedLanguage: filters.requestedLanguage || '',
+      matchWantLanguage: filters.requestedLanguages.length > 0,
+      requestedLanguages: filters.requestedLanguages,
       sellerCountries: filters.allowedCountries,
       sellerCountryFilterText: filters.locationFilterText,
     },
   };
 }
 
+function getItemLanguages(item) {
+  const languages = Array.isArray(item?.languages)
+    ? item.languages.map((value) => textOf(value)).filter(Boolean)
+    : [];
+  if (languages.length) return [...new Set(languages)];
+  const singleLanguage = textOf(item?.language);
+  return singleLanguage ? [singleLanguage] : [];
+}
+
+function getSingleItemLanguage(item) {
+  const languages = getItemLanguages(item);
+  return languages.length === 1 ? languages[0] : '';
+}
+
 function parseCountryFilterInput(value) {
   return value
     .split(',')
     .map((part) => normalizeCountryName(part))
+    .filter(Boolean);
+}
+
+function getCardmarketCountryIds(value) {
+  return value
+    .split(',')
+    .map((part) => getCardmarketCountryId(part))
     .filter(Boolean);
 }
 
@@ -165,7 +187,6 @@ function normalizeLanguageName(value) {
   return aliases[normalized] || normalized;
 }
 
-// TODO: this seems like hallucinated information: try to get this correct by doing some requests!
 function getCardmarketLanguageId(value) {
   const normalized = normalizeLanguageName(value);
   const ids = {
@@ -174,8 +195,8 @@ function getCardmarketLanguageId(value) {
     german: '3',
     spanish: '4',
     italian: '5',
-    chinese: '6',
     'simplified chinese': '6',
+    chinese: '6',
     japanese: '7',
     portuguese: '8',
     russian: '9',
@@ -185,7 +206,89 @@ function getCardmarketLanguageId(value) {
   return ids[normalized] || '';
 }
 
-// TODO: this seems like hallucinated information: try to get this correct by doing some requests!
+function normalizeSellerReputation(value) {
+  const normalized = textOf(value).toLowerCase();
+  const aliases = {
+    outstanding: 'Outstanding',
+    'very good': 'Very good',
+    good: 'Good',
+    average: 'Average',
+    bad: 'Bad',
+  };
+  return aliases[normalized] || '';
+}
+
+function getCardmarketSellerReputationId(value) {
+  const normalized = normalizeSellerReputation(value);
+  const ids = {
+    Outstanding: '1',
+    'Very good': '2',
+    Good: '3',
+    Average: '4',
+    Bad: '5',
+  };
+  return ids[normalized] || '';
+}
+
+function normalizeMaxShippingTime(value) {
+  const normalized = textOf(value).toLowerCase();
+  const aliases = {
+    '2': '2',
+    '2 days': '2',
+    '3': '3',
+    '3 days': '3',
+    '4': '4',
+    '4 days': '4',
+    '5': '5',
+    '5 days': '5',
+    '6': '6',
+    '6 days': '6',
+    '7': '7',
+    '7+': '7',
+    '7+ days': '7',
+  };
+  return aliases[normalized] || '';
+}
+
+function getCardmarketMaxShippingTimeId(value) {
+  return normalizeMaxShippingTime(value);
+}
+
+function normalizeCardCondition(value) {
+  const normalized = textOf(value).toLowerCase();
+  const aliases = {
+    mt: 'Mint',
+    mint: 'Mint',
+    nm: 'Near Mint',
+    'near mint': 'Near Mint',
+    ex: 'Excellent',
+    excellent: 'Excellent',
+    gd: 'Good',
+    good: 'Good',
+    lp: 'Light Played',
+    'light played': 'Light Played',
+    pl: 'Played',
+    played: 'Played',
+    po: 'Poor',
+    poor: 'Poor',
+  };
+  return aliases[normalized] || '';
+}
+
+function getCardmarketConditionId(value) {
+  const normalized = normalizeCardCondition(value);
+  const ids = {
+    Mint: '1',
+    'Near Mint': '2',
+    Excellent: '3',
+    Good: '4',
+    'Light Played': '5',
+    Played: '6',
+    Poor: '7',
+  };
+  return ids[normalized] || '';
+}
+
 function normalizeCountryName(value) {
   const normalized = textOf(value).toLowerCase();
   if (!normalized) return '';
@@ -196,6 +299,8 @@ function normalizeCountryName(value) {
     belgium: 'Belgium',
     bg: 'Bulgaria',
     bulgaria: 'Bulgaria',
+    ca: 'Canada',
+    canada: 'Canada',
     ch: 'Switzerland',
     switzerland: 'Switzerland',
     schweiz: 'Switzerland',
@@ -217,18 +322,26 @@ function normalizeCountryName(value) {
     finland: 'Finland',
     fr: 'France',
     france: 'France',
+    gr: 'Greece',
+    greece: 'Greece',
     gb: 'United Kingdom',
     uk: 'United Kingdom',
     'united kingdom': 'United Kingdom',
     'great britain': 'United Kingdom',
     hu: 'Hungary',
     hungary: 'Hungary',
+    is: 'Iceland',
+    iceland: 'Iceland',
     hr: 'Croatia',
     croatia: 'Croatia',
     ie: 'Ireland',
     ireland: 'Ireland',
     it: 'Italy',
     italy: 'Italy',
+    jp: 'Japan',
+    japan: 'Japan',
+    li: 'Liechtenstein',
+    liechtenstein: 'Liechtenstein',
     lt: 'Lithuania',
     lithuania: 'Lithuania',
     lu: 'Luxembourg',
@@ -248,6 +361,8 @@ function normalizeCountryName(value) {
     portugal: 'Portugal',
     ro: 'Romania',
     romania: 'Romania',
+    sg: 'Singapore',
+    singapore: 'Singapore',
     se: 'Sweden',
     sweden: 'Sweden',
     si: 'Slovenia',
@@ -256,6 +371,48 @@ function normalizeCountryName(value) {
     slovakia: 'Slovakia',
   };
   return aliases[normalized] || '';
+}
+
+function getCardmarketCountryId(value) {
+  const normalized = normalizeCountryName(value);
+  const ids = {
+    Austria: '1',
+    Belgium: '2',
+    Bulgaria: '3',
+    Switzerland: '4',
+    Cyprus: '5',
+    Czechia: '6',
+    Germany: '7',
+    Denmark: '8',
+    Estonia: '9',
+    Spain: '10',
+    Finland: '11',
+    France: '12',
+    'United Kingdom': '13',
+    Greece: '14',
+    Hungary: '15',
+    Ireland: '16',
+    Italy: '17',
+    Liechtenstein: '18',
+    Lithuania: '19',
+    Luxembourg: '20',
+    Latvia: '21',
+    Malta: '22',
+    Netherlands: '23',
+    Norway: '24',
+    Poland: '25',
+    Portugal: '26',
+    Romania: '27',
+    Sweden: '28',
+    Singapore: '29',
+    Slovenia: '30',
+    Slovakia: '31',
+    Canada: '33',
+    Croatia: '35',
+    Japan: '36',
+    Iceland: '37',
+  };
+  return ids[normalized] || '';
 }
 
 async function getSellerCacheEntry(cacheKey) {
@@ -349,11 +506,12 @@ function renderItems(items, totalVisible) {
 
     const meta = document.createElement('p');
     meta.className = 'item-meta';
+    const languages = getItemLanguages(item);
     meta.textContent = [
       `want=${item.idWant || '?'}`,
       `product=${item.idProduct || '?'}`,
       `qty=${item.quantity || '1'}`,
-      item.language ? `lang=${item.language}` : null,
+      languages.length ? `langs=${languages.join(', ')}` : null,
       item.minCondition ? `cond=${item.minCondition}` : null,
       item.maxPrice ? `max=${item.maxPrice}` : null,
     ].filter(Boolean).join(' | ');
@@ -443,35 +601,6 @@ async function ensureCardmarketTab() {
   return tab;
 }
 
-async function handleCheckPage() {
-  setBusy(true);
-  try {
-    const tab = await ensureCardmarketTab();
-    const page = await executeInTab(tab.id, detectCurrentPage);
-    renderSummary([
-      { label: 'Active page', value: page.pageKind, tone: page.supported ? 'good' : 'bad' },
-      { label: 'Supported now', value: page.supported ? 'yes' : 'no', tone: page.supported ? 'good' : 'bad' },
-      { label: 'Want list id', value: page.wantListId || '-' },
-      { label: 'Visible row candidates', value: String(page.visibleRowCandidates) },
-      { label: 'Path', value: page.pathname },
-    ]);
-    renderItems([], 0);
-    renderSellers([], 0);
-    latestExtractedItems = [];
-    await clearLastExtractedItems();
-    renderPayload({ page });
-
-    const message = page.supported
-      ? `Detected ${page.pageKind} on Cardmarket.`
-      : `Page is not a supported want-list detail page yet (${page.pageKind}).`;
-    appendStatus(message, page.supported ? 'good' : 'bad');
-  } catch (error) {
-    appendStatus(error.message, 'bad');
-  } finally {
-    setBusy(false);
-  }
-}
-
 async function handleExtractItems() {
   setBusy(true);
   try {
@@ -524,8 +653,9 @@ async function handleScrapeFirstItem() {
     }
 
     const tabUrl = tab.url || '';
-    const requestLanguageId = matchWantLanguageInput.checked ? getCardmarketLanguageId(firstItem.language) : '';
-    const cacheKey = `${SELLER_CACHE_PREFIX}${SELLER_CACHE_VERSION}:${tabUrl.split('?')[0]}:${firstItem.idProduct}:lang=${requestLanguageId || 'all'}`;
+    const requestLanguageId = matchWantLanguageInput.checked ? getCardmarketLanguageId(getSingleItemLanguage(firstItem)) : '';
+  const requestCountryIds = getCardmarketCountryIds(sellerLocationFilterInput.value);
+  const cacheKey = `${SELLER_CACHE_PREFIX}${SELLER_CACHE_VERSION}:${tabUrl.split('?')[0]}:${firstItem.idProduct}:lang=${requestLanguageId || 'all'}:country=${requestCountryIds.join(',') || 'all'}`;
     let result = null;
     let fromCache = false;
 
@@ -544,6 +674,7 @@ async function handleScrapeFirstItem() {
         previewLimit: 12,
         requestFilters: {
           languageId: requestLanguageId,
+          sellerCountryIds: requestCountryIds,
         },
       }]);
       if (!result) {
@@ -562,8 +693,8 @@ async function handleScrapeFirstItem() {
       ? `${filteredResult.totalSellers} / ${filteredResult.unfilteredTotalSellers}`
       : String(filteredResult.totalSellers);
     const filterSummary = [];
-    if (filteredResult.filtersApplied?.requestedLanguage) {
-      filterSummary.push(`lang=${filteredResult.filtersApplied.requestedLanguage}`);
+    if (filteredResult.filtersApplied?.requestedLanguages?.length) {
+      filterSummary.push(`langs=${filteredResult.filtersApplied.requestedLanguages.join(', ')}`);
     }
     if (filteredResult.filtersApplied?.sellerCountries?.length) {
       filterSummary.push(`country=${filteredResult.filtersApplied.sellerCountries.join(', ')}`);
@@ -609,9 +740,33 @@ async function handleCopyPayload() {
   }
 }
 
-checkPageButton.addEventListener('click', handleCheckPage);
+async function handleInspectFilters() {
+  setBusy(true);
+  try {
+    const tab = await ensureCardmarketTab();
+    const result = await executeInTab(tab.id, inspectAvailableSellerFilters);
+    if (!result) {
+      throw new Error('Filter inspection returned no result.');
+    }
+
+    renderSummary([
+      { label: 'Page title', value: result.title || '-' },
+      { label: 'Filter form found', value: result.filterFormAction ? 'yes' : 'no', tone: result.filterFormAction ? 'good' : 'bad' },
+      { label: 'Filter action', value: result.filterFormAction || '-' },
+      { label: 'Filter groups', value: String(Object.keys(result.filters || {}).length) },
+    ]);
+    renderPayload(result);
+    appendStatus(`Inspected ${Object.keys(result.filters || {}).length} filter groups from the current Cardmarket page.`, Object.keys(result.filters || {}).length ? 'good' : 'bad');
+  } catch (error) {
+    appendStatus(error.message, 'bad');
+  } finally {
+    setBusy(false);
+  }
+}
+
 extractItemsButton.addEventListener('click', handleExtractItems);
 scrapeFirstItemButton.addEventListener('click', handleScrapeFirstItem);
+inspectFiltersButton.addEventListener('click', handleInspectFilters);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
 sellerDelayInput.addEventListener('change', saveSellerSettings);
 useSellerCacheInput.addEventListener('change', saveSellerSettings);
@@ -636,13 +791,134 @@ renderSummary([
 renderItems([], 0);
 renderSellers([], 0);
 renderPayload(null);
-appendStatus('Popup loaded. Start with "Check Current Page".');
+appendStatus('Popup loaded. Start with "Extract Visible Want Items".');
 loadSellerSettings().catch(() => {
   appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
 });
 loadLastExtractedItems().catch(() => {
   appendStatus('Could not restore previously extracted want items.', 'bad');
 });
+
+function inspectAvailableSellerFilters() {
+  const textOf = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+  const relevantFieldPattern = /^(sellerCountry|sellerType|sellerReputation|maxShippingTime|idExpansion|language|minCondition|extra\[.+\]|apply)$/i;
+  const nodes = [...document.querySelectorAll('input[name], select[name], textarea[name]')]
+    .filter((node) => relevantFieldPattern.test(node.name || ''));
+  const filters = {};
+
+  for (const node of nodes) {
+    const rawName = node.name || '';
+    const fieldKey = rawName.replace(/\[.*\]$/, '');
+    if (!filters[fieldKey]) filters[fieldKey] = [];
+
+    if (node.tagName === 'SELECT') {
+      const options = [...node.options].map((option) => ({
+        rawName,
+        value: option.value,
+        label: textOf(option.textContent),
+        selected: option.selected,
+      })).filter((option) => option.value || option.label);
+      filters[fieldKey].push(...options);
+      continue;
+    }
+
+    const label = extractInputLabel(node);
+    const entry = {
+      rawName,
+      value: node.value || '',
+      label,
+      checked: node.checked === true,
+      type: node.type || node.tagName.toLowerCase(),
+    };
+    filters[fieldKey].push(entry);
+  }
+
+  Object.keys(filters).forEach((key) => {
+    const seen = new Set();
+    filters[key] = filters[key].filter((entry) => {
+      const marker = `${entry.rawName}|${entry.value}|${entry.label}`;
+      if (seen.has(marker)) return false;
+      seen.add(marker);
+      return true;
+    });
+  });
+
+  const filterForm = document.querySelector('form[action*="Product_Filter_FilterMetacard"], form[action*="FilterMetacard"]');
+  const activeQuery = collectActiveQuery();
+  const submittedFormData = collectFormData(filterForm);
+  mergeActiveValues(filters, activeQuery, 'url');
+  mergeActiveValues(filters, submittedFormData, 'form');
+
+  return {
+    title: document.title,
+    href: location.href,
+    filterFormAction: filterForm?.getAttribute('action') || '',
+    activeQuery,
+    submittedFormData,
+    filters,
+  };
+
+  function collectActiveQuery() {
+    const query = {};
+    const params = new URLSearchParams(location.search);
+    params.forEach((value, key) => {
+      if (!relevantFieldPattern.test(key)) return;
+      query[key] = value.split(',').map((part) => textOf(part)).filter(Boolean);
+    });
+    return query;
+  }
+
+  function collectFormData(form) {
+    if (!form) return {};
+    const data = {};
+    const formData = new FormData(form);
+    for (const [key, value] of formData.entries()) {
+      if (!relevantFieldPattern.test(key)) continue;
+      if (!data[key]) data[key] = [];
+      data[key].push(textOf(value));
+    }
+    return data;
+  }
+
+  function mergeActiveValues(targetFilters, activeValues, source) {
+    Object.entries(activeValues).forEach(([rawName, values]) => {
+      const fieldKey = rawName.replace(/\[.*\]$/, '');
+      if (!targetFilters[fieldKey]) targetFilters[fieldKey] = [];
+      const seen = new Set(targetFilters[fieldKey].map((entry) => `${entry.rawName}|${entry.value}`));
+      values.forEach((value) => {
+        const marker = `${rawName}|${value}`;
+        if (seen.has(marker)) return;
+        seen.add(marker);
+        targetFilters[fieldKey].push({
+          rawName,
+          value,
+          label: '',
+          active: true,
+          source,
+        });
+      });
+    });
+  }
+
+  function extractInputLabel(node) {
+    const directLabel = node.closest('label');
+    if (directLabel) return textOf(directLabel.textContent);
+
+    const id = node.getAttribute('id');
+    if (id) {
+      const forLabel = document.querySelector(`label[for="${CSS.escape(id)}"]`);
+      if (forLabel) return textOf(forLabel.textContent);
+    }
+
+    const wrapper = node.closest('.form-check, .checkbox, .radio, .filter-row, li, .list-group-item, .form-group');
+    if (wrapper) return textOf(wrapper.textContent);
+
+    const siblingText = [node.nextSibling, node.previousSibling]
+      .map((sibling) => textOf(sibling?.textContent || ''))
+      .find(Boolean);
+    return siblingText || '';
+  }
+}
 
 function detectCurrentPage() {
   const pathname = location.pathname || '';
@@ -707,15 +983,13 @@ function extractVisibleWantItems({ previewLimit }) {
     const checkbox = row.querySelector('input[name="checkWantsRow[]"][data-id-want]');
     const nameLink = row.querySelector('td.name a[href]');
     const preview = row.querySelector('td.preview [data-bs-title], td.preview [data-bs-original-title], td.preview [title]');
-    const languageNode = [...row.querySelectorAll('td.languages [aria-label], td.languages [data-bs-original-title], td.languages [data-original-title], td.languages [title]')]
-      .find((node) => languagePattern.test(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || ''));
     const conditionBadge = row.querySelector('td.condition .article-condition .badge, td.condition .badge');
     const priceCell = row.querySelector('td.buyPrice');
     const quantityCell = row.querySelector('td.amount');
     const previewTitle = preview?.getAttribute('data-bs-title') || preview?.getAttribute('data-bs-original-title') || preview?.getAttribute('title') || '';
     const text = row.textContent || '';
     const href = nameLink?.getAttribute('href') || '';
-    const productUrl = href ? (href.startsWith('http') ? href : `https://www.cardmarket.com${href}`) : '';
+    const productUrl = normalizeProductUrl(href);
 
     const productName = textOf(nameLink?.textContent)
       || decodeHtmlAttribute(previewTitle.match(/alt=&quot;([^&]+(?:&[^;]+;)*)&quot;/i)?.[1] || '')
@@ -723,6 +997,11 @@ function extractVisibleWantItems({ previewLimit }) {
 
     const productIdMatch = previewTitle.match(/product-images\.s3\.cardmarket\.com\/\d+\/[^/]+\/(\d+)\//i);
     const priceMatch = textOf(priceCell?.textContent).match(/(\d{1,3}(?:[.,]\d{3})*[,.]\d{2})/);
+    const selectedLanguages = extractSelectedLanguages(row);
+    const selectedExpansions = extractSelectedExpansions(row.querySelector('td.expansion'));
+    const selectedCondition = extractSelectedCondition(row) || textOf(conditionBadge?.textContent);
+    const foilPreference = extractDesktopTernaryPreference(row, 7, 'foil') ?? extractBooleanPreference(row, 'foil', /\bFoil\b/i, text);
+    const reverseHoloPreference = extractBooleanPreference(row, 'reverse', /Reverse\s*Holo/i, text);
 
     return {
       wantListId,
@@ -731,11 +1010,12 @@ function extractVisibleWantItems({ previewLimit }) {
       productName,
       productUrl,
       quantity: textOf(quantityCell?.getAttribute('data-amount')) || textOf(quantityCell?.textContent) || '1',
-      language: textOf(languageNode?.getAttribute('aria-label') || languageNode?.getAttribute('data-bs-original-title') || languageNode?.getAttribute('data-original-title') || languageNode?.getAttribute('title')),
-      minCondition: textOf(conditionBadge?.textContent),
+      languages: selectedLanguages,
+      minCondition: selectedCondition,
+      expansions: selectedExpansions,
       maxPrice: priceMatch?.[1] || '',
-      isFoil: /Foil\?/i.test(text) && !/Any/i.test(textOf(row.children[7]?.textContent)),
-      isReverseHolo: /Reverse\s*Holo/i.test(text),
+      isFoil: foilPreference,
+      isReverseHolo: reverseHoloPreference,
     };
   }
 
@@ -746,11 +1026,15 @@ function extractVisibleWantItems({ previewLimit }) {
     const preview = row.querySelector('[data-bs-title], [data-bs-original-title], [title]');
     const previewTitle = preview?.getAttribute('data-bs-title') || preview?.getAttribute('data-bs-original-title') || preview?.getAttribute('title') || '';
     const conditionBadge = row.querySelector('.article-condition .badge, .badge');
-    const languageNode = [...row.querySelectorAll('[aria-label], [data-bs-original-title], [data-original-title], [title]')]
-      .find((node) => languagePattern.test(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || ''));
     const href = nameLink?.getAttribute('href') || '';
-    const productUrl = href ? (href.startsWith('http') ? href : `https://www.cardmarket.com${href}`) : '';
+    const productUrl = normalizeProductUrl(href);
     const productIdMatch = previewTitle.match(/product-images\.s3\.cardmarket\.com\/\d+\/[^/]+\/(\d+)\//i);
+    const text = row.textContent || '';
+    const selectedLanguages = extractSelectedLanguages(row);
+    const selectedExpansions = extractSelectedExpansions(getMobileFieldValueNode(row, 'Expansion'));
+    const selectedCondition = extractSelectedCondition(row) || textOf(conditionBadge?.textContent) || textOf(getMobileFieldValueNode(row, 'Min. Condition')?.textContent);
+    const foilPreference = extractMobileTernaryPreference(row, 'Foil?') ?? extractBooleanPreference(row, 'foil', /\bFoil\b/i, text);
+    const reverseHoloPreference = extractBooleanPreference(row, 'reverse', /Reverse\s*Holo/i, text);
 
     return {
       wantListId,
@@ -759,12 +1043,128 @@ function extractVisibleWantItems({ previewLimit }) {
       productName: textOf(nameNode?.textContent) || textOf(nameLink?.textContent),
       productUrl,
       quantity: textOf(row.querySelector('.want-amount')?.textContent).replace(/\s+/g, '') || '1',
-      language: textOf(languageNode?.getAttribute('aria-label') || languageNode?.getAttribute('data-bs-original-title') || languageNode?.getAttribute('data-original-title') || languageNode?.getAttribute('title')),
-      minCondition: textOf(conditionBadge?.textContent),
+      languages: selectedLanguages,
+      minCondition: selectedCondition,
+      expansions: selectedExpansions,
       maxPrice: '',
-      isFoil: false,
-      isReverseHolo: false,
+      isFoil: foilPreference,
+      isReverseHolo: reverseHoloPreference,
     };
+  }
+
+  function normalizeProductUrl(href) {
+    if (!href) return '';
+    const absolute = href.startsWith('http') ? href : `https://www.cardmarket.com${href}`;
+    const url = new URL(absolute);
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  }
+
+  function extractSelectedLanguages(container) {
+    if (!container) return [];
+    const optionLabels = extractSelectedOptionLabels(container, /language/i);
+    const iconLabels = [...container.querySelectorAll('[aria-label], [data-bs-original-title], [data-original-title], [title]')]
+      .map((node) => textOf(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || ''))
+      .filter((label) => languagePattern.test(label));
+    const hiddenLabels = [...container.querySelectorAll('.visually-hidden')]
+      .map((node) => textOf(node.textContent))
+      .filter((label) => languagePattern.test(label));
+    return uniqueValues([...optionLabels, ...iconLabels, ...hiddenLabels]);
+  }
+
+  function extractSelectedExpansions(container) {
+    if (!container) return [];
+    const labels = extractSelectedOptionLabels(container, /expansion|set/i);
+    const tooltipLabels = [...container.querySelectorAll('[aria-label], [data-bs-original-title], [data-original-title], [title]')]
+      .map((node) => textOf(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || ''));
+    const hiddenLabels = [...container.querySelectorAll('.visually-hidden')]
+      .map((node) => textOf(node.textContent));
+    return uniqueValues([...labels, ...tooltipLabels, ...hiddenLabels].filter((label) => label && !/^any$/i.test(label)));
+  }
+
+  function extractSelectedCondition(container) {
+    return extractSelectedOptionLabels(container, /condition/i)[0] || '';
+  }
+
+  function extractDesktopTernaryPreference(row, cellIndex, nameHint) {
+    const cell = row.children?.[cellIndex];
+    return extractRenderedTernaryPreference(cell, nameHint);
+  }
+
+  function extractMobileTernaryPreference(row, labelText) {
+    const cell = getMobileFieldValueNode(row, labelText);
+    return extractRenderedTernaryPreference(cell, labelText);
+  }
+
+  function extractRenderedTernaryPreference(container, nameHint) {
+    if (!container) return null;
+    const labelText = textOf(container.textContent);
+    const iconLabel = textOf(container.querySelector('[aria-label], [data-bs-original-title], [data-original-title], [title]')?.getAttribute('aria-label')
+      || container.querySelector('[aria-label], [data-bs-original-title], [data-original-title], [title]')?.getAttribute('data-bs-original-title')
+      || container.querySelector('[aria-label], [data-bs-original-title], [data-original-title], [title]')?.getAttribute('data-original-title')
+      || container.querySelector('[aria-label], [data-bs-original-title], [data-original-title], [title]')?.getAttribute('title'));
+    const value = [labelText, iconLabel]
+      .find((entry) => entry && !new RegExp(nameHint, 'i').test(entry)) || '';
+    if (/^(y|yes|true)$/i.test(value)) return true;
+    if (/^(n|no|false)$/i.test(value)) return false;
+    if (/^any$/i.test(value) || value === '') return false;
+    return null;
+  }
+
+  function getMobileFieldValueNode(row, labelText) {
+    const terms = [...row.querySelectorAll('dt')];
+    const term = terms.find((node) => textOf(node.textContent) === labelText);
+    return term?.nextElementSibling || null;
+  }
+
+  function extractSelectedOptionLabels(container, namePattern) {
+    const labels = [];
+    container.querySelectorAll('select').forEach((select) => {
+      const name = select.getAttribute('name') || select.getAttribute('id') || '';
+      if (!namePattern.test(name)) return;
+      [...select.selectedOptions].forEach((option) => {
+        const label = textOf(option.textContent);
+        if (label) labels.push(label);
+      });
+    });
+    container.querySelectorAll('input[type="checkbox"], input[type="radio"]').forEach((input) => {
+      const name = input.getAttribute('name') || '';
+      if (!namePattern.test(name) || !input.checked) return;
+      const label = findInputLabel(container, input);
+      if (label) labels.push(label);
+    });
+    return uniqueValues(labels);
+  }
+
+  function extractBooleanPreference(container, nameHint, textPattern, text) {
+    const inputs = [...container.querySelectorAll('input[type="checkbox"], input[type="radio"]')]
+      .filter((input) => new RegExp(nameHint, 'i').test(input.getAttribute('name') || input.getAttribute('id') || ''));
+    if (inputs.length) {
+      const checked = inputs.find((input) => input.checked);
+      if (checked) {
+        const checkedValue = textOf(checked.value);
+        if (/^(1|y|yes|true|foil)$/i.test(checkedValue)) return true;
+        if (/^(0|n|no|false|any)$/i.test(checkedValue)) return false;
+      }
+    }
+    return textPattern.test(text);
+  }
+
+  function findInputLabel(container, input) {
+    const id = input.getAttribute('id');
+    if (id) {
+      const label = container.querySelector(`label[for="${CSS.escape(id)}"]`);
+      if (label) return textOf(label.textContent);
+    }
+    const wrappedLabel = input.closest('label');
+    if (wrappedLabel) return textOf(wrappedLabel.textContent);
+    const siblingLabel = input.parentElement?.querySelector('label');
+    return textOf(siblingLabel?.textContent);
+  }
+
+  function uniqueValues(values) {
+    return [...new Set(values.filter(Boolean))];
   }
 
   function decodeHtmlAttribute(value) {
@@ -1001,6 +1401,9 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     const url = new URL(urlValue, location.origin);
     if (activeFilters.languageId) {
       url.searchParams.set('language', activeFilters.languageId);
+    }
+    if (activeFilters.sellerCountryIds?.length) {
+      url.searchParams.set('sellerCountry', activeFilters.sellerCountryIds.join(','));
     }
     return url.toString();
   }
