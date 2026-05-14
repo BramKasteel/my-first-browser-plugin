@@ -1,7 +1,10 @@
 const extractItemsButton = document.getElementById('extractItems');
 const scrapeFirstItemButton = document.getElementById('scrapeFirstItem');
+const probeRateLimitsButton = document.getElementById('probeRateLimits');
 const inspectFiltersButton = document.getElementById('inspectFilters');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
+const probeRequestCountInput = document.getElementById('probeRequestCount');
+const probePageBudgetInput = document.getElementById('probePageBudget');
 const useSellerCacheInput = document.getElementById('useSellerCache');
 const matchWantLanguageInput = document.getElementById('matchWantLanguage');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
@@ -22,6 +25,9 @@ const SELLER_CACHE_PREFIX = 'sellerCache:';
 const SELLER_CACHE_VERSION = 'v6';
 const SELLER_CACHE_TTL_MS = 30 * 60 * 1000;
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
+const MIN_SELLER_DELAY_MS = 250;
+const REQUEST_JITTER_RATIO = 0.15;
+const RATE_PROBE_DELAYS_MS = [1500, 1000, 750, 500, 350, 300, 250, 200];
 const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
 const SELLER_COUNTRY_OPTIONS = [
   'Austria',
@@ -71,8 +77,11 @@ function appendStatus(message, tone = '') {
 function setBusy(isBusy) {
   extractItemsButton.disabled = isBusy;
   scrapeFirstItemButton.disabled = isBusy;
+  probeRateLimitsButton.disabled = isBusy;
   inspectFiltersButton.disabled = isBusy;
   sellerDelayInput.disabled = isBusy;
+  probeRequestCountInput.disabled = isBusy;
+  probePageBudgetInput.disabled = isBusy;
   useSellerCacheInput.disabled = isBusy;
   matchWantLanguageInput.disabled = isBusy;
   sellerLocationFilterListEl.querySelectorAll('input').forEach((input) => {
@@ -94,6 +103,34 @@ function textOf(value) {
   return String(value || '').trim().replace(/\s+/g, ' ');
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clampProbeRuns(value) {
+  return Math.min(8, Math.max(1, parseInt(value, 10) || 3));
+}
+
+function clampProbePageBudget(value) {
+  return Math.min(3, Math.max(1, parseInt(value, 10) || 2));
+}
+
+function roundProbeRecommendation(delayMs) {
+  return Math.max(MIN_SELLER_DELAY_MS, Math.ceil((delayMs * 1.25) / 50) * 50);
+}
+
+function sanitizeSellerDelay(value) {
+  return Math.max(MIN_SELLER_DELAY_MS, parseInt(value, 10) || 2000);
+}
+
+function applyJitter(baseMs, jitterRatio = REQUEST_JITTER_RATIO) {
+  const safeBase = Math.max(0, parseInt(baseMs, 10) || 0);
+  if (!safeBase || jitterRatio <= 0) return safeBase;
+  const spread = safeBase * jitterRatio;
+  const jittered = safeBase + ((Math.random() * 2) - 1) * spread;
+  return Math.max(0, Math.round(jittered));
+}
+
 async function getStorageArea() {
   return chrome.storage.session || chrome.storage.local;
 }
@@ -102,7 +139,9 @@ async function loadSellerSettings() {
   const storageArea = await getStorageArea();
   const stored = await storageArea.get(SELLER_SETTINGS_KEY);
   const settings = stored[SELLER_SETTINGS_KEY] || {};
-  sellerDelayInput.value = String(Math.max(1000, parseInt(settings.delayMs, 10) || 2000));
+  sellerDelayInput.value = String(sanitizeSellerDelay(settings.delayMs));
+  probeRequestCountInput.value = String(clampProbeRuns(settings.probeRuns));
+  probePageBudgetInput.value = String(clampProbePageBudget(settings.probePages));
   useSellerCacheInput.checked = settings.useCache !== false;
   matchWantLanguageInput.checked = settings.matchWantLanguage !== false;
   const selectedCountries = getStoredSellerCountries(settings);
@@ -129,7 +168,9 @@ async function saveSellerSettings() {
   const storageArea = await getStorageArea();
   await storageArea.set({
     [SELLER_SETTINGS_KEY]: {
-      delayMs: Math.max(1000, parseInt(sellerDelayInput.value, 10) || 2000),
+      delayMs: sanitizeSellerDelay(sellerDelayInput.value),
+      probeRuns: clampProbeRuns(probeRequestCountInput.value),
+      probePages: clampProbePageBudget(probePageBudgetInput.value),
       useCache: useSellerCacheInput.checked,
       matchWantLanguage: matchWantLanguageInput.checked,
       sellerLocationFilter: getSelectedSellerCountries(),
@@ -677,6 +718,9 @@ async function executeInTab(tabId, func, args = []) {
     func,
     args,
   });
+  if (execution?.exceptionDetails?.text) {
+    throw new Error(execution.exceptionDetails.text);
+  }
   return execution?.result;
 }
 
@@ -740,7 +784,7 @@ async function handleScrapeFirstItem() {
     }
 
     const tab = await ensureCardmarketTab();
-    const delayMs = Math.max(1000, parseInt(sellerDelayInput.value, 10) || 2000);
+    const delayMs = sanitizeSellerDelay(sellerDelayInput.value);
     const cooldownUntil = await getSellerCooldownUntil();
     if (cooldownUntil > Date.now()) {
       throw new Error(`Seller scraping is paused after rate limiting. Try again in ${formatRemaining(cooldownUntil - Date.now())}.`);
@@ -844,6 +888,151 @@ async function handleScrapeFirstItem() {
       appendStatus(`Loaded cached seller rows for ${firstItem.productName || firstItem.idProduct}.`, 'good');
     } else {
       appendStatus(`Scraped ${filteredResult.totalSellers}${filteredResult.unfilteredTotalSellers !== filteredResult.totalSellers ? ` of ${filteredResult.unfilteredTotalSellers}` : ''} seller rows for ${firstItem.productName || firstItem.idProduct}.`, filteredResult.totalSellers ? 'good' : 'bad');
+    }
+  } catch (error) {
+    appendStatus(error.message, 'bad');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleProbeRateLimits() {
+  setBusy(true);
+  try {
+    appendStatus('Starting safe rate probe for the first extracted item. Serial requests only; the probe will stop on the first warning.', 'good');
+    if (!latestExtractedItems.length) {
+      throw new Error('Extract want items first so the popup has a product to probe.');
+    }
+
+    const firstItem = latestExtractedItems[0];
+    if (!firstItem.idProduct) {
+      throw new Error('The first extracted item has no idProduct, so probing cannot start yet.');
+    }
+
+    const tab = await ensureCardmarketTab();
+    const cooldownUntil = await getSellerCooldownUntil();
+    if (cooldownUntil > Date.now()) {
+      throw new Error(`Seller scraping is paused after rate limiting. Try again in ${formatRemaining(cooldownUntil - Date.now())}.`);
+    }
+
+    const probeRuns = clampProbeRuns(probeRequestCountInput.value);
+    const probePages = clampProbePageBudget(probePageBudgetInput.value);
+    const requestLanguageId = matchWantLanguageInput.checked ? getCardmarketLanguageId(getSingleItemLanguage(firstItem)) : '';
+    const requestCountryIds = getCardmarketCountryIdsFromCountries(getSelectedSellerCountries());
+    const requestFilters = {
+      languageId: requestLanguageId,
+      sellerCountryIds: requestCountryIds,
+    };
+
+    const stageResults = [];
+    let lastSafeDelay = null;
+    let firstWarning = null;
+
+    for (const delayMs of RATE_PROBE_DELAYS_MS) {
+      appendStatus(`Probe stage ${delayMs} ms: running ${probeRuns} sample${probeRuns === 1 ? '' : 's'} with page budget ${probePages} and ${Math.round(REQUEST_JITTER_RATIO * 100)}% jitter.`);
+      const stage = {
+        delayMs,
+        runsRequested: probeRuns,
+        runsCompleted: 0,
+        pagesFetched: 0,
+        totalSellers: 0,
+        warnings: [],
+        statuses: [],
+      };
+
+      for (let runIndex = 0; runIndex < probeRuns; runIndex += 1) {
+        const result = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+          item: firstItem,
+          delay: delayMs,
+          previewLimit: 0,
+          requestFilters,
+          maxSellerPages: probePages,
+          maxFetchAttempts: 1,
+          jitterRatio: REQUEST_JITTER_RATIO,
+        }]);
+
+        if (!result) {
+          stage.warnings.push('No result returned from the Cardmarket tab.');
+          stage.statuses.push('no-result');
+          break;
+        }
+
+        stage.runsCompleted += 1;
+        stage.pagesFetched += result.pagesFetched || 0;
+        stage.totalSellers += result.totalSellers || 0;
+
+        if (result.error) {
+          stage.warnings.push(result.error);
+          stage.statuses.push(result.rateLimited ? 'rate-limited' : 'error');
+        } else if (result.rateLimited) {
+          stage.warnings.push('Cardmarket signalled rate limiting during the probe.');
+          stage.statuses.push('rate-limited');
+        } else if ((result.pagesFetched || 0) === 0 || (result.totalSellers || 0) === 0) {
+          stage.warnings.push('Probe returned no seller rows. Treating that as a warning signal.');
+          stage.statuses.push('empty');
+        } else {
+          stage.statuses.push('ok');
+        }
+
+        if (stage.warnings.length) {
+          if (result.rateLimited) {
+            await setSellerCooldownUntil(Date.now() + SELLER_COOLDOWN_MS);
+          }
+          break;
+        }
+
+        if (runIndex < probeRuns - 1) {
+          await sleep(applyJitter(delayMs));
+        }
+      }
+
+      stageResults.push(stage);
+      if (stage.warnings.length) {
+        firstWarning = { delayMs, message: stage.warnings[0] };
+        appendStatus(`Probe stopped at ${delayMs} ms: ${stage.warnings[0]}`, 'bad');
+        break;
+      }
+
+      lastSafeDelay = delayMs;
+      appendStatus(`Probe stage ${delayMs} ms completed without warnings across ${stage.runsCompleted} runs.`, 'good');
+      await sleep(2000);
+    }
+
+    const recommendedDelay = roundProbeRecommendation(lastSafeDelay || RATE_PROBE_DELAYS_MS[0]);
+    sellerDelayInput.value = String(recommendedDelay);
+    await saveSellerSettings();
+
+    renderSummary([
+      { label: 'Probe item', value: firstItem.productName || firstItem.idProduct, tone: 'good' },
+      { label: 'Stages tested', value: stageResults.map((stage) => `${stage.delayMs}ms`).join(' -> ') || '-' },
+      { label: 'Safe floor', value: lastSafeDelay ? `${lastSafeDelay} ms` : 'none confirmed', tone: lastSafeDelay ? 'good' : 'bad' },
+      { label: 'First warning', value: firstWarning ? `${firstWarning.delayMs} ms | ${firstWarning.message}` : 'none observed' },
+      { label: 'Recommended delay', value: `${recommendedDelay} ms`, tone: 'good' },
+      { label: 'Jitter', value: `${Math.round(REQUEST_JITTER_RATIO * 100)}% per request` },
+      { label: 'Probe budget', value: `${probeRuns} runs x ${probePages} page${probePages === 1 ? '' : 's'}` },
+    ]);
+
+    renderPayload({
+      kind: 'seller-rate-probe',
+      item: {
+        idProduct: firstItem.idProduct,
+        productName: firstItem.productName || '',
+      },
+      requestFilters,
+      probeRuns,
+      probePages,
+      stages: stageResults,
+      safeFloorDelayMs: lastSafeDelay,
+      firstWarning,
+      recommendedDelayMs: recommendedDelay,
+      jitterRatio: REQUEST_JITTER_RATIO,
+      testedAt: new Date().toISOString(),
+    });
+
+    if (lastSafeDelay) {
+      appendStatus(`Seller delay updated to ${recommendedDelay} ms based on the last clean probe stage.`, 'good');
+    } else {
+      appendStatus(`No clean probe stage completed. Seller delay was reset to ${recommendedDelay} ms as a conservative fallback.`, 'bad');
     }
   } catch (error) {
     appendStatus(error.message, 'bad');
@@ -965,9 +1154,12 @@ async function handleInspectFilters() {
 
 extractItemsButton.addEventListener('click', handleExtractItems);
 scrapeFirstItemButton.addEventListener('click', handleScrapeFirstItem);
+probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
 inspectFiltersButton.addEventListener('click', handleInspectFilters);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
 sellerDelayInput.addEventListener('change', saveSellerSettings);
+probeRequestCountInput.addEventListener('change', saveSellerSettings);
+probePageBudgetInput.addEventListener('change', saveSellerSettings);
 useSellerCacheInput.addEventListener('change', saveSellerSettings);
 matchWantLanguageInput.addEventListener('change', saveSellerSettings);
 sellerLocationFilterListEl.addEventListener('change', (event) => {
@@ -1391,10 +1583,18 @@ function extractVisibleWantItems({ previewLimit }) {
   }
 }
 
-async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {} }) {
+async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {}, maxSellerPages = 20, maxFetchAttempts = 4, jitterRatio }) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const effectiveJitterRatio = Number.isFinite(Number(jitterRatio)) ? Number(jitterRatio) : 0.15;
+  const applyLocalJitter = (baseMs) => {
+    const safeBase = Math.max(0, parseInt(baseMs, 10) || 0);
+    if (!safeBase || effectiveJitterRatio <= 0) return safeBase;
+    const spread = safeBase * effectiveJitterRatio;
+    const jittered = safeBase + ((Math.random() * 2) - 1) * spread;
+    return Math.max(0, Math.round(jittered));
+  };
   const SELLER_PAGE_SIZE_HINT = 50;
-  const MAX_SELLER_PAGES = 20;
+  const MAX_SELLER_PAGES = Math.max(1, Math.min(20, parseInt(maxSellerPages, 10) || 20));
   const pathParts = location.pathname.split('/').filter(Boolean);
   const lang = pathParts[0] || 'en';
   const game = pathParts[1] || 'Magic';
@@ -1481,7 +1681,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
         candidate.currentRequest = page < 999 ? nextRequest : null;
         if (!candidate.currentRequest && page < 999) page = 999;
       }
-      if (delay && page < 999) await sleep(delay);
+      if (delay && page < 999) await sleep(applyLocalJitter(delay));
       break;
     }
 
@@ -1761,7 +1961,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
 
   async function fetchWithRetry(request) {
     let res = null;
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    for (let attempt = 0; attempt < Math.max(1, parseInt(maxFetchAttempts, 10) || 1); attempt += 1) {
       try {
         const options = {
           method: request.method || 'GET',

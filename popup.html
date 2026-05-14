@@ -303,6 +303,7 @@
     <section class="panel actions">
       <button id="extractItems" class="secondary">Extract Visible Want Items</button>
       <button id="scrapeFirstItem" class="secondary">Scrape Sellers For First Item</button>
+      <button id="probeRateLimits" class="secondary">Run Safe Rate Probe</button>
       <button id="inspectFilters" class="secondary">Inspect Filter Codes</button>
     </section>
 
@@ -310,7 +311,7 @@
       <div class="config-row">
         <label class="config-label" for="sellerDelayMs">
           <span>Seller request delay (ms)</span>
-          <input id="sellerDelayMs" type="number" min="1000" step="250" value="2000">
+          <input id="sellerDelayMs" type="number" min="250" step="50" value="2000">
         </label>
         <button id="clearSellerCache" class="secondary mini-button">Clear Cache</button>
       </div>
@@ -322,6 +323,17 @@
         <input id="matchWantLanguage" type="checkbox" checked>
         <span>Only keep sellers whose card language matches the selected want item</span>
       </label>
+      <div class="config-row">
+        <label class="config-label" for="probeRequestCount">
+          <span>Probe runs per delay stage</span>
+          <input id="probeRequestCount" type="number" min="1" max="8" step="1" value="3">
+        </label>
+        <label class="config-label" for="probePageBudget">
+          <span>Probe page budget per run</span>
+          <input id="probePageBudget" type="number" min="1" max="3" step="1" value="2">
+        </label>
+      </div>
+      <p class="subtle">Probe mode tests one item serially at staged delays, applies small random jitter, stops on the first warning, and recommends a conservative seller delay.</p>
       <div class="config-label">
         <span>Seller country filter</span>
         <div id="sellerLocationFilterList" class="country-list" role="group" aria-label="Seller country filter"></div>
