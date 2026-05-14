@@ -1,5 +1,4 @@
 const extractItemsButton = document.getElementById('extractItems');
-const scrapeFirstItemButton = document.getElementById('scrapeFirstItem');
 const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
 const probeRateLimitsButton = document.getElementById('probeRateLimits');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
@@ -8,6 +7,7 @@ const probePageBudgetInput = document.getElementById('probePageBudget');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
 const copyPayloadButton = document.getElementById('copyPayload');
 const wantListPreviewEl = document.getElementById('wantListPreview');
+const wantListWarningEl = document.getElementById('wantListWarning');
 const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
 const sellerItemsEl = document.getElementById('sellerItems');
@@ -89,11 +89,9 @@ function hasLoadedWantItems() {
   return latestExtractedItems.length > 0;
 }
 
-function syncSellerActionButtons(isBusy = false) {
+function syncSellerScrapeButton(isBusy = false) {
   const hasItems = hasLoadedWantItems();
-  scrapeFirstItemButton.disabled = isBusy || !hasItems;
   scrapeAllItemsButton.disabled = isBusy || !hasItems;
-  scrapeFirstItemButton.classList.toggle('is-busy', isBusy);
   scrapeAllItemsButton.classList.toggle('is-busy', isBusy);
   scrapeAllItemsButton.classList.toggle('secondary', !hasItems);
 }
@@ -111,7 +109,7 @@ function setBusy(isBusy) {
   });
   copyPayloadButton.disabled = isBusy;
   copyPayloadButton.classList.toggle('is-busy', isBusy);
-  syncSellerActionButtons(isBusy);
+  syncSellerScrapeButton(isBusy);
 }
 
 function setRunState({ active, message, tone = '' }) {
@@ -696,6 +694,12 @@ function renderItems(items, totalVisible) {
   }
 }
 
+function renderWantListWarning(message = '') {
+  if (!wantListWarningEl) return;
+  wantListWarningEl.textContent = message;
+  wantListWarningEl.hidden = !message;
+}
+
 function renderSellers(sellers, totalVisible, itemLabel = '') {
   sellerItemsEl.replaceChildren();
 
@@ -811,6 +815,31 @@ async function ensureCardmarketTab() {
   return tab;
 }
 
+async function refreshWantListWarning() {
+  try {
+    const tab = await getTargetTab();
+    if (!tab?.url) {
+      renderWantListWarning('Open Cardmarket want-list detail page like https://www.cardmarket.com/en/Magic/Wants/1234567 first.');
+      return;
+    }
+
+    if (!/https:\/\/www\.cardmarket\.com\//.test(tab.url)) {
+      renderWantListWarning('Current tab not Cardmarket. Open want-list detail page like https://www.cardmarket.com/en/Magic/Wants/1234567 first.');
+      return;
+    }
+
+    const pageKind = wantsPageKind(new URL(tab.url).pathname || '');
+    if (pageKind !== 'wants-detail') {
+      renderWantListWarning('This extension works on a specific Cardmarket want list page. Please open a URL like https://www.cardmarket.com/en/Magic/Wants/1234567 and then try again.');
+      return;
+    }
+
+    renderWantListWarning('');
+  } catch {
+    renderWantListWarning('Could not inspect current tab. Open Cardmarket want-list detail page and retry.');
+  }
+}
+
 async function handleExtractItems() {
   startRun('Extracting visible want items from current Cardmarket page...');
   setBusy(true);
@@ -831,7 +860,7 @@ async function handleExtractItems() {
       { label: 'Desktop rows seen', value: String(result.debug.desktopRows || 0) },
     ]);
     latestExtractedItems = result.items;
-    syncSellerActionButtons();
+    syncSellerScrapeButton();
     renderItems(result.items.slice(0, 8), result.totalVisible);
     renderSellers([], 0, result.items[0]?.productName || 'the first item');
     renderPayload(result);
@@ -840,69 +869,7 @@ async function handleExtractItems() {
     finishRun(`Extracted ${result.totalVisible} visible want items.`, result.totalVisible ? 'good' : 'bad');
   } catch (error) {
     latestExtractedItems = [];
-    syncSellerActionButtons();
-    appendStatus(error.message, 'bad');
-    finishRun(error.message, 'bad');
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function handleScrapeFirstItem() {
-  startRun('Scraping seller rows for first extracted want item...');
-  setBusy(true);
-  try {
-    appendStatus('Starting seller scrape for the first extracted item...', 'good');
-    if (!latestExtractedItems.length) {
-      throw new Error('Extract want items first so the popup has a product to scrape.');
-    }
-
-    const firstItem = latestExtractedItems[0];
-    if (!firstItem.idProduct) {
-      throw new Error('The first extracted item has no idProduct, so seller scraping cannot start yet.');
-    }
-
-    const tab = await ensureCardmarketTab();
-    const delayMs = sanitizeSellerDelay(sellerDelayInput.value);
-    const { filteredResult } = await scrapeWantItemSellerData({
-      tab,
-      item: firstItem,
-      delayMs,
-      logPartitionRetry: true,
-    });
-    const sellerCountLabel = filteredResult.unfilteredTotalSellers && filteredResult.unfilteredTotalSellers !== filteredResult.totalSellers
-      ? `${filteredResult.totalSellers} / ${filteredResult.unfilteredTotalSellers}`
-      : String(filteredResult.totalSellers);
-    const filterSummary = [];
-    if (filteredResult.filtersApplied?.requestedLanguages?.length) {
-      filterSummary.push(`langs=${filteredResult.filtersApplied.requestedLanguages.join(', ')}`);
-    }
-    if (filteredResult.filtersApplied?.sellerCountries?.length) {
-      filterSummary.push(`country=${filteredResult.filtersApplied.sellerCountries.join(', ')}`);
-    }
-
-    renderSummary([
-      { label: 'Selected item', value: firstItem.productName || firstItem.idProduct, tone: 'good' },
-      { label: 'Product id', value: firstItem.idProduct },
-      { label: 'Seller rows', value: sellerCountLabel, tone: filteredResult.totalSellers ? 'good' : 'bad' },
-      { label: 'Pages fetched', value: String(filteredResult.pagesFetched || 0) },
-      { label: 'Seller scopes', value: String(filteredResult.partitionCount || 1) },
-      { label: 'Market path', value: filteredResult.marketPath || '-' },
-      { label: 'Filters', value: filterSummary.join(' | ') || 'none' },
-      { label: 'Rate limited', value: filteredResult.rateLimited ? 'yes' : 'no', tone: filteredResult.rateLimited ? 'bad' : '' },
-    ]);
-    renderSellers(filteredResult.sellers.slice(0, 12), filteredResult.totalSellers, firstItem.productName || firstItem.idProduct);
-    renderPayload(filteredResult);
-    setActiveResultTab('sellers');
-    if (filteredResult.error) {
-      appendStatus(filteredResult.error, 'bad');
-      finishRun(filteredResult.error, 'bad');
-    } else {
-      const completionMessage = `Scraped ${filteredResult.totalSellers}${filteredResult.unfilteredTotalSellers !== filteredResult.totalSellers ? ` of ${filteredResult.unfilteredTotalSellers}` : ''} seller rows for ${firstItem.productName || firstItem.idProduct}.`;
-      appendStatus(completionMessage, filteredResult.totalSellers ? 'good' : 'bad');
-      finishRun(completionMessage, filteredResult.totalSellers ? 'good' : 'bad');
-    }
-  } catch (error) {
+    syncSellerScrapeButton();
     appendStatus(error.message, 'bad');
     finishRun(error.message, 'bad');
   } finally {
@@ -1404,7 +1371,6 @@ async function handleCopyPayload() {
 }
 
 extractItemsButton.addEventListener('click', handleExtractItems);
-scrapeFirstItemButton.addEventListener('click', handleScrapeFirstItem);
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
@@ -1421,6 +1387,11 @@ sellerLocationFilterListEl.addEventListener('change', (event) => {
     saveSellerSettings();
   }
 });
+window.addEventListener('focus', () => {
+  refreshWantListWarning().catch(() => {
+    renderWantListWarning('Could not inspect current tab. Open Cardmarket want-list detail page and retry.');
+  });
+});
 
 renderSummary([
   { label: 'Status', value: 'Ready for page detection' },
@@ -1431,16 +1402,15 @@ renderItems([], 0);
 renderSellers([], 0);
 renderPayload(null);
 renderSellerCountryFilterList();
-syncSellerActionButtons();
-scrapeAllItemsButton.textContent = isDetached
-  ? 'Scrape Sellers For All Extracted Items'
-  : 'Scrape Sellers For All Extracted Items';
+syncSellerScrapeButton();
+scrapeAllItemsButton.textContent = 'Scrape sellers';
 appendStatus(isDetached
   ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'
   : 'Popup loaded. Extension opens batch scrape workspace by default for long runs.');
 
 Promise.allSettled([
   loadSellerSettings(),
+  refreshWantListWarning(),
 ]).then((results) => {
   if (results[0].status === 'rejected') {
     appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
@@ -1449,7 +1419,7 @@ Promise.allSettled([
   if (isDetached && autoStartMode === 'scrapeAll') {
     loadDetachedBatchState().then((items) => {
       latestExtractedItems = items;
-      syncSellerActionButtons();
+      syncSellerScrapeButton();
       if (!latestExtractedItems.length) {
         appendStatus('Batch scrape workspace could not auto-start because no extracted items were passed from popup.', 'bad');
         return;

@@ -91,17 +91,26 @@
       gap: 8px;
     }
 
-    .inline-actions {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-    }
-
     .panel-note {
       margin: 0;
       color: var(--muted);
       font-size: 12px;
       line-height: 1.45;
+    }
+
+    .inline-notice {
+      margin: 10px 0 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(248, 113, 113, 0.25);
+      background: rgba(127, 29, 29, 0.18);
+      color: #fecaca;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .inline-notice[hidden] {
+      display: none;
     }
 
     .collapsible {
@@ -484,7 +493,6 @@
     }
 
     @media (max-width: 440px) {
-      .inline-actions,
       .result-tabs {
         grid-template-columns: 1fr;
       }
@@ -499,9 +507,9 @@
 <body>
   <main>
     <section class="hero">
-      <p class="eyebrow">Phase 1</p>
+      <p class="eyebrow">Castle Fun Consultancy</p>
       <h1>Cardmarket Wants Optimizer</h1>
-      <p class="subtle">This first slice proves the popup can detect a Cardmarket want-list page and extract visible items from it.</p>
+      <p class="subtle">Load in your wants list, and obtain the combination of sellers that result in the minimal price!</p>
     </section>
 
     <section class="panel-stack">
@@ -510,7 +518,8 @@
           <h2 class="panel-title">Want List</h2>
           <button id="extractItems" class="secondary mini-button">Extract Visible Want Items</button>
         </div>
-        <p class="panel-note">Load visible want entries from current Cardmarket want-list page when button pressed. No popup restore cache.</p>
+        <p class="panel-note">Load your wants list by going to it's page and pressing the button.</p>
+        <p id="wantListWarning" class="inline-notice" hidden></p>
         <details id="wantListPreview" class="collapsible is-empty">
           <summary>Want list preview</summary>
           <div class="collapsible-body">
@@ -527,9 +536,8 @@
           <span>Seller country filter</span>
           <div id="sellerLocationFilterList" class="country-list" role="group" aria-label="Seller country filter"></div>
         </div>
-        <div class="inline-actions">
-          <button id="scrapeFirstItem" class="secondary">Scrape Sellers For First Item</button>
-          <button id="scrapeAllItems" class="secondary">Scrape Sellers For All Extracted Items</button>
+        <div class="actions">
+          <button id="scrapeAllItems" class="secondary">Scrape sellers</button>
         </div>
       </section>
 
