@@ -1,5 +1,6 @@
 const extractItemsButton = document.getElementById('extractItems');
 const scrapeFirstItemButton = document.getElementById('scrapeFirstItem');
+const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
 const probeRateLimitsButton = document.getElementById('probeRateLimits');
 const inspectFiltersButton = document.getElementById('inspectFilters');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
@@ -15,6 +16,11 @@ const itemsEl = document.getElementById('items');
 const sellerItemsEl = document.getElementById('sellerItems');
 const payloadViewEl = document.getElementById('payloadView');
 const statusLogEl = document.getElementById('statusLog');
+
+const urlParams = new URLSearchParams(window.location.search);
+const isDetached = urlParams.get('detached') === '1';
+const autoStartMode = urlParams.get('autoStart') || '';
+const forcedTabId = urlParams.get('tabId') ? parseInt(urlParams.get('tabId'), 10) : null;
 
 let latestExtractPayload = null;
 let latestExtractedItems = [];
@@ -77,6 +83,7 @@ function appendStatus(message, tone = '') {
 function setBusy(isBusy) {
   extractItemsButton.disabled = isBusy;
   scrapeFirstItemButton.disabled = isBusy;
+  scrapeAllItemsButton.disabled = isBusy;
   probeRateLimitsButton.disabled = isBusy;
   inspectFiltersButton.disabled = isBusy;
   sellerDelayInput.disabled = isBusy;
@@ -687,6 +694,7 @@ function renderSellers(sellers, totalVisible, itemLabel = '') {
     const meta = document.createElement('p');
     meta.className = 'item-meta';
     meta.textContent = [
+      seller.wantItemName ? `want=${seller.wantItemName}` : null,
       `article=${seller.articleId || '?'}`,
       seller.price ? `price=${seller.price}` : null,
       seller.amount ? `qty=${seller.amount}` : null,
@@ -708,8 +716,31 @@ function renderSellers(sellers, totalVisible, itemLabel = '') {
 }
 
 async function getTargetTab() {
+  if (Number.isInteger(forcedTabId)) {
+    try {
+      return await chrome.tabs.get(forcedTabId);
+    } catch {
+      return null;
+    }
+  }
+
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab || null;
+}
+
+async function openDetachedPopup({ autoStart = '' } = {}) {
+  const tab = await ensureCardmarketTab();
+  const params = new URLSearchParams({ detached: '1' });
+  if (autoStart) params.set('autoStart', autoStart);
+  if (tab.id) params.set('tabId', String(tab.id));
+
+  await saveSellerSettings();
+  await chrome.windows.create({
+    url: `${chrome.runtime.getURL('popup.html')}?${params.toString()}`,
+    type: 'popup',
+    width: 460,
+    height: 920,
+  });
 }
 
 async function executeInTab(tabId, func, args = []) {
@@ -785,79 +816,12 @@ async function handleScrapeFirstItem() {
 
     const tab = await ensureCardmarketTab();
     const delayMs = sanitizeSellerDelay(sellerDelayInput.value);
-    const cooldownUntil = await getSellerCooldownUntil();
-    if (cooldownUntil > Date.now()) {
-      throw new Error(`Seller scraping is paused after rate limiting. Try again in ${formatRemaining(cooldownUntil - Date.now())}.`);
-    }
-
-    const tabUrl = tab.url || '';
-    const requestLanguageId = matchWantLanguageInput.checked ? getCardmarketLanguageId(getSingleItemLanguage(firstItem)) : '';
-    const selectedCountries = getSelectedSellerCountries();
-    const requestCountryIds = getCardmarketCountryIdsFromCountries(selectedCountries);
-    const cacheKey = `${SELLER_CACHE_PREFIX}${SELLER_CACHE_VERSION}:${tabUrl.split('?')[0]}:${firstItem.idProduct}:lang=${requestLanguageId || 'all'}:country=${requestCountryIds.join(',') || 'all'}`;
-    let result = null;
-    let fromCache = false;
-
-    if (useSellerCacheInput.checked) {
-      const cached = await getSellerCacheEntry(cacheKey);
-      if (cached) {
-        result = cached.value;
-        fromCache = true;
-      }
-    }
-
-    if (!result) {
-      const baseRequestFilters = {
-        languageId: requestLanguageId,
-        sellerCountryIds: requestCountryIds,
-      };
-      const baseResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
-        item: firstItem,
-        delay: delayMs,
-        previewLimit: 12,
-        requestFilters: baseRequestFilters,
-      }]);
-      if (!baseResult) {
-        throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
-      }
-      result = baseResult;
-
-      const countryScopes = buildSellerCountryScopes({
-        requestCountryIds,
-        availableSellerFilters: baseResult.availableSellerFilters,
-      });
-      const shouldPartitionByCountry = shouldPartitionSellerScrape(baseResult, countryScopes);
-      if (shouldPartitionByCountry) {
-        const partitionLabels = countryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
-        appendStatus(`Broad seller scope looks capped. Retrying in ${countryScopes.length} country partitions: ${partitionLabels.join(', ')}.`, 'good');
-        const partitionResults = [];
-        for (const scope of countryScopes) {
-          const scopeResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
-            item: firstItem,
-            delay: delayMs,
-            previewLimit: 12,
-            requestFilters: {
-              languageId: requestLanguageId,
-              sellerCountryIds: [scope.countryId],
-            },
-          }]);
-          if (scopeResult) {
-            scopeResult.partitionLabel = scope.label;
-            partitionResults.push(scopeResult);
-          }
-        }
-        result = mergeSellerScopeResults(baseResult, partitionResults);
-      }
-
-      if (result.rateLimited) {
-        await setSellerCooldownUntil(Date.now() + SELLER_COOLDOWN_MS);
-      }
-      if (!result.error && result.totalSellers > 0 && useSellerCacheInput.checked) {
-        await setSellerCacheEntry(cacheKey, result);
-      }
-    }
-
-    const filteredResult = applySellerFilters(result, firstItem);
+    const { filteredResult, fromCache } = await scrapeWantItemSellerData({
+      tab,
+      item: firstItem,
+      delayMs,
+      logPartitionRetry: true,
+    });
     const sellerCountLabel = filteredResult.unfilteredTotalSellers && filteredResult.unfilteredTotalSellers !== filteredResult.totalSellers
       ? `${filteredResult.totalSellers} / ${filteredResult.unfilteredTotalSellers}`
       : String(filteredResult.totalSellers);
@@ -888,6 +852,196 @@ async function handleScrapeFirstItem() {
       appendStatus(`Loaded cached seller rows for ${firstItem.productName || firstItem.idProduct}.`, 'good');
     } else {
       appendStatus(`Scraped ${filteredResult.totalSellers}${filteredResult.unfilteredTotalSellers !== filteredResult.totalSellers ? ` of ${filteredResult.unfilteredTotalSellers}` : ''} seller rows for ${firstItem.productName || firstItem.idProduct}.`, filteredResult.totalSellers ? 'good' : 'bad');
+    }
+  } catch (error) {
+    appendStatus(error.message, 'bad');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleScrapeAllItems() {
+  if (!isDetached) {
+    try {
+      if (!latestExtractedItems.length) {
+        throw new Error('Extract want items first so the popup has products to scrape.');
+      }
+
+      appendStatus('Opening a pinned scrape window so the batch keeps running after this popup closes...', 'good');
+      await openDetachedPopup({ autoStart: 'scrapeAll' });
+      window.close();
+      return;
+    } catch (error) {
+      appendStatus(error.message, 'bad');
+      return;
+    }
+  }
+
+  setBusy(true);
+  try {
+    appendStatus('Starting serial seller scrape for all extracted want items...', 'good');
+    if (!latestExtractedItems.length) {
+      throw new Error('Extract want items first so the popup has products to scrape.');
+    }
+
+    const tab = await ensureCardmarketTab();
+    const delayMs = sanitizeSellerDelay(sellerDelayInput.value);
+    await ensureSellerScrapeNotCoolingDown();
+
+    const startedAt = new Date().toISOString();
+    const aggregateResults = [];
+    const previewSellers = [];
+    let successCount = 0;
+    let failedCount = 0;
+    let skippedCount = 0;
+    let cachedCount = 0;
+    let totalSellerRows = 0;
+    let rateLimited = false;
+    let stopReason = '';
+
+    for (let index = 0; index < latestExtractedItems.length; index += 1) {
+      const item = latestExtractedItems[index];
+      const itemLabel = item.productName || item.idProduct || `item ${index + 1}`;
+
+      if (!item.idProduct) {
+        skippedCount += 1;
+        aggregateResults.push({
+          item,
+          skipped: true,
+          error: 'Missing idProduct on extracted want item.',
+        });
+        appendStatus(`Skipping item ${index + 1}/${latestExtractedItems.length}: ${itemLabel} has no idProduct.`, 'bad');
+        continue;
+      }
+
+      appendStatus(`Scraping item ${index + 1}/${latestExtractedItems.length}: ${itemLabel}.`);
+
+      let scrapeOutcome = null;
+      try {
+        scrapeOutcome = await scrapeWantItemSellerData({
+          tab,
+          item,
+          delayMs,
+          logPartitionRetry: false,
+        });
+      } catch (error) {
+        failedCount += 1;
+        stopReason = error.message;
+        aggregateResults.push({
+          item,
+          error: error.message,
+          stopped: true,
+        });
+        appendStatus(`Stopped on item ${index + 1}/${latestExtractedItems.length}: ${error.message}`, 'bad');
+        break;
+      }
+
+      const { filteredResult, fromCache } = scrapeOutcome;
+      if (filteredResult.error) {
+        failedCount += 1;
+        aggregateResults.push({
+          item,
+          fromCache,
+          error: filteredResult.error,
+          rateLimited: !!filteredResult.rateLimited,
+          totalSellers: filteredResult.totalSellers || 0,
+          unfilteredTotalSellers: filteredResult.unfilteredTotalSellers || 0,
+          pagesFetched: filteredResult.pagesFetched || 0,
+          marketPath: filteredResult.marketPath || '',
+          requestFilters: filteredResult.requestFilters || null,
+          filtersApplied: filteredResult.filtersApplied || null,
+          attemptedUrls: filteredResult.attemptedUrls || [],
+          partitionCount: filteredResult.partitionCount || 1,
+          sellers: filteredResult.sellers || [],
+        });
+        appendStatus(`Item ${index + 1}/${latestExtractedItems.length} failed: ${filteredResult.error}`, 'bad');
+        if (filteredResult.rateLimited) {
+          rateLimited = true;
+          stopReason = filteredResult.error;
+          break;
+        }
+        continue;
+      }
+
+      successCount += 1;
+      if (fromCache) cachedCount += 1;
+      totalSellerRows += filteredResult.totalSellers || 0;
+      aggregateResults.push({
+        item,
+        fromCache,
+        error: '',
+        rateLimited: !!filteredResult.rateLimited,
+        totalSellers: filteredResult.totalSellers || 0,
+        unfilteredTotalSellers: filteredResult.unfilteredTotalSellers || 0,
+        pagesFetched: filteredResult.pagesFetched || 0,
+        marketPath: filteredResult.marketPath || '',
+        requestFilters: filteredResult.requestFilters || null,
+        filtersApplied: filteredResult.filtersApplied || null,
+        attemptedUrls: filteredResult.attemptedUrls || [],
+        partitionCount: filteredResult.partitionCount || 1,
+        sellers: filteredResult.sellers || [],
+      });
+
+      filteredResult.sellers.forEach((seller) => {
+        if (previewSellers.length >= 12) return;
+        previewSellers.push({
+          ...seller,
+          wantItemName: item.productName || item.idProduct || '',
+        });
+      });
+
+      appendStatus(
+        `Item ${index + 1}/${latestExtractedItems.length}: ${filteredResult.totalSellers}${fromCache ? ' cached' : ''} seller rows for ${itemLabel}.`,
+        filteredResult.totalSellers ? 'good' : 'bad'
+      );
+
+      if (filteredResult.rateLimited) {
+        rateLimited = true;
+        stopReason = 'Seller scraping paused after rate limiting.';
+        break;
+      }
+    }
+
+    renderSummary([
+      { label: 'Scrape scope', value: 'All extracted items from the current page', tone: 'good' },
+      { label: 'Items extracted', value: String(latestExtractedItems.length) },
+      { label: 'Items scraped', value: String(successCount), tone: successCount ? 'good' : '' },
+      { label: 'Items failed', value: String(failedCount), tone: failedCount ? 'bad' : '' },
+      { label: 'Items skipped', value: String(skippedCount), tone: skippedCount ? 'bad' : '' },
+      { label: 'Cached hits', value: String(cachedCount), tone: cachedCount ? 'good' : '' },
+      { label: 'Seller rows kept', value: String(totalSellerRows), tone: totalSellerRows ? 'good' : '' },
+      { label: 'Rate limited', value: rateLimited ? 'yes' : 'no', tone: rateLimited ? 'bad' : '' },
+      { label: 'Stopped reason', value: stopReason || 'completed' },
+    ]);
+    renderSellers(previewSellers, totalSellerRows, 'the extracted want list');
+    renderPayload({
+      kind: 'seller-scrape-batch',
+      wantListId: latestExtractedItems[0]?.wantListId || '',
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      requestSettings: {
+        delayMs,
+        useCache: useSellerCacheInput.checked,
+        matchWantLanguage: matchWantLanguageInput.checked,
+        sellerCountries: getSelectedSellerCountries(),
+      },
+      totals: {
+        extractedItems: latestExtractedItems.length,
+        successCount,
+        failedCount,
+        skippedCount,
+        cachedCount,
+        totalSellerRows,
+        rateLimited,
+        stopReason,
+      },
+      results: aggregateResults,
+    });
+
+    if (stopReason) {
+      appendStatus(`Batch scrape stopped: ${stopReason}`, rateLimited ? 'bad' : '');
+    } else {
+      appendStatus(`Batch scrape completed for ${successCount} extracted item${successCount === 1 ? '' : 's'}.`, successCount ? 'good' : 'bad');
     }
   } catch (error) {
     appendStatus(error.message, 'bad');
@@ -1114,6 +1268,94 @@ function mergeSellerScopeResults(baseResult, partitionResults) {
   };
 }
 
+async function ensureSellerScrapeNotCoolingDown() {
+  const cooldownUntil = await getSellerCooldownUntil();
+  if (cooldownUntil > Date.now()) {
+    throw new Error(`Seller scraping is paused after rate limiting. Try again in ${formatRemaining(cooldownUntil - Date.now())}.`);
+  }
+}
+
+function buildSellerCacheKey(tabUrl, item, requestLanguageId, requestCountryIds) {
+  return `${SELLER_CACHE_PREFIX}${SELLER_CACHE_VERSION}:${tabUrl.split('?')[0]}:${item.idProduct}:lang=${requestLanguageId || 'all'}:country=${requestCountryIds.join(',') || 'all'}`;
+}
+
+async function scrapeWantItemSellerData({ tab, item, delayMs, logPartitionRetry }) {
+  await ensureSellerScrapeNotCoolingDown();
+
+  const tabUrl = tab.url || '';
+  const requestLanguageId = matchWantLanguageInput.checked ? getCardmarketLanguageId(getSingleItemLanguage(item)) : '';
+  const requestCountryIds = getCardmarketCountryIdsFromCountries(getSelectedSellerCountries());
+  const cacheKey = buildSellerCacheKey(tabUrl, item, requestLanguageId, requestCountryIds);
+  let result = null;
+  let fromCache = false;
+
+  if (useSellerCacheInput.checked) {
+    const cached = await getSellerCacheEntry(cacheKey);
+    if (cached) {
+      result = cached.value;
+      fromCache = true;
+    }
+  }
+
+  if (!result) {
+    const baseRequestFilters = {
+      languageId: requestLanguageId,
+      sellerCountryIds: requestCountryIds,
+    };
+    const baseResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+      item,
+      delay: delayMs,
+      previewLimit: 12,
+      requestFilters: baseRequestFilters,
+    }]);
+    if (!baseResult) {
+      throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
+    }
+    result = baseResult;
+
+    const countryScopes = buildSellerCountryScopes({
+      requestCountryIds,
+      availableSellerFilters: baseResult.availableSellerFilters,
+    });
+    const shouldPartitionByCountry = shouldPartitionSellerScrape(baseResult, countryScopes);
+    if (shouldPartitionByCountry) {
+      const partitionLabels = countryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
+      if (logPartitionRetry) {
+        appendStatus(`Broad seller scope looks capped. Retrying in ${countryScopes.length} country partitions: ${partitionLabels.join(', ')}.`, 'good');
+      }
+      const partitionResults = [];
+      for (const scope of countryScopes) {
+        const scopeResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+          item,
+          delay: delayMs,
+          previewLimit: 12,
+          requestFilters: {
+            languageId: requestLanguageId,
+            sellerCountryIds: [scope.countryId],
+          },
+        }]);
+        if (scopeResult) {
+          scopeResult.partitionLabel = scope.label;
+          partitionResults.push(scopeResult);
+        }
+      }
+      result = mergeSellerScopeResults(baseResult, partitionResults);
+    }
+
+    if (result.rateLimited) {
+      await setSellerCooldownUntil(Date.now() + SELLER_COOLDOWN_MS);
+    }
+    if (!result.error && result.totalSellers > 0 && useSellerCacheInput.checked) {
+      await setSellerCacheEntry(cacheKey, result);
+    }
+  }
+
+  return {
+    fromCache,
+    filteredResult: applySellerFilters(result, item),
+  };
+}
+
 async function handleCopyPayload() {
   if (!latestExtractPayload) {
     appendStatus('No payload available to copy yet.', 'bad');
@@ -1154,6 +1396,7 @@ async function handleInspectFilters() {
 
 extractItemsButton.addEventListener('click', handleExtractItems);
 scrapeFirstItemButton.addEventListener('click', handleScrapeFirstItem);
+scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
 inspectFiltersButton.addEventListener('click', handleInspectFilters);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
@@ -1187,12 +1430,33 @@ renderItems([], 0);
 renderSellers([], 0);
 renderPayload(null);
 renderSellerCountryFilterList();
-appendStatus('Popup loaded. Start with "Extract Visible Want Items".');
-loadSellerSettings().catch(() => {
-  appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
-});
-loadLastExtractedItems().catch(() => {
-  appendStatus('Could not restore previously extracted want items.', 'bad');
+scrapeAllItemsButton.textContent = isDetached
+  ? 'Scrape Sellers For All Extracted Items'
+  : 'Scrape Sellers For All Extracted Items In Pinned Window';
+appendStatus(isDetached
+  ? 'Pinned scrape window loaded. It stays open while you click back into Cardmarket.'
+  : 'Popup loaded. Long batch scrapes run in a pinned window so they do not stop when this popup closes.');
+
+Promise.allSettled([
+  loadSellerSettings(),
+  loadLastExtractedItems(),
+]).then((results) => {
+  if (results[0].status === 'rejected') {
+    appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
+  }
+  if (results[1].status === 'rejected') {
+    appendStatus('Could not restore previously extracted want items.', 'bad');
+  }
+
+  if (isDetached && autoStartMode === 'scrapeAll') {
+    if (!latestExtractedItems.length) {
+      appendStatus('Pinned scrape window could not auto-start because no extracted items were restored.', 'bad');
+      return;
+    }
+    handleScrapeAllItems().catch((error) => {
+      appendStatus(error.message, 'bad');
+    });
+  }
 });
 
 function inspectAvailableSellerFilters() {
