@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cardmarket Wants Optimizer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #11161b;
+      --panel: #1a232c;
+      --panel-strong: #22303c;
+      --border: #334453;
+      --text: #e7edf2;
+      --muted: #9fb0be;
+      --accent: #d97706;
+      --accent-strong: #f59e0b;
+      --good: #34d399;
+      --bad: #f87171;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 420px;
+      min-height: 520px;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(217, 119, 6, 0.18), transparent 38%),
+        linear-gradient(180deg, #0d1318 0%, var(--bg) 100%);
+      color: var(--text);
+    }
+
+    main {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .hero {
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(34, 48, 60, 0.95), rgba(26, 35, 44, 0.95));
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.25);
+    }
+
+    .eyebrow {
+      margin: 0 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 11px;
+      color: var(--accent-strong);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 21px;
+      line-height: 1.15;
+    }
+
+    .subtle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .panel {
+      padding: 14px;
+      border-radius: 12px;
+      background: rgba(26, 35, 44, 0.92);
+      border: 1px solid var(--border);
+    }
+
+    .actions {
+      display: grid;
+      gap: 8px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 11px 12px;
+      font: inherit;
+      font-size: 14px;
+      cursor: pointer;
+      color: #17120b;
+      background: linear-gradient(135deg, var(--accent-strong), #fbbf24);
+      transition: transform 120ms ease, filter 120ms ease;
+    }
+
+    button.secondary {
+      color: var(--text);
+      background: linear-gradient(180deg, #31414f, #283643);
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+    }
+
+    button:disabled {
+      cursor: wait;
+      filter: saturate(0.75);
+      opacity: 0.8;
+    }
+
+    .summary {
+      display: grid;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .summary-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(159, 176, 190, 0.12);
+    }
+
+    .summary-line:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .summary-label {
+      color: var(--muted);
+    }
+
+    .summary-value {
+      text-align: right;
+      word-break: break-word;
+    }
+
+    .summary-value.good { color: var(--good); }
+    .summary-value.bad { color: var(--bad); }
+
+    .items {
+      display: grid;
+      gap: 10px;
+      max-height: 220px;
+      overflow: auto;
+    }
+
+    .item {
+      padding: 10px;
+      border-radius: 10px;
+      background: rgba(17, 22, 27, 0.85);
+      border: 1px solid rgba(159, 176, 190, 0.12);
+    }
+
+    .item-title {
+      margin: 0 0 6px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .item-meta {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .status-log {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 6px;
+      max-height: 140px;
+      overflow: auto;
+      font-size: 12px;
+    }
+
+    .status-log li {
+      padding: 7px 9px;
+      border-radius: 8px;
+      background: rgba(17, 22, 27, 0.75);
+      border: 1px solid rgba(159, 176, 190, 0.08);
+      color: var(--muted);
+    }
+
+    .status-log li.good { color: var(--good); }
+    .status-log li.bad { color: var(--bad); }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .mini-button {
+      width: auto;
+      padding: 7px 10px;
+      font-size: 12px;
+    }
+
+    .code-view {
+      margin: 0;
+      max-height: 220px;
+      overflow: auto;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(17, 22, 27, 0.92);
+      border: 1px solid rgba(159, 176, 190, 0.12);
+      color: #d8e4ee;
+      font-size: 12px;
+      line-height: 1.45;
+      font-family: "Cascadia Code", "Consolas", monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Phase 1</p>
+      <h1>Cardmarket Wants Optimizer</h1>
+      <p class="subtle">This first slice proves the popup can detect a Cardmarket want-list page and extract visible items from it.</p>
+    </section>
+
+    <section class="panel actions">
+      <button id="checkPage">Check Current Page</button>
+      <button id="extractItems" class="secondary">Extract Visible Want Items</button>
+    </section>
+
+    <section class="panel">
+      <div id="summary" class="summary"></div>
+    </section>
+
+    <section class="panel">
+      <div id="items" class="items"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Latest Extract Payload</h2>
+        <button id="copyPayload" class="secondary mini-button">Copy JSON</button>
+      </div>
+      <pre id="payloadView" class="code-view">No extracted payload yet.</pre>
+    </section>
+
+    <section class="panel">
+      <ul id="statusLog" class="status-log"></ul>
+    </section>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

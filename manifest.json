@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Cardmarket Wants Optimizer",
+  "version": "0.1.0",
+  "description": "Inspect Cardmarket want lists and prepare seller data for optimization.",
+  "permissions": ["activeTab", "scripting", "tabs", "storage"],
+  "host_permissions": ["https://www.cardmarket.com/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Cardmarket Wants Optimizer"
+  }
+}

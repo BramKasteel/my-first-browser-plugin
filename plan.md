@@ -1,0 +1,55 @@
+## Plan: Cardmarket Wants Scraper MVP
+
+Build the extension in thin vertical slices instead of broad feature buckets: first bootstrap a minimal popup-only Chrome extension, then prove page access on a Cardmarket want-list page, then extract one normalized want-list item, then fetch seller rows for one item with the example extension's pacing/retry patterns, and only then scale to all items with batching, progress reporting, and abort support. This reduces risk around Cloudflare/rate limiting and makes each milestone independently testable.
+
+**Steps**
+1. Phase 1: Extension bootstrap and skeleton UI. Create a fresh Manifest v3 extension at the repository root using the example extension as structural reference, but keep the first version minimal: manifest, popup HTML, popup JS, icons/placeholders, and host permissions for Cardmarket. The popup should expose only the controls needed for the next slice: status area, current-page detection, and one primary action button. This phase is independent and should not copy the example's large multi-tab surface wholesale.
+2. Phase 2: Want-list page detection and extraction probe. Reuse the example's `chrome.scripting.executeScript()` pattern from `/home/bram/repos/my-first-browser-plugin/example/popup.js` to inject a self-contained scraper into the active Cardmarket tab. Validate that the current page is a supported Cardmarket want-list page, then extract a minimal normalized data shape from the DOM for the visible want list. The first success criterion is not completeness; it is stable page detection plus reproducible extraction of key identifiers for at least one wanted item.
+3. Phase 3: Normalized want-list model and local preview. Expand the page scraper to return all wanted items from the active want list in a normalized structure suitable for later seller scraping and optimizer submission. Include only fields that are stable and needed downstream, such as want-list identifier, product/article identifiers if available, product name, expansion, quantity, language, condition, foil/reverse-holo style flags, and any user price constraints. Show the result in the popup as counts and a compact preview before any seller requests are made. This depends on step 2.
+4. Phase 4: Single-item seller scraping vertical slice. Pick one normalized want-list item and fetch its seller/market data using a self-contained injected fetch routine modeled on the example's pacing and retry handling in `/home/bram/repos/my-first-browser-plugin/example/popup.js`, especially the 429/Cloudflare backoff patterns and progress reporting conventions. The goal is to prove the end-to-end path for one item only: source item -> market request(s) -> parsed seller rows -> popup preview. This depends on step 3.
+5. Phase 5: Seller row normalization and result schema. Define the result structure for seller rows before scaling up. Capture seller name, seller URL or id if discoverable, item price, quantity, language/condition variant details, country if available, and the source want-list item reference. Separate raw scrape payloads from normalized records so debugging remains possible when Cardmarket markup changes. This phase can be implemented together with step 4 but should be treated as a distinct design checkpoint because it determines the API payload later.
+6. Phase 6: Multi-item scraping orchestration. Generalize the single-item workflow into a queue over all want-list items with explicit pacing, retry, abort, partial progress, and resumable UI state. Reuse the example's ideas for delay controls, long-running progress updates, and defensive handling of empty/blocked responses. Start with sequential processing; do not introduce concurrency in the first implementation because Cardmarket rate limits are the controlling constraint. This depends on steps 4 and 5.
+7. Phase 7: Export and API handoff preparation. Once scraping is stable, add a serialization boundary for the optimizer API: either JSON preview/download or a dedicated request payload builder in the popup. Do not integrate the live Python API yet, but finalize a payload contract based on the normalized want-list items plus normalized seller rows. This depends on step 6.
+8. Phase 8: Hardening and operator UX. Add practical controls needed for real use: configurable request delay, clear unsupported-page messaging, structured error display, last-run summary, and an abort/reset path. Consider a detached-window mode only if the popup becomes cramped; it is not required for the MVP. This is parallel with late step 6 and before live API integration.
+9. Later phase deliberately excluded from the current MVP: shipping-cost discovery/modeling and total-order optimization. Treat this as a separate project phase after scraper reliability is proven, because the example extension does not solve shipping extraction and Cardmarket likely calculates shipping deeper in checkout/cart flows.
+
+**Relevant files**
+- `/home/bram/repos/my-first-browser-plugin/README.md` — repository-level scope for the new extension.
+- `/home/bram/repos/my-first-browser-plugin/example/manifest.json` — reference for Chrome extension manifest shape and Cardmarket host permissions.
+- `/home/bram/repos/my-first-browser-plugin/example/popup.html` — reference for popup structure, lightweight status/progress areas, and control grouping.
+- `/home/bram/repos/my-first-browser-plugin/example/popup.js` — reference for injected-script execution, long-running progress polling, pacing, retry, 429 handling, and Cardmarket-specific scraping patterns.
+- `/home/bram/repos/my-first-browser-plugin/example/i18n.js` — optional later reference if UI localization is needed; not required for the first milestones.
+
+**Verification**
+1. Load the unpacked extension from the repository root in Chrome developer mode and confirm the popup opens with no manifest errors.
+2. On a Cardmarket non-want-list page, verify the popup reports "unsupported page" and does not inject scraping logic.
+3. On a Cardmarket want-list page, verify the popup can detect the page and return at least one normalized wanted item with stable identifiers.
+4. Run the single-item seller scrape against one known want-list item and verify parsed seller rows match what is visible on Cardmarket for that item.
+5. Run the all-items queue on a very small want list first (1-3 items), then a medium one, and confirm progress, delay pacing, retry behavior, and abort handling behave correctly under normal conditions.
+6. Manually test rate-limit behavior by using a deliberately low delay only in development to confirm 429/Cloudflare paths surface actionable errors instead of silent failure.
+7. Validate the final normalized payload shape against the expected future Python optimizer input before beginning API integration.
+
+**Development Workflow**
+1. Keep Chrome extension reloads cheap. Load the unpacked extension from the repository root once in Chrome developer mode, keep the Cardmarket tab and popup/detached window open during development, and use Chrome's reload button for the unpacked extension instead of reinstalling anything. The execution loop should assume "edit -> reload extension -> rerun one narrow check".
+2. Build explicit debug entry points into the popup from the start. Add narrow buttons or modes for "check page", "extract first item", "extract all items", and "scrape one item" so each milestone can be exercised independently. Avoid one large "run everything" action until late.
+3. Separate pure parsing from browser wiring wherever possible. Put DOM-to-data normalization and HTML/JSON parsing logic into small pure functions that can be exercised from sample inputs without opening Chrome. Keep only the tab lookup, script injection, and storage wiring tied to Chrome APIs.
+4. Create reusable fixtures early. Save a few sanitized want-list HTML fragments and seller-market HTML fragments in a local test fixture folder once selectors are known. Use those fixtures to validate parsing behavior offline when selectors or normalization logic change.
+5. Log structured debug output, not just human text. During development, emit machine-readable objects for extracted items, seller rows, retry state, and parse failures so the next debugging step is obvious from one run.
+6. Maintain a small manual test matrix instead of ad-hoc clicking. At minimum, keep one unsupported page, one small want list, one want list with edge-case variants, and one item known to produce multiple sellers. Re-run only the smallest case affected by the current change.
+7. Use gated milestones for validation. A change is only considered complete when it passes one focused check: page detection, first-item extraction, all-item extraction, one-item seller scrape, then all-items queue. Do not validate a later milestone to infer an earlier one.
+8. Delay full end-to-end tests. Most edits should be proven either by fixture-based parser checks or by one narrow popup action in Chrome. Reserve full all-items scraping runs for milestone boundaries because they are slower and more likely to trigger rate limits.
+9. Capture expected output shapes in the repo as living examples. Keep one example normalized want-list payload and one example normalized seller payload so future changes can be compared against a stable target before API integration begins.
+10. Use me as a verification partner by bringing back concrete artifacts rather than narrative feedback. The most useful artifacts are copied console errors, saved JSON output from the popup, screenshots of the DOM segment being parsed, and raw HTML snippets for failed selectors. That lets me reason from evidence instead of subjective reports.
+
+
+**Decisions**
+- Input method for the first MVP: scrape the currently open Cardmarket want-list page.
+- Optimizer API integration is excluded from the early phases and starts only after scraping is stable.
+- Shipping-cost collection/modeling is explicitly excluded from the MVP plan.
+- Prefer a narrow popup-first implementation over copying the full example UI; reuse the example mainly for extension structure and Cardmarket-safe request behavior.
+- Prefer sequential seller scraping first; parallelism is excluded initially to reduce Cloudflare/rate-limit risk.
+
+**Further Considerations**
+1. Normalize identifiers early. Recommendation: define one internal item key on first extraction, even if Cardmarket exposes multiple ids, so later seller rows and API payloads can join reliably.
+2. Preserve raw scrape fragments alongside normalized data during development. Recommendation: keep a debug view or console logging path until the DOM selectors prove stable.
+3. Treat seller scraping for one item as the gate milestone. Recommendation: do not start all-items orchestration until one-item parsing is repeatable across a few different products.
