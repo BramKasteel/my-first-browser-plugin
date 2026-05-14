@@ -17,7 +17,7 @@ let latestExtractedItems = [];
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const LAST_EXTRACTED_ITEMS_KEY = 'lastExtractedItems';
 const SELLER_CACHE_PREFIX = 'sellerCache:';
-const SELLER_CACHE_VERSION = 'v2';
+const SELLER_CACHE_VERSION = 'v4';
 const SELLER_CACHE_TTL_MS = 30 * 60 * 1000;
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
 
@@ -223,9 +223,9 @@ function renderSellers(sellers, totalVisible, itemLabel = '') {
       `article=${seller.articleId || '?'}`,
       seller.price ? `price=${seller.price}` : null,
       seller.amount ? `qty=${seller.amount}` : null,
+      seller.location ? `loc=${seller.location}` : null,
       seller.language ? `lang=${seller.language}` : null,
       seller.condition ? `cond=${seller.condition}` : null,
-      seller.comments ? `notes=${seller.comments}` : null,
     ].filter(Boolean).join(' | ');
 
     card.append(title, meta);
@@ -589,6 +589,8 @@ function extractVisibleWantItems({ previewLimit }) {
 
 async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const SELLER_PAGE_SIZE_HINT = 50;
+  const MAX_SELLER_PAGES = 3;
   const pathParts = location.pathname.split('/').filter(Boolean);
   const lang = pathParts[0] || 'en';
   const game = pathParts[1] || 'Magic';
@@ -604,19 +606,27 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
   let selectedBase = null;
   let baseCandidates = buildInitialBaseCandidates();
 
-  while (page <= 20) {
+  while (page <= MAX_SELLER_PAGES) {
     const candidatesForPage = selectedBase ? [selectedBase] : [...baseCandidates];
     let pageResolved = false;
 
     for (const candidate of candidatesForPage) {
-      const url = buildPagedUrl(candidate.url, page);
-      attemptedUrls.push(url);
-      const fetchResult = await fetchWithRetry(url);
+      const request = candidate.currentRequest || { url: candidate.url, method: 'GET' };
+      attemptedUrls.push(request.method === 'POST' ? `POST ${request.url}` : request.url);
+      const fetchResult = await fetchWithRetry(request);
       if (fetchResult.error) {
         return { error: fetchResult.error, item, sellers, totalSellers: sellers.length, pagesFetched, marketPath, attemptedUrls, debugSnippet, rateLimited };
       }
 
-      const { html, doc } = fetchResult;
+      const { html, doc, ajaxMeta } = fetchResult;
+      if (ajaxMeta) {
+        candidate.ajaxDebug = {
+          decodeMode: ajaxMeta.decodeMode,
+          newPage: ajaxMeta.newPage,
+          maxPaginatedResultsReached: ajaxMeta.maxPaginatedResultsReached,
+          rowsPreview: (ajaxMeta.rowsHtml || '').slice(0, 300),
+        };
+      }
       if (!debugSnippet) debugSnippet = (doc.querySelector('main, #main, .main-content, body')?.innerHTML || html).slice(0, 2500);
 
       if (page === 1 && !selectedBase && isCardOverviewWithoutRows(doc)) {
@@ -630,13 +640,15 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
       if (!selectedBase) selectedBase = candidate;
 
       if (page === 1) {
-        const pageLinks = doc.querySelectorAll('a[href*="site="]');
-        pageLinks.forEach((link) => {
-          const match = (link.getAttribute('href') || '').match(/[?&]site=(\d+)/);
-          if (match) totalPagesSeen = Math.max(totalPagesSeen, parseInt(match[1], 10));
-        });
-        if (!totalPagesSeen) totalPagesSeen = 1;
+        totalPagesSeen = detectTotalPages(doc) || 1;
       }
+
+      const nextLoadMorePage = ajaxMeta?.newPage || ((request.method || 'GET').toUpperCase() === 'POST' ? page + 1 : page);
+      const nextRequest = (!ajaxMeta?.maxPaginatedResultsReached)
+        ? (detectLoadMoreRequest(doc, request.url, nextLoadMorePage, candidate)
+        || detectNextPageRequest(doc, request.url)
+        || buildFallbackPagedRequest(request.url, page + 1))
+        : null;
 
       let addedThisPage = 0;
       rowEls.forEach((el) => {
@@ -653,7 +665,15 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
         page = 999;
       } else {
         page += 1;
-        if (totalPagesSeen && page > totalPagesSeen) page = 999;
+        const pageLooksFull = rowEls.length >= SELLER_PAGE_SIZE_HINT;
+        const hasNextPage = hasNextPageHint(doc);
+        if (totalPagesSeen > 1) {
+          if (page > totalPagesSeen) page = 999;
+        } else if (!pageLooksFull && !hasNextPage && !nextRequest) {
+          page = 999;
+        }
+        candidate.currentRequest = page < 999 ? nextRequest : null;
+        if (!candidate.currentRequest && page < 999) page = 999;
       }
       if (delay && page < 999) await sleep(delay);
       break;
@@ -671,14 +691,16 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
     marketPath: selectedBase?.url || marketPath,
     attemptedUrls,
     debugSnippet,
+    ajaxDebug: selectedBase?.ajaxDebug || null,
     rateLimited,
   };
 
   function buildInitialBaseCandidates() {
     const candidates = [];
-    if (item.productUrl) candidates.push({ url: item.productUrl, label: 'productUrl' });
+    if (item.productUrl) candidates.push({ url: item.productUrl, currentRequest: { url: item.productUrl, method: 'GET' }, label: 'productUrl' });
     candidates.push({
       url: `${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`,
+      currentRequest: { url: `${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`, method: 'GET' },
       label: 'stockOffersByProductId',
     });
     return candidates;
@@ -695,17 +717,129 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
     return merged;
   }
 
-  function buildPagedUrl(baseUrl, pageNumber) {
-    const url = new URL(baseUrl, location.origin);
-    if (pageNumber > 1) url.searchParams.set('site', String(pageNumber));
-    return url.toString();
+  function detectTotalPages(doc) {
+    let maxPage = 0;
+    doc.querySelectorAll('a[href*="site="], a[href*="page="]').forEach((link) => {
+      const href = link.getAttribute('href') || '';
+      const match = href.match(/[?&](?:site|page)=(\d+)/);
+      if (match) maxPage = Math.max(maxPage, parseInt(match[1], 10));
+    });
+    const numberedLinks = [...doc.querySelectorAll('.pagination a, nav[aria-label*="pagination" i] a, .page-link')]
+      .map((link) => parseInt(textOf(link.textContent), 10))
+      .filter((value) => Number.isFinite(value));
+    if (numberedLinks.length) {
+      maxPage = Math.max(maxPage, ...numberedLinks);
+    }
+    return maxPage;
   }
 
-  async function fetchWithRetry(url) {
+  function hasNextPageHint(doc) {
+    if (doc.querySelector('a[rel="next"], link[rel="next"]')) return true;
+    const nextLink = [...doc.querySelectorAll('.pagination a, nav[aria-label*="pagination" i] a, .page-link')]
+      .find((link) => /next|weiter|suivant|successivo|siguiente|›|»/i.test(textOf(link.textContent) || link.getAttribute('aria-label') || ''));
+    return !!nextLink;
+  }
+
+  function detectNextPageRequest(doc, currentUrl) {
+    const relNext = doc.querySelector('a[rel="next"], link[rel="next"]');
+    const relHref = relNext?.getAttribute('href');
+    if (relHref) return { url: new URL(relHref, currentUrl).toString(), method: 'GET' };
+
+    const paginationLinks = [...doc.querySelectorAll('.pagination a[href], nav[aria-label*="pagination" i] a[href], .page-link[href]')];
+    const nextLink = paginationLinks.find((link) => {
+      const label = `${textOf(link.textContent)} ${textOf(link.getAttribute('aria-label'))}`;
+      return /next|weiter|suivant|successivo|siguiente|›|»/i.test(label);
+    });
+    const nextHref = nextLink?.getAttribute('href');
+    if (nextHref) return { url: new URL(nextHref, currentUrl).toString(), method: 'GET' };
+
+    return null;
+  }
+
+  function buildFallbackPagedRequest(currentUrl, pageNumber) {
+    if (!pageNumber || pageNumber < 2) return null;
+    const url = new URL(currentUrl, location.origin);
+    if (url.searchParams.has('site')) {
+      url.searchParams.set('site', String(pageNumber));
+      return { url: url.toString(), method: 'GET' };
+    }
+    if (url.searchParams.has('page')) {
+      url.searchParams.set('page', String(pageNumber));
+      return { url: url.toString(), method: 'GET' };
+    }
+    url.searchParams.set('site', String(pageNumber));
+    return { url: url.toString(), method: 'GET' };
+  }
+
+  function detectLoadMoreRequest(doc, currentUrl, currentPage, candidate) {
+    const button = doc.querySelector('#loadMoreButton');
+    if (button) {
+      const form = button.closest('form');
+      candidate.loadMoreMeta = extractLoadMoreMeta(doc, form, button, currentUrl);
+    }
+    return buildLoadMoreRequest(candidate.loadMoreMeta, currentPage);
+  }
+
+  function buildLoadMoreRequest(meta, currentPage) {
+    if (!meta?.actionUrl) return null;
+    const formData = new FormData();
+    if (meta.cmtkn) formData.set('__cmtkn', meta.cmtkn);
+    formData.set('page', String(currentPage));
+    formData.set('filterSettings', meta.filterSettings || '[]');
+    if (meta.idMetacard) formData.set('idMetacard', meta.idMetacard);
+    for (const field of (meta.extraFields || [])) {
+      formData.append(field.name, field.value);
+    }
+    if (meta.buttonName) formData.append(meta.buttonName, meta.buttonValue || '');
+    return { url: meta.actionUrl, method: meta.method || 'POST', body: formData };
+  }
+
+  function extractLoadMoreMeta(doc, form, button, currentUrl) {
+    const getValue = (selector) => form?.querySelector(selector)?.value || doc.querySelector(selector)?.value || '';
+    const getAttr = (selector, attr) => form?.querySelector(selector)?.getAttribute(attr) || doc.querySelector(selector)?.getAttribute(attr) || '';
+    let idMetacard = getValue('input[name="idMetacard"]');
+    if (!idMetacard) {
+      idMetacard = getAttr('[data-id-metacard]', 'data-id-metacard')
+        || getAttr('[data-metacard-id]', 'data-metacard-id')
+        || '';
+    }
+    const action = form?.getAttribute('action') || `/${lang}/${game}/AjaxAction/Metacard_LoadMoreArticles`;
+    const method = (form?.getAttribute('method') || 'POST').toUpperCase();
+    const actionUrl = action.startsWith('http') ? action : new URL(action, currentUrl).toString();
+    const extraFields = [];
+    for (const field of (form?.querySelectorAll('input, textarea, select') || [])) {
+      const name = field.getAttribute('name');
+      if (!name || field.disabled) continue;
+      if (name === '__cmtkn' || name === 'page' || name === 'filterSettings' || name === 'idMetacard') continue;
+      if ((field.type === 'checkbox' || field.type === 'radio') && !field.checked) continue;
+      extraFields.push({ name, value: field.value || '' });
+    }
+    return {
+      actionUrl,
+      method,
+      cmtkn: getValue('input[name="__cmtkn"]'),
+      filterSettings: getValue('input[name="filterSettings"]') || '[]',
+      idMetacard,
+      extraFields,
+      buttonName: button?.getAttribute('name') || '',
+      buttonValue: button?.value || '',
+    };
+  }
+
+  async function fetchWithRetry(request) {
     let res = null;
     for (let attempt = 0; attempt < 4; attempt += 1) {
       try {
-        res = await fetch(url, { credentials: 'include' });
+        const options = {
+          method: request.method || 'GET',
+          credentials: 'include',
+          headers: {},
+        };
+        if ((request.method || 'GET').toUpperCase() !== 'GET') {
+          options.body = request.body;
+          options.headers['X-Requested-With'] = 'XMLHttpRequest';
+        }
+        res = await fetch(request.url, options);
       } catch {
         res = null;
       }
@@ -731,7 +865,73 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
       rateLimited = true;
       return { error: 'Cardmarket returned a Cloudflare challenge page.' };
     }
-    return { html, doc: new DOMParser().parseFromString(html, 'text/html') };
+    const ajaxMeta = parseAjaxResponseMeta(html);
+    if (ajaxMeta) {
+      const rowsHtml = ajaxMeta.rowsHtml || '<div></div>';
+      return { html: rowsHtml, doc: new DOMParser().parseFromString(rowsHtml, 'text/html'), ajaxMeta };
+    }
+    return { html, doc: new DOMParser().parseFromString(html, 'text/html'), ajaxMeta: null };
+  }
+
+  function parseAjaxResponseMeta(html) {
+    if (!/<ajaxResponse[\s>]/i.test(html)) return null;
+    const xml = new DOMParser().parseFromString(html, 'text/xml');
+    const rowsNode = xml.querySelector('rows');
+    const newPageNode = xml.querySelector('newPage');
+    const maxReachedNode = xml.querySelector('maxPaginatedResultsReached');
+    const decodedRows = decodeAjaxRowsHtml(rowsNode?.textContent || '');
+    const newPage = parseInt(textOf(newPageNode?.textContent), 10);
+    const maxPaginatedResultsReached = textOf(maxReachedNode?.textContent) === '1';
+    return {
+      rowsHtml: decodedRows.html,
+      decodeMode: decodedRows.mode,
+      newPage: Number.isFinite(newPage) ? newPage : null,
+      maxPaginatedResultsReached,
+    };
+  }
+
+  function decodeAjaxRowsHtml(value) {
+    if (!value) return { html: '', mode: 'empty' };
+    const textarea = document.createElement('textarea');
+    textarea.innerHTML = value;
+    const entityDecoded = (textarea.value || value).trim();
+    if (looksLikeHtml(entityDecoded)) {
+      return { html: entityDecoded, mode: 'html-entity' };
+    }
+
+    if (looksLikeBase64(entityDecoded)) {
+      const base64Decoded = decodeBase64Utf8(entityDecoded);
+      if (base64Decoded) {
+        textarea.innerHTML = base64Decoded;
+        const htmlDecoded = (textarea.value || base64Decoded).trim();
+        if (looksLikeHtml(htmlDecoded)) {
+          return { html: htmlDecoded, mode: 'base64' };
+        }
+      }
+    }
+
+    return { html: entityDecoded, mode: 'raw' };
+  }
+
+  function looksLikeHtml(value) {
+    return /^\s*</.test(value) || /articleRow\d+|class=("|')article-row\1/i.test(value);
+  }
+
+  function looksLikeBase64(value) {
+    return value.length >= 32
+      && value.length % 4 === 0
+      && /^[A-Za-z0-9+/=\s]+$/.test(value)
+      && /={0,2}$/.test(value);
+  }
+
+  function decodeBase64Utf8(value) {
+    try {
+      const binary = atob(value.replace(/\s+/g, ''));
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      return new TextDecoder('utf-8').decode(bytes);
+    } catch {
+      return '';
+    }
   }
 
   function isCardOverviewWithoutRows(doc) {
@@ -757,11 +957,13 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
     const row = {};
     const idMatch = (el.id || '').match(/articleRow(\d+)/);
     row.articleId = idMatch ? idMatch[1] : '';
-    const sellerLink = el.querySelector('.col-seller a, a[href*="/User/"]');
+    const sellerColumn = el.querySelector('.col-seller') || el;
+    const sellerLink = sellerColumn.querySelector('a[href*="/Users/"]') || el.querySelector('a[href*="/Users/"]');
     row.sellerName = textOf(sellerLink?.textContent);
     row.sellerUrl = sellerLink?.getAttribute('href')
       ? (sellerLink.getAttribute('href').startsWith('http') ? sellerLink.getAttribute('href') : `https://www.cardmarket.com${sellerLink.getAttribute('href')}`)
       : '';
+    row.location = extractSellerLocation(sellerColumn, row.sellerName);
     const conditionNode = el.querySelector('.article-condition .badge, .article-condition');
     row.condition = textOf(conditionNode?.textContent);
     const languageNode = [...el.querySelectorAll('span[aria-label], span[data-bs-original-title], span[data-original-title], span[title]')]
@@ -786,10 +988,22 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
     });
     const amountInput = el.querySelector('input.amount-input, input[name^="groupCountAmount"]');
     row.amount = amountInput?.getAttribute('max') || displayCount || '';
-    const commentNode = el.querySelector('.product-comments [data-bs-original-title], .product-comments [title], .product-comments .text-truncate, .product-comments span.fst-italic');
-    row.comments = textOf(commentNode?.getAttribute('data-bs-original-title') || commentNode?.getAttribute('title') || commentNode?.textContent);
-    row.reverse = /Reverse\s*Holo/i.test(`${row.comments} ${el.textContent || ''}`);
+    row.reverse = /Reverse\s*Holo/i.test(el.textContent || '');
     return row;
+  }
+
+  function extractSellerLocation(sellerColumn, sellerName) {
+    const labelNodes = [...sellerColumn.querySelectorAll('[aria-label], [data-bs-original-title], [data-original-title], [title]')];
+    for (const node of labelNodes) {
+      const raw = node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || '';
+      const label = textOf(raw);
+      if (!label) continue;
+      if (sellerName && label === sellerName) continue;
+      if (/^(English|German|French|Italian|Spanish|Portuguese|Japanese|Korean|Chinese|Russian|Deutsch|Englisch|Französisch|Italienisch|Spanisch|Portugiesisch|Japanisch|Koreanisch|Chinesisch|Russisch|S-Chinesisch|T-Chinesisch|NM|EX|GD|LP|PL|PO|MT)$/i.test(label)) continue;
+      if (/seller|user|account|profile/i.test(label)) continue;
+      return label;
+    }
+    return '';
   }
 
   function textOf(value) {

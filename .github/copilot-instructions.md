@@ -18,3 +18,4 @@ Project context for the new plugin:
 - Price optimization will be handled by a separate Python API. The browser extension is responsible for collecting data from Cardmarket and communicating with that optimizer API.
 - Cardmarket is strict about scraping and can return HTTP 429 quickly because of Cloudflare protections. Any scraping implementation should rate limit requests carefully.
 - The example extension in `example/` contains useful patterns for request pacing and handling rate limits.
+- When request formulation on Cardmarket is unclear, ask the user to perform the website action and capture the real network request instead of guessing. That is usually the fastest way to unblock implementation.
