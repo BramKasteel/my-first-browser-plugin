@@ -106,6 +106,48 @@
       opacity: 0.8;
     }
 
+    input[type="number"] {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(159, 176, 190, 0.2);
+      background: rgba(17, 22, 27, 0.92);
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+    }
+
+    .config-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .config-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .config-label {
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .toggle-row input {
+      margin: 0;
+    }
+
     .summary {
       display: grid;
       gap: 8px;
@@ -236,6 +278,21 @@
     <section class="panel actions">
       <button id="checkPage">Check Current Page</button>
       <button id="extractItems" class="secondary">Extract Visible Want Items</button>
+      <button id="scrapeFirstItem" class="secondary">Scrape Sellers For First Item</button>
+    </section>
+
+    <section class="panel config-grid">
+      <div class="config-row">
+        <label class="config-label" for="sellerDelayMs">
+          <span>Seller request delay (ms)</span>
+          <input id="sellerDelayMs" type="number" min="1000" step="250" value="2000">
+        </label>
+        <button id="clearSellerCache" class="secondary mini-button">Clear Cache</button>
+      </div>
+      <label class="toggle-row" for="useSellerCache">
+        <input id="useSellerCache" type="checkbox" checked>
+        <span>Reuse seller results from this browser session for 30 minutes</span>
+      </label>
     </section>
 
     <section class="panel">
@@ -244,6 +301,13 @@
 
     <section class="panel">
       <div id="items" class="items"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Seller Preview</h2>
+      </div>
+      <div id="sellerItems" class="items"></div>
     </section>
 
     <section class="panel">
