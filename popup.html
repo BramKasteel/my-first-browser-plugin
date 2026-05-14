@@ -106,7 +106,8 @@
       opacity: 0.8;
     }
 
-    input[type="number"] {
+    input[type="number"],
+    input[type="text"] {
       width: 100%;
       padding: 10px 12px;
       border-radius: 10px;
@@ -292,6 +293,14 @@
       <label class="toggle-row" for="useSellerCache">
         <input id="useSellerCache" type="checkbox" checked>
         <span>Reuse seller results from this browser session for 30 minutes</span>
+      </label>
+      <label class="toggle-row" for="matchWantLanguage">
+        <input id="matchWantLanguage" type="checkbox" checked>
+        <span>Only keep sellers whose card language matches the selected want item</span>
+      </label>
+      <label class="config-label" for="sellerLocationFilter">
+        <span>Seller country filter</span>
+        <input id="sellerLocationFilter" type="text" placeholder="Germany, Netherlands, BE">
       </label>
     </section>
 

@@ -3,6 +3,8 @@ const extractItemsButton = document.getElementById('extractItems');
 const scrapeFirstItemButton = document.getElementById('scrapeFirstItem');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
 const useSellerCacheInput = document.getElementById('useSellerCache');
+const matchWantLanguageInput = document.getElementById('matchWantLanguage');
+const sellerLocationFilterInput = document.getElementById('sellerLocationFilter');
 const clearSellerCacheButton = document.getElementById('clearSellerCache');
 const copyPayloadButton = document.getElementById('copyPayload');
 const summaryEl = document.getElementById('summary');
@@ -17,7 +19,7 @@ let latestExtractedItems = [];
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const LAST_EXTRACTED_ITEMS_KEY = 'lastExtractedItems';
 const SELLER_CACHE_PREFIX = 'sellerCache:';
-const SELLER_CACHE_VERSION = 'v4';
+const SELLER_CACHE_VERSION = 'v5';
 const SELLER_CACHE_TTL_MS = 30 * 60 * 1000;
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
 
@@ -34,6 +36,8 @@ function setBusy(isBusy) {
   scrapeFirstItemButton.disabled = isBusy;
   sellerDelayInput.disabled = isBusy;
   useSellerCacheInput.disabled = isBusy;
+  matchWantLanguageInput.disabled = isBusy;
+  sellerLocationFilterInput.disabled = isBusy;
   clearSellerCacheButton.disabled = isBusy;
   copyPayloadButton.disabled = isBusy;
 }
@@ -46,6 +50,10 @@ function formatRemaining(ms) {
   return `${minutes}m ${seconds}s`;
 }
 
+function textOf(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
 async function getStorageArea() {
   return chrome.storage.session || chrome.storage.local;
 }
@@ -56,6 +64,8 @@ async function loadSellerSettings() {
   const settings = stored[SELLER_SETTINGS_KEY] || {};
   sellerDelayInput.value = String(Math.max(1000, parseInt(settings.delayMs, 10) || 2000));
   useSellerCacheInput.checked = settings.useCache !== false;
+  matchWantLanguageInput.checked = settings.matchWantLanguage !== false;
+  sellerLocationFilterInput.value = typeof settings.sellerLocationFilter === 'string' ? settings.sellerLocationFilter : '';
 }
 
 async function loadLastExtractedItems() {
@@ -80,8 +90,172 @@ async function saveSellerSettings() {
     [SELLER_SETTINGS_KEY]: {
       delayMs: Math.max(1000, parseInt(sellerDelayInput.value, 10) || 2000),
       useCache: useSellerCacheInput.checked,
+      matchWantLanguage: matchWantLanguageInput.checked,
+      sellerLocationFilter: sellerLocationFilterInput.value.trim(),
     },
   });
+}
+
+function getActiveSellerFilters(item) {
+  const requestedLanguage = matchWantLanguageInput.checked ? textOf(item?.language) : '';
+  const allowedCountries = parseCountryFilterInput(sellerLocationFilterInput.value);
+  return {
+    requestedLanguage,
+    allowedCountries,
+    locationFilterText: sellerLocationFilterInput.value.trim(),
+  };
+}
+
+function applySellerFilters(result, item) {
+  const filters = getActiveSellerFilters(item);
+  const rawSellers = Array.isArray(result?.sellers) ? result.sellers : [];
+  const filteredSellers = rawSellers.filter((seller) => {
+    if (filters.requestedLanguage) {
+      if (normalizeLanguageName(seller.language) !== normalizeLanguageName(filters.requestedLanguage)) {
+        return false;
+      }
+    }
+    if (filters.allowedCountries.length) {
+      const sellerCountry = normalizeCountryName(seller.location);
+      if (!sellerCountry) return false;
+      if (!filters.allowedCountries.includes(sellerCountry)) return false;
+    }
+    return true;
+  });
+
+  return {
+    ...result,
+    sellers: filteredSellers,
+    sellerPreview: filteredSellers.slice(0, 12),
+    totalSellers: filteredSellers.length,
+    unfilteredTotalSellers: rawSellers.length,
+    filtersApplied: {
+      matchWantLanguage: !!filters.requestedLanguage,
+      requestedLanguage: filters.requestedLanguage || '',
+      sellerCountries: filters.allowedCountries,
+      sellerCountryFilterText: filters.locationFilterText,
+    },
+  };
+}
+
+function parseCountryFilterInput(value) {
+  return value
+    .split(',')
+    .map((part) => normalizeCountryName(part))
+    .filter(Boolean);
+}
+
+function normalizeLanguageName(value) {
+  const normalized = textOf(value).toLowerCase();
+  const aliases = {
+    deutsch: 'german',
+    englisch: 'english',
+    franzoesisch: 'french',
+    französisch: 'french',
+    italienisch: 'italian',
+    spanisch: 'spanish',
+    portugiesisch: 'portuguese',
+    japanisch: 'japanese',
+    koreanisch: 'korean',
+    chinesisch: 'chinese',
+    russisch: 'russian',
+    's-chinesisch': 'simplified chinese',
+    't-chinesisch': 'traditional chinese',
+  };
+  return aliases[normalized] || normalized;
+}
+
+// TODO: this seems like hallucinated information: try to get this correct by doing some requests!
+function getCardmarketLanguageId(value) {
+  const normalized = normalizeLanguageName(value);
+  const ids = {
+    english: '1',
+    french: '2',
+    german: '3',
+    spanish: '4',
+    italian: '5',
+    chinese: '6',
+    'simplified chinese': '6',
+    japanese: '7',
+    portuguese: '8',
+    russian: '9',
+    korean: '10',
+    'traditional chinese': '11',
+  };
+  return ids[normalized] || '';
+}
+
+// TODO: this seems like hallucinated information: try to get this correct by doing some requests!
+function normalizeCountryName(value) {
+  const normalized = textOf(value).toLowerCase();
+  if (!normalized) return '';
+  const aliases = {
+    at: 'Austria',
+    austria: 'Austria',
+    be: 'Belgium',
+    belgium: 'Belgium',
+    bg: 'Bulgaria',
+    bulgaria: 'Bulgaria',
+    ch: 'Switzerland',
+    switzerland: 'Switzerland',
+    schweiz: 'Switzerland',
+    cy: 'Cyprus',
+    cyprus: 'Cyprus',
+    cz: 'Czechia',
+    czechia: 'Czechia',
+    'czech republic': 'Czechia',
+    de: 'Germany',
+    germany: 'Germany',
+    deutschland: 'Germany',
+    dk: 'Denmark',
+    denmark: 'Denmark',
+    ee: 'Estonia',
+    estonia: 'Estonia',
+    es: 'Spain',
+    spain: 'Spain',
+    fi: 'Finland',
+    finland: 'Finland',
+    fr: 'France',
+    france: 'France',
+    gb: 'United Kingdom',
+    uk: 'United Kingdom',
+    'united kingdom': 'United Kingdom',
+    'great britain': 'United Kingdom',
+    hu: 'Hungary',
+    hungary: 'Hungary',
+    hr: 'Croatia',
+    croatia: 'Croatia',
+    ie: 'Ireland',
+    ireland: 'Ireland',
+    it: 'Italy',
+    italy: 'Italy',
+    lt: 'Lithuania',
+    lithuania: 'Lithuania',
+    lu: 'Luxembourg',
+    luxembourg: 'Luxembourg',
+    lv: 'Latvia',
+    latvia: 'Latvia',
+    mt: 'Malta',
+    malta: 'Malta',
+    nl: 'Netherlands',
+    netherlands: 'Netherlands',
+    nederland: 'Netherlands',
+    no: 'Norway',
+    norway: 'Norway',
+    pl: 'Poland',
+    poland: 'Poland',
+    pt: 'Portugal',
+    portugal: 'Portugal',
+    ro: 'Romania',
+    romania: 'Romania',
+    se: 'Sweden',
+    sweden: 'Sweden',
+    si: 'Slovenia',
+    slovenia: 'Slovenia',
+    sk: 'Slovakia',
+    slovakia: 'Slovakia',
+  };
+  return aliases[normalized] || '';
 }
 
 async function getSellerCacheEntry(cacheKey) {
@@ -350,7 +524,8 @@ async function handleScrapeFirstItem() {
     }
 
     const tabUrl = tab.url || '';
-    const cacheKey = `${SELLER_CACHE_PREFIX}${SELLER_CACHE_VERSION}:${tabUrl.split('?')[0]}:${firstItem.idProduct}`;
+    const requestLanguageId = matchWantLanguageInput.checked ? getCardmarketLanguageId(firstItem.language) : '';
+    const cacheKey = `${SELLER_CACHE_PREFIX}${SELLER_CACHE_VERSION}:${tabUrl.split('?')[0]}:${firstItem.idProduct}:lang=${requestLanguageId || 'all'}`;
     let result = null;
     let fromCache = false;
 
@@ -363,7 +538,17 @@ async function handleScrapeFirstItem() {
     }
 
     if (!result) {
-      result = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{ item: firstItem, delay: delayMs, previewLimit: 12 }]);
+      result = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+        item: firstItem,
+        delay: delayMs,
+        previewLimit: 12,
+        requestFilters: {
+          languageId: requestLanguageId,
+        },
+      }]);
+      if (!result) {
+        throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
+      }
       if (result.rateLimited) {
         await setSellerCooldownUntil(Date.now() + SELLER_COOLDOWN_MS);
       }
@@ -372,23 +557,36 @@ async function handleScrapeFirstItem() {
       }
     }
 
+    const filteredResult = applySellerFilters(result, firstItem);
+    const sellerCountLabel = filteredResult.unfilteredTotalSellers && filteredResult.unfilteredTotalSellers !== filteredResult.totalSellers
+      ? `${filteredResult.totalSellers} / ${filteredResult.unfilteredTotalSellers}`
+      : String(filteredResult.totalSellers);
+    const filterSummary = [];
+    if (filteredResult.filtersApplied?.requestedLanguage) {
+      filterSummary.push(`lang=${filteredResult.filtersApplied.requestedLanguage}`);
+    }
+    if (filteredResult.filtersApplied?.sellerCountries?.length) {
+      filterSummary.push(`country=${filteredResult.filtersApplied.sellerCountries.join(', ')}`);
+    }
+
     renderSummary([
       { label: 'Selected item', value: firstItem.productName || firstItem.idProduct, tone: 'good' },
       { label: 'Product id', value: firstItem.idProduct },
-      { label: 'Seller rows', value: String(result.totalSellers), tone: result.totalSellers ? 'good' : 'bad' },
-      { label: 'Pages fetched', value: String(result.pagesFetched || 0) },
-      { label: 'Market path', value: result.marketPath || '-' },
+      { label: 'Seller rows', value: sellerCountLabel, tone: filteredResult.totalSellers ? 'good' : 'bad' },
+      { label: 'Pages fetched', value: String(filteredResult.pagesFetched || 0) },
+      { label: 'Market path', value: filteredResult.marketPath || '-' },
+      { label: 'Filters', value: filterSummary.join(' | ') || 'none' },
       { label: 'Used cache', value: fromCache ? 'yes' : 'no', tone: fromCache ? 'good' : '' },
-      { label: 'Rate limited', value: result.rateLimited ? 'yes' : 'no', tone: result.rateLimited ? 'bad' : '' },
+      { label: 'Rate limited', value: filteredResult.rateLimited ? 'yes' : 'no', tone: filteredResult.rateLimited ? 'bad' : '' },
     ]);
-    renderSellers(result.sellers.slice(0, 12), result.totalSellers, firstItem.productName || firstItem.idProduct);
-    renderPayload(result);
-    if (result.error) {
-      appendStatus(result.error, 'bad');
+    renderSellers(filteredResult.sellers.slice(0, 12), filteredResult.totalSellers, firstItem.productName || firstItem.idProduct);
+    renderPayload(filteredResult);
+    if (filteredResult.error) {
+      appendStatus(filteredResult.error, 'bad');
     } else if (fromCache) {
       appendStatus(`Loaded cached seller rows for ${firstItem.productName || firstItem.idProduct}.`, 'good');
     } else {
-      appendStatus(`Scraped ${result.totalSellers} seller rows for ${firstItem.productName || firstItem.idProduct}.`, result.totalSellers ? 'good' : 'bad');
+      appendStatus(`Scraped ${filteredResult.totalSellers}${filteredResult.unfilteredTotalSellers !== filteredResult.totalSellers ? ` of ${filteredResult.unfilteredTotalSellers}` : ''} seller rows for ${firstItem.productName || firstItem.idProduct}.`, filteredResult.totalSellers ? 'good' : 'bad');
     }
   } catch (error) {
     appendStatus(error.message, 'bad');
@@ -417,6 +615,8 @@ scrapeFirstItemButton.addEventListener('click', handleScrapeFirstItem);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
 sellerDelayInput.addEventListener('change', saveSellerSettings);
 useSellerCacheInput.addEventListener('change', saveSellerSettings);
+matchWantLanguageInput.addEventListener('change', saveSellerSettings);
+sellerLocationFilterInput.addEventListener('change', saveSellerSettings);
 clearSellerCacheButton.addEventListener('click', async () => {
   setBusy(true);
   try {
@@ -587,7 +787,7 @@ function extractVisibleWantItems({ previewLimit }) {
   }
 }
 
-async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
+async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {} }) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const SELLER_PAGE_SIZE_HINT = 50;
   const MAX_SELLER_PAGES = 3;
@@ -697,10 +897,13 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
 
   function buildInitialBaseCandidates() {
     const candidates = [];
-    if (item.productUrl) candidates.push({ url: item.productUrl, currentRequest: { url: item.productUrl, method: 'GET' }, label: 'productUrl' });
+    if (item.productUrl) {
+      const productUrl = appendSellerRequestFilters(item.productUrl, requestFilters);
+      candidates.push({ url: productUrl, currentRequest: { url: productUrl, method: 'GET' }, label: 'productUrl' });
+    }
     candidates.push({
-      url: `${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`,
-      currentRequest: { url: `${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`, method: 'GET' },
+      url: appendSellerRequestFilters(`${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`, requestFilters),
+      currentRequest: { url: appendSellerRequestFilters(`${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`, requestFilters), method: 'GET' },
       label: 'stockOffersByProductId',
     });
     return candidates;
@@ -794,6 +997,14 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
     return { url: meta.actionUrl, method: meta.method || 'POST', body: formData };
   }
 
+  function appendSellerRequestFilters(urlValue, activeFilters) {
+    const url = new URL(urlValue, location.origin);
+    if (activeFilters.languageId) {
+      url.searchParams.set('language', activeFilters.languageId);
+    }
+    return url.toString();
+  }
+
   function extractLoadMoreMeta(doc, form, button, currentUrl) {
     const getValue = (selector) => form?.querySelector(selector)?.value || doc.querySelector(selector)?.value || '';
     const getAttr = (selector, attr) => form?.querySelector(selector)?.getAttribute(attr) || doc.querySelector(selector)?.getAttribute(attr) || '';
@@ -810,7 +1021,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
     for (const field of (form?.querySelectorAll('input, textarea, select') || [])) {
       const name = field.getAttribute('name');
       if (!name || field.disabled) continue;
-      if (name === '__cmtkn' || name === 'page' || name === 'filterSettings' || name === 'idMetacard') continue;
+      if (name === '__cmtkn' || name === 'page' || name === 'filterSettings' || name === 'idMetacard' || name === 'idLanguage' || name === 'idLanguage[]') continue;
       if ((field.type === 'checkbox' || field.type === 'radio') && !field.checked) continue;
       extraFields.push({ name, value: field.value || '' });
     }
@@ -993,17 +1204,136 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit }) {
   }
 
   function extractSellerLocation(sellerColumn, sellerName) {
-    const labelNodes = [...sellerColumn.querySelectorAll('[aria-label], [data-bs-original-title], [data-original-title], [title]')];
-    for (const node of labelNodes) {
-      const raw = node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || '';
+    const explicitLocationNode = sellerColumn.querySelector('[aria-label^="Item location:" i], [data-bs-original-title^="Item location:" i], [data-original-title^="Item location:" i], [title^="Item location:" i]');
+    if (explicitLocationNode) {
+      const explicitLabel = textOf(
+        explicitLocationNode.getAttribute('aria-label')
+        || explicitLocationNode.getAttribute('data-bs-original-title')
+        || explicitLocationNode.getAttribute('data-original-title')
+        || explicitLocationNode.getAttribute('title')
+        || ''
+      );
+      const explicitCountry = extractCountryFromLabel(explicitLabel);
+      if (explicitCountry) return explicitCountry;
+    }
+
+    const candidateNodes = [
+      ...sellerColumn.querySelectorAll('[class*="flag" i], [class*="country" i], img[alt], [aria-label], [data-bs-original-title], [data-original-title], [title]'),
+    ];
+    for (const node of candidateNodes) {
+      const raw = node.getAttribute('aria-label')
+        || node.getAttribute('data-bs-original-title')
+        || node.getAttribute('data-original-title')
+        || node.getAttribute('title')
+        || node.getAttribute('alt')
+        || '';
       const label = textOf(raw);
       if (!label) continue;
       if (sellerName && label === sellerName) continue;
-      if (/^(English|German|French|Italian|Spanish|Portuguese|Japanese|Korean|Chinese|Russian|Deutsch|Englisch|Französisch|Italienisch|Spanisch|Portugiesisch|Japanisch|Koreanisch|Chinesisch|Russisch|S-Chinesisch|T-Chinesisch|NM|EX|GD|LP|PL|PO|MT)$/i.test(label)) continue;
-      if (/seller|user|account|profile/i.test(label)) continue;
-      return label;
+      if (/seller|user|account|profile|outstanding|very good|good|professional|private|powerseller/i.test(label)) continue;
+      const country = extractCountryFromLabel(label);
+      if (country) return country;
     }
     return '';
+  }
+
+  function extractCountryFromLabel(label) {
+    const itemLocationMatch = textOf(label).match(/item\s+location\s*:\s*(.+)$/i);
+    if (itemLocationMatch) {
+      const explicitMatch = normalizeCountryNameLocal(itemLocationMatch[1]);
+      if (explicitMatch) return explicitMatch;
+    }
+
+    const directMatch = normalizeCountryNameLocal(label);
+    if (directMatch) return directMatch;
+
+    const stripped = textOf(label)
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/[():|]/g, ' ')
+      .replace(/ships?\s+from/gi, ' ')
+      .replace(/item\s+location/gi, ' ')
+      .replace(/country/gi, ' ');
+    const words = stripped.split(/\s+/).filter(Boolean);
+    for (let size = Math.min(3, words.length); size >= 1; size -= 1) {
+      for (let index = 0; index <= words.length - size; index += 1) {
+        const chunk = words.slice(index, index + size).join(' ');
+        const country = normalizeCountryNameLocal(chunk);
+        if (country) return country;
+      }
+    }
+    return '';
+  }
+
+  function normalizeCountryNameLocal(value) {
+    const normalized = textOf(value).toLowerCase();
+    if (!normalized) return '';
+    const aliases = {
+      at: 'Austria',
+      austria: 'Austria',
+      be: 'Belgium',
+      belgium: 'Belgium',
+      bg: 'Bulgaria',
+      bulgaria: 'Bulgaria',
+      ch: 'Switzerland',
+      switzerland: 'Switzerland',
+      schweiz: 'Switzerland',
+      cy: 'Cyprus',
+      cyprus: 'Cyprus',
+      cz: 'Czechia',
+      czechia: 'Czechia',
+      'czech republic': 'Czechia',
+      de: 'Germany',
+      germany: 'Germany',
+      deutschland: 'Germany',
+      dk: 'Denmark',
+      denmark: 'Denmark',
+      ee: 'Estonia',
+      estonia: 'Estonia',
+      es: 'Spain',
+      spain: 'Spain',
+      fi: 'Finland',
+      finland: 'Finland',
+      fr: 'France',
+      france: 'France',
+      gb: 'United Kingdom',
+      uk: 'United Kingdom',
+      'united kingdom': 'United Kingdom',
+      'great britain': 'United Kingdom',
+      hu: 'Hungary',
+      hungary: 'Hungary',
+      hr: 'Croatia',
+      croatia: 'Croatia',
+      ie: 'Ireland',
+      ireland: 'Ireland',
+      it: 'Italy',
+      italy: 'Italy',
+      lt: 'Lithuania',
+      lithuania: 'Lithuania',
+      lu: 'Luxembourg',
+      luxembourg: 'Luxembourg',
+      lv: 'Latvia',
+      latvia: 'Latvia',
+      mt: 'Malta',
+      malta: 'Malta',
+      nl: 'Netherlands',
+      netherlands: 'Netherlands',
+      nederland: 'Netherlands',
+      no: 'Norway',
+      norway: 'Norway',
+      pl: 'Poland',
+      poland: 'Poland',
+      pt: 'Portugal',
+      portugal: 'Portugal',
+      ro: 'Romania',
+      romania: 'Romania',
+      se: 'Sweden',
+      sweden: 'Sweden',
+      si: 'Slovenia',
+      slovenia: 'Slovenia',
+      sk: 'Slovakia',
+      slovakia: 'Slovakia',
+    };
+    return aliases[normalized] || '';
   }
 
   function textOf(value) {
