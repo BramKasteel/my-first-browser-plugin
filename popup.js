@@ -7,11 +7,16 @@ const probeRequestCountInput = document.getElementById('probeRequestCount');
 const probePageBudgetInput = document.getElementById('probePageBudget');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
 const copyPayloadButton = document.getElementById('copyPayload');
+const wantListPreviewEl = document.getElementById('wantListPreview');
 const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
 const sellerItemsEl = document.getElementById('sellerItems');
 const payloadViewEl = document.getElementById('payloadView');
 const statusLogEl = document.getElementById('statusLog');
+const runStatusEl = document.getElementById('runStatus');
+const runStatusTextEl = document.getElementById('runStatusText');
+const activityBadgeEl = document.getElementById('activityBadge');
+const activityTabButton = document.getElementById('resultTabActivity');
 const resultTabButtons = [...document.querySelectorAll('[data-result-tab]')];
 const resultPanels = [...document.querySelectorAll('[data-result-panel]')];
 
@@ -22,9 +27,10 @@ const forcedTabId = urlParams.get('tabId') ? parseInt(urlParams.get('tabId'), 10
 
 let latestExtractPayload = null;
 let latestExtractedItems = [];
+let isRunActive = false;
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
-const LAST_EXTRACTED_ITEMS_KEY = 'lastExtractedItems';
+const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
 const MIN_SELLER_DELAY_MS = 250;
 const REQUEST_JITTER_RATIO = 0.15;
@@ -73,6 +79,9 @@ function appendStatus(message, tone = '') {
   if (tone) entry.className = tone;
   entry.textContent = message;
   statusLogEl.prepend(entry);
+  if (isRunActive) {
+    setRunState({ active: true, message, tone });
+  }
 }
 
 function setBusy(isBusy) {
@@ -89,6 +98,25 @@ function setBusy(isBusy) {
   copyPayloadButton.disabled = isBusy;
 }
 
+function setRunState({ active, message, tone = '' }) {
+  isRunActive = active;
+  runStatusEl.classList.toggle('is-active', active);
+  runStatusEl.classList.toggle('good', !active && tone === 'good');
+  runStatusEl.classList.toggle('bad', !active && tone === 'bad');
+  runStatusTextEl.textContent = message;
+  const showBadge = active && !activityTabButton.classList.contains('active');
+  activityBadgeEl.classList.toggle('visible', showBadge);
+  activityTabButton.classList.toggle('has-live', active);
+}
+
+function startRun(message) {
+  setRunState({ active: true, message });
+}
+
+function finishRun(message, tone = '') {
+  setRunState({ active: false, message, tone });
+}
+
 function setActiveResultTab(tabName) {
   resultTabButtons.forEach((button) => {
     const isActive = button.dataset.resultTab === tabName;
@@ -99,6 +127,12 @@ function setActiveResultTab(tabName) {
   resultPanels.forEach((panel) => {
     panel.classList.toggle('active', panel.dataset.resultPanel === tabName);
   });
+
+  if (tabName === 'activity') {
+    activityBadgeEl.classList.remove('visible');
+  } else if (isRunActive) {
+    activityBadgeEl.classList.add('visible');
+  }
 }
 
 function formatRemaining(ms) {
@@ -156,20 +190,26 @@ async function loadSellerSettings() {
   setSelectedSellerCountries(selectedCountries.length ? selectedCountries : DEFAULT_SELLER_COUNTRIES);
 }
 
-async function loadLastExtractedItems() {
+async function loadDetachedBatchState() {
   const storageArea = await getStorageArea();
-  const stored = await storageArea.get(LAST_EXTRACTED_ITEMS_KEY);
-  latestExtractedItems = Array.isArray(stored[LAST_EXTRACTED_ITEMS_KEY]) ? stored[LAST_EXTRACTED_ITEMS_KEY] : [];
-  if (latestExtractedItems.length) {
-    renderItems(latestExtractedItems.slice(0, 8), latestExtractedItems.length);
-    renderSellers([], 0, latestExtractedItems[0]?.productName || 'the first item');
-    appendStatus(`Restored ${latestExtractedItems.length} extracted want items from the previous popup session.`, 'good');
+  const stored = await storageArea.get(DETACHED_BATCH_STATE_KEY);
+  const state = stored[DETACHED_BATCH_STATE_KEY];
+  if (!state || !Array.isArray(state.items) || !state.items.length) {
+    return [];
   }
+
+  await storageArea.remove(DETACHED_BATCH_STATE_KEY);
+  return state.items;
 }
 
-async function saveLastExtractedItems(items) {
+async function saveDetachedBatchState(items) {
   const storageArea = await getStorageArea();
-  await storageArea.set({ [LAST_EXTRACTED_ITEMS_KEY]: items });
+  await storageArea.set({
+    [DETACHED_BATCH_STATE_KEY]: {
+      createdAt: new Date().toISOString(),
+      items,
+    },
+  });
 }
 
 async function saveSellerSettings() {
@@ -555,11 +595,6 @@ function getCountryNameById(countryId) {
   return SELLER_COUNTRY_OPTIONS.find((country) => getCardmarketCountryId(country) === String(countryId)) || '';
 }
 
-async function clearLastExtractedItems() {
-  const storageArea = await getStorageArea();
-  await storageArea.remove(LAST_EXTRACTED_ITEMS_KEY);
-}
-
 async function getSellerCooldownUntil() {
   const storageArea = await getStorageArea();
   const stored = await storageArea.get('sellerScrapeCooldownUntil');
@@ -597,6 +632,12 @@ function renderSummary(rows) {
 }
 
 function renderItems(items, totalVisible) {
+  if (wantListPreviewEl) {
+    const hasItems = items.length > 0 && totalVisible > 0;
+    wantListPreviewEl.classList.toggle('is-empty', !hasItems);
+    wantListPreviewEl.classList.toggle('is-ready', hasItems);
+  }
+
   itemsEl.replaceChildren();
 
   if (!items.length) {
@@ -740,6 +781,7 @@ async function ensureCardmarketTab() {
 }
 
 async function handleExtractItems() {
+  startRun('Extracting visible want items from current Cardmarket page...');
   setBusy(true);
   try {
     const tab = await ensureCardmarketTab();
@@ -758,20 +800,22 @@ async function handleExtractItems() {
       { label: 'Desktop rows seen', value: String(result.debug.desktopRows || 0) },
     ]);
     latestExtractedItems = result.items;
-    await saveLastExtractedItems(result.items);
     renderItems(result.items.slice(0, 8), result.totalVisible);
     renderSellers([], 0, result.items[0]?.productName || 'the first item');
     renderPayload(result);
     setActiveResultTab('overview');
     appendStatus(`Extracted ${result.totalVisible} visible want items from the current page.`, result.totalVisible ? 'good' : 'bad');
+    finishRun(`Extracted ${result.totalVisible} visible want items.`, result.totalVisible ? 'good' : 'bad');
   } catch (error) {
     appendStatus(error.message, 'bad');
+    finishRun(error.message, 'bad');
   } finally {
     setBusy(false);
   }
 }
 
 async function handleScrapeFirstItem() {
+  startRun('Scraping seller rows for first extracted want item...');
   setBusy(true);
   try {
     appendStatus('Starting seller scrape for the first extracted item...', 'good');
@@ -818,11 +862,15 @@ async function handleScrapeFirstItem() {
     setActiveResultTab('sellers');
     if (filteredResult.error) {
       appendStatus(filteredResult.error, 'bad');
+      finishRun(filteredResult.error, 'bad');
     } else {
-      appendStatus(`Scraped ${filteredResult.totalSellers}${filteredResult.unfilteredTotalSellers !== filteredResult.totalSellers ? ` of ${filteredResult.unfilteredTotalSellers}` : ''} seller rows for ${firstItem.productName || firstItem.idProduct}.`, filteredResult.totalSellers ? 'good' : 'bad');
+      const completionMessage = `Scraped ${filteredResult.totalSellers}${filteredResult.unfilteredTotalSellers !== filteredResult.totalSellers ? ` of ${filteredResult.unfilteredTotalSellers}` : ''} seller rows for ${firstItem.productName || firstItem.idProduct}.`;
+      appendStatus(completionMessage, filteredResult.totalSellers ? 'good' : 'bad');
+      finishRun(completionMessage, filteredResult.totalSellers ? 'good' : 'bad');
     }
   } catch (error) {
     appendStatus(error.message, 'bad');
+    finishRun(error.message, 'bad');
   } finally {
     setBusy(false);
   }
@@ -836,15 +884,19 @@ async function handleScrapeAllItems() {
       }
 
       appendStatus('Opening a pinned scrape window so the batch keeps running after this popup closes...', 'good');
+      finishRun('Opening pinned scrape window for batch run.', 'good');
+        await saveDetachedBatchState(latestExtractedItems);
       await openDetachedPopup({ autoStart: 'scrapeAll' });
       window.close();
       return;
     } catch (error) {
       appendStatus(error.message, 'bad');
+      finishRun(error.message, 'bad');
       return;
     }
   }
 
+  startRun('Scraping seller rows for all extracted want items...');
   setBusy(true);
   try {
     appendStatus('Starting serial seller scrape for all extracted want items...', 'good');
@@ -1001,17 +1053,22 @@ async function handleScrapeAllItems() {
 
     if (stopReason) {
       appendStatus(`Batch scrape stopped: ${stopReason}`, rateLimited ? 'bad' : '');
+      finishRun(`Batch scrape stopped: ${stopReason}`, rateLimited ? 'bad' : '');
     } else {
-      appendStatus(`Batch scrape completed for ${successCount} extracted item${successCount === 1 ? '' : 's'}.`, successCount ? 'good' : 'bad');
+      const completionMessage = `Batch scrape completed for ${successCount} extracted item${successCount === 1 ? '' : 's'}.`;
+      appendStatus(completionMessage, successCount ? 'good' : 'bad');
+      finishRun(completionMessage, successCount ? 'good' : 'bad');
     }
   } catch (error) {
     appendStatus(error.message, 'bad');
+    finishRun(error.message, 'bad');
   } finally {
     setBusy(false);
   }
 }
 
 async function handleProbeRateLimits() {
+  startRun('Running safe rate probe for first extracted want item...');
   setBusy(true);
   try {
     appendStatus('Starting safe rate probe for the first extracted item. Serial requests only; the probe will stop on the first warning.', 'good');
@@ -1147,11 +1204,14 @@ async function handleProbeRateLimits() {
 
     if (lastSafeDelay) {
       appendStatus(`Seller delay updated to ${recommendedDelay} ms based on the last clean probe stage.`, 'good');
+      finishRun(`Rate probe finished. Recommended seller delay: ${recommendedDelay} ms.`, 'good');
     } else {
       appendStatus(`No clean probe stage completed. Seller delay was reset to ${recommendedDelay} ms as a conservative fallback.`, 'bad');
+      finishRun(`Rate probe finished with warnings. Fallback delay: ${recommendedDelay} ms.`, 'bad');
     }
   } catch (error) {
     appendStatus(error.message, 'bad');
+    finishRun(error.message, 'bad');
   } finally {
     setBusy(false);
   }
@@ -1332,6 +1392,7 @@ renderSummary([
   { label: 'Status', value: 'Ready for page detection' },
   { label: 'Current scope', value: 'Want-list detail page only' },
 ]);
+finishRun('Idle. Start extract, scrape, or probe.');
 renderItems([], 0);
 renderSellers([], 0);
 renderPayload(null);
@@ -1345,22 +1406,26 @@ appendStatus(isDetached
 
 Promise.allSettled([
   loadSellerSettings(),
-  loadLastExtractedItems(),
 ]).then((results) => {
   if (results[0].status === 'rejected') {
     appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
   }
-  if (results[1].status === 'rejected') {
-    appendStatus('Could not restore previously extracted want items.', 'bad');
-  }
 
   if (isDetached && autoStartMode === 'scrapeAll') {
-    if (!latestExtractedItems.length) {
-      appendStatus('Pinned scrape window could not auto-start because no extracted items were restored.', 'bad');
-      return;
-    }
-    handleScrapeAllItems().catch((error) => {
-      appendStatus(error.message, 'bad');
+    loadDetachedBatchState().then((items) => {
+      latestExtractedItems = items;
+      if (!latestExtractedItems.length) {
+        appendStatus('Pinned scrape window could not auto-start because no extracted items were passed from popup.', 'bad');
+        return;
+      }
+
+      renderItems(latestExtractedItems.slice(0, 8), latestExtractedItems.length);
+      renderSellers([], 0, latestExtractedItems[0]?.productName || 'the first item');
+      handleScrapeAllItems().catch((error) => {
+        appendStatus(error.message, 'bad');
+      });
+    }).catch(() => {
+      appendStatus('Pinned scrape window could not load extracted items for auto-start.', 'bad');
     });
   }
 });

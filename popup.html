@@ -96,6 +96,62 @@
       line-height: 1.45;
     }
 
+    .collapsible {
+      margin-top: 12px;
+      border: 1px solid rgba(159, 176, 190, 0.12);
+      border-radius: 10px;
+      background: rgba(17, 22, 27, 0.4);
+      overflow: hidden;
+    }
+
+    .collapsible summary {
+      padding: 10px 12px;
+      cursor: pointer;
+      list-style: none;
+      font-size: 12px;
+      color: var(--muted);
+      transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+    }
+
+    .collapsible.is-empty summary {
+      color: var(--muted);
+    }
+
+    .collapsible.is-ready summary {
+      color: var(--text);
+    }
+
+    .collapsible summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .collapsible summary::after {
+      content: 'Show';
+      float: right;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(159, 176, 190, 0.18);
+      background: rgba(159, 176, 190, 0.1);
+      color: #8a98a4;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+
+    .collapsible[open] summary::after {
+      content: 'Hide';
+    }
+
+    .collapsible.is-ready summary::after {
+      border-color: rgba(245, 158, 11, 0.28);
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.22), rgba(251, 191, 36, 0.14));
+      color: #f7d388;
+    }
+
+    .collapsible-body {
+      padding: 0 12px 12px;
+    }
+
     button {
       border: 0;
       border-radius: 10px;
@@ -327,6 +383,86 @@
       background: linear-gradient(135deg, var(--accent-strong), #fbbf24);
     }
 
+    .result-tab.has-live {
+      border-color: rgba(245, 158, 11, 0.55);
+      box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.18);
+    }
+
+    .tab-label {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .tab-badge {
+      display: none;
+      min-width: 8px;
+      min-height: 8px;
+      border-radius: 999px;
+      background: var(--accent-strong);
+      box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16);
+    }
+
+    .tab-badge.visible {
+      display: inline-block;
+      animation: pulse 1.1s ease-in-out infinite;
+    }
+
+    .run-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(17, 22, 27, 0.82);
+      border: 1px solid rgba(159, 176, 190, 0.12);
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .run-status.is-active {
+      border-color: rgba(245, 158, 11, 0.55);
+      color: var(--text);
+    }
+
+    .run-status.good {
+      border-color: rgba(52, 211, 153, 0.32);
+    }
+
+    .run-status.bad {
+      border-color: rgba(248, 113, 113, 0.32);
+    }
+
+    .run-status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(159, 176, 190, 0.55);
+      flex: 0 0 auto;
+    }
+
+    .run-status.is-active .run-status-dot {
+      background: var(--accent-strong);
+      animation: pulse 1.1s ease-in-out infinite;
+    }
+
+    .run-status.good .run-status-dot {
+      background: var(--good);
+      animation: none;
+    }
+
+    .run-status.bad .run-status-dot {
+      background: var(--bad);
+      animation: none;
+    }
+
+    .run-status-text {
+      flex: 1 1 auto;
+    }
+
     .result-view {
       display: none;
     }
@@ -340,6 +476,11 @@
       .result-tabs {
         grid-template-columns: 1fr;
       }
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.12); opacity: 0.72; }
     }
   </style>
 </head>
@@ -357,8 +498,13 @@
           <h2 class="panel-title">Want List</h2>
           <button id="extractItems" class="secondary mini-button">Extract Visible Want Items</button>
         </div>
-        <p class="panel-note">Extract visible want entries from the current Cardmarket want-list page and keep them available for scraping.</p>
-        <div id="items" class="items"></div>
+        <p class="panel-note">Load visible want entries from current Cardmarket want-list page when button pressed. No popup restore cache.</p>
+        <details id="wantListPreview" class="collapsible is-empty">
+          <summary>Want list preview</summary>
+          <div class="collapsible-body">
+            <div id="items" class="items"></div>
+          </div>
+        </details>
       </section>
 
       <section class="panel config-grid">
@@ -403,32 +549,41 @@
         <div class="panel-header">
           <h2 class="panel-title">Results</h2>
         </div>
-        <div class="result-tabs" role="tablist" aria-label="Result views">
-          <button type="button" class="secondary mini-button result-tab active" id="resultTabOverview" data-result-tab="overview" aria-selected="true">Overview</button>
-          <button type="button" class="secondary mini-button result-tab" id="resultTabSellers" data-result-tab="sellers" aria-selected="false">Sellers</button>
-          <button type="button" class="secondary mini-button result-tab" id="resultTabPayload" data-result-tab="payload" aria-selected="false">Payload</button>
-          <button type="button" class="secondary mini-button result-tab" id="resultTabActivity" data-result-tab="activity" aria-selected="false">Activity</button>
+        <div id="runStatus" class="run-status" aria-live="polite">
+          <span class="run-status-dot" aria-hidden="true"></span>
+          <span id="runStatusText" class="run-status-text">Idle. Start extract, scrape, or probe.</span>
         </div>
+        <details class="collapsible">
+          <summary>Open debug output</summary>
+          <div class="collapsible-body">
+            <div class="result-tabs" role="tablist" aria-label="Result views">
+              <button type="button" class="secondary mini-button result-tab active" id="resultTabOverview" data-result-tab="overview" aria-selected="true"><span class="tab-label">Overview</span></button>
+              <button type="button" class="secondary mini-button result-tab" id="resultTabSellers" data-result-tab="sellers" aria-selected="false"><span class="tab-label">Sellers</span></button>
+              <button type="button" class="secondary mini-button result-tab" id="resultTabPayload" data-result-tab="payload" aria-selected="false"><span class="tab-label">Payload</span></button>
+              <button type="button" class="secondary mini-button result-tab" id="resultTabActivity" data-result-tab="activity" aria-selected="false"><span class="tab-label">Activity <span id="activityBadge" class="tab-badge" aria-hidden="true"></span></span></button>
+            </div>
 
-        <div class="result-view active" data-result-panel="overview">
-          <div id="summary" class="summary"></div>
-        </div>
+            <div class="result-view active" data-result-panel="overview">
+              <div id="summary" class="summary"></div>
+            </div>
 
-        <div class="result-view" data-result-panel="sellers">
-          <div id="sellerItems" class="items"></div>
-        </div>
+            <div class="result-view" data-result-panel="sellers">
+              <div id="sellerItems" class="items"></div>
+            </div>
 
-        <div class="result-view" data-result-panel="payload">
-          <div class="panel-header">
-            <h3 class="panel-title">Latest Extract Payload</h3>
-            <button id="copyPayload" class="secondary mini-button">Copy JSON</button>
+            <div class="result-view" data-result-panel="payload">
+              <div class="panel-header">
+                <h3 class="panel-title">Latest Extract Payload</h3>
+                <button id="copyPayload" class="secondary mini-button">Copy JSON</button>
+              </div>
+              <pre id="payloadView" class="code-view">No extracted payload yet.</pre>
+            </div>
+
+            <div class="result-view" data-result-panel="activity">
+              <ul id="statusLog" class="status-log"></ul>
+            </div>
           </div>
-          <pre id="payloadView" class="code-view">No extracted payload yet.</pre>
-        </div>
-
-        <div class="result-view" data-result-panel="activity">
-          <ul id="statusLog" class="status-log"></ul>
-        </div>
+        </details>
       </section>
     </section>
   </main>
