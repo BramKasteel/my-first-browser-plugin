@@ -2,20 +2,18 @@ const extractItemsButton = document.getElementById('extractItems');
 const scrapeFirstItemButton = document.getElementById('scrapeFirstItem');
 const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
 const probeRateLimitsButton = document.getElementById('probeRateLimits');
-const inspectFiltersButton = document.getElementById('inspectFilters');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
 const probeRequestCountInput = document.getElementById('probeRequestCount');
 const probePageBudgetInput = document.getElementById('probePageBudget');
-const useSellerCacheInput = document.getElementById('useSellerCache');
-const matchWantLanguageInput = document.getElementById('matchWantLanguage');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
-const clearSellerCacheButton = document.getElementById('clearSellerCache');
 const copyPayloadButton = document.getElementById('copyPayload');
 const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
 const sellerItemsEl = document.getElementById('sellerItems');
 const payloadViewEl = document.getElementById('payloadView');
 const statusLogEl = document.getElementById('statusLog');
+const resultTabButtons = [...document.querySelectorAll('[data-result-tab]')];
+const resultPanels = [...document.querySelectorAll('[data-result-panel]')];
 
 const urlParams = new URLSearchParams(window.location.search);
 const isDetached = urlParams.get('detached') === '1';
@@ -27,9 +25,6 @@ let latestExtractedItems = [];
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const LAST_EXTRACTED_ITEMS_KEY = 'lastExtractedItems';
-const SELLER_CACHE_PREFIX = 'sellerCache:';
-const SELLER_CACHE_VERSION = 'v6';
-const SELLER_CACHE_TTL_MS = 30 * 60 * 1000;
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
 const MIN_SELLER_DELAY_MS = 250;
 const REQUEST_JITTER_RATIO = 0.15;
@@ -85,17 +80,25 @@ function setBusy(isBusy) {
   scrapeFirstItemButton.disabled = isBusy;
   scrapeAllItemsButton.disabled = isBusy;
   probeRateLimitsButton.disabled = isBusy;
-  inspectFiltersButton.disabled = isBusy;
   sellerDelayInput.disabled = isBusy;
   probeRequestCountInput.disabled = isBusy;
   probePageBudgetInput.disabled = isBusy;
-  useSellerCacheInput.disabled = isBusy;
-  matchWantLanguageInput.disabled = isBusy;
   sellerLocationFilterListEl.querySelectorAll('input').forEach((input) => {
     input.disabled = isBusy;
   });
-  clearSellerCacheButton.disabled = isBusy;
   copyPayloadButton.disabled = isBusy;
+}
+
+function setActiveResultTab(tabName) {
+  resultTabButtons.forEach((button) => {
+    const isActive = button.dataset.resultTab === tabName;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+
+  resultPanels.forEach((panel) => {
+    panel.classList.toggle('active', panel.dataset.resultPanel === tabName);
+  });
 }
 
 function formatRemaining(ms) {
@@ -149,8 +152,6 @@ async function loadSellerSettings() {
   sellerDelayInput.value = String(sanitizeSellerDelay(settings.delayMs));
   probeRequestCountInput.value = String(clampProbeRuns(settings.probeRuns));
   probePageBudgetInput.value = String(clampProbePageBudget(settings.probePages));
-  useSellerCacheInput.checked = settings.useCache !== false;
-  matchWantLanguageInput.checked = settings.matchWantLanguage !== false;
   const selectedCountries = getStoredSellerCountries(settings);
   setSelectedSellerCountries(selectedCountries.length ? selectedCountries : DEFAULT_SELLER_COUNTRIES);
 }
@@ -178,15 +179,13 @@ async function saveSellerSettings() {
       delayMs: sanitizeSellerDelay(sellerDelayInput.value),
       probeRuns: clampProbeRuns(probeRequestCountInput.value),
       probePages: clampProbePageBudget(probePageBudgetInput.value),
-      useCache: useSellerCacheInput.checked,
-      matchWantLanguage: matchWantLanguageInput.checked,
       sellerLocationFilter: getSelectedSellerCountries(),
     },
   });
 }
 
 function getActiveSellerFilters(item) {
-  const requestedLanguages = matchWantLanguageInput.checked ? getItemLanguages(item) : [];
+  const requestedLanguages = getItemLanguages(item);
   const allowedCountries = getSelectedSellerCountries();
   return {
     requestedLanguages,
@@ -263,7 +262,6 @@ function applySellerFilters(result, item) {
     totalSellers: filteredSellers.length,
     unfilteredTotalSellers: rawSellers.length,
     filtersApplied: {
-      matchWantLanguage: filters.requestedLanguages.length > 0,
       requestedLanguages: filters.requestedLanguages,
       sellerCountries: filters.allowedCountries,
       sellerCountryFilterText: filters.locationFilterText,
@@ -557,35 +555,6 @@ function getCountryNameById(countryId) {
   return SELLER_COUNTRY_OPTIONS.find((country) => getCardmarketCountryId(country) === String(countryId)) || '';
 }
 
-async function getSellerCacheEntry(cacheKey) {
-  const storageArea = await getStorageArea();
-  const stored = await storageArea.get(cacheKey);
-  const entry = stored[cacheKey];
-  if (!entry) return null;
-  if ((Date.now() - entry.savedAt) > SELLER_CACHE_TTL_MS) {
-    await storageArea.remove(cacheKey);
-    return null;
-  }
-  return entry;
-}
-
-async function setSellerCacheEntry(cacheKey, value) {
-  const storageArea = await getStorageArea();
-  await storageArea.set({
-    [cacheKey]: {
-      savedAt: Date.now(),
-      value,
-    },
-  });
-}
-
-async function clearSellerCache() {
-  const storageArea = await getStorageArea();
-  const allItems = await storageArea.get(null);
-  const sellerKeys = Object.keys(allItems).filter((key) => key.startsWith(SELLER_CACHE_PREFIX) || key === 'sellerScrapeCooldownUntil');
-  if (sellerKeys.length) await storageArea.remove(sellerKeys);
-}
-
 async function clearLastExtractedItems() {
   const storageArea = await getStorageArea();
   await storageArea.remove(LAST_EXTRACTED_ITEMS_KEY);
@@ -793,6 +762,7 @@ async function handleExtractItems() {
     renderItems(result.items.slice(0, 8), result.totalVisible);
     renderSellers([], 0, result.items[0]?.productName || 'the first item');
     renderPayload(result);
+    setActiveResultTab('overview');
     appendStatus(`Extracted ${result.totalVisible} visible want items from the current page.`, result.totalVisible ? 'good' : 'bad');
   } catch (error) {
     appendStatus(error.message, 'bad');
@@ -816,7 +786,7 @@ async function handleScrapeFirstItem() {
 
     const tab = await ensureCardmarketTab();
     const delayMs = sanitizeSellerDelay(sellerDelayInput.value);
-    const { filteredResult, fromCache } = await scrapeWantItemSellerData({
+    const { filteredResult } = await scrapeWantItemSellerData({
       tab,
       item: firstItem,
       delayMs,
@@ -841,15 +811,13 @@ async function handleScrapeFirstItem() {
       { label: 'Seller scopes', value: String(filteredResult.partitionCount || 1) },
       { label: 'Market path', value: filteredResult.marketPath || '-' },
       { label: 'Filters', value: filterSummary.join(' | ') || 'none' },
-      { label: 'Used cache', value: fromCache ? 'yes' : 'no', tone: fromCache ? 'good' : '' },
       { label: 'Rate limited', value: filteredResult.rateLimited ? 'yes' : 'no', tone: filteredResult.rateLimited ? 'bad' : '' },
     ]);
     renderSellers(filteredResult.sellers.slice(0, 12), filteredResult.totalSellers, firstItem.productName || firstItem.idProduct);
     renderPayload(filteredResult);
+    setActiveResultTab('sellers');
     if (filteredResult.error) {
       appendStatus(filteredResult.error, 'bad');
-    } else if (fromCache) {
-      appendStatus(`Loaded cached seller rows for ${firstItem.productName || firstItem.idProduct}.`, 'good');
     } else {
       appendStatus(`Scraped ${filteredResult.totalSellers}${filteredResult.unfilteredTotalSellers !== filteredResult.totalSellers ? ` of ${filteredResult.unfilteredTotalSellers}` : ''} seller rows for ${firstItem.productName || firstItem.idProduct}.`, filteredResult.totalSellers ? 'good' : 'bad');
     }
@@ -894,7 +862,6 @@ async function handleScrapeAllItems() {
     let successCount = 0;
     let failedCount = 0;
     let skippedCount = 0;
-    let cachedCount = 0;
     let totalSellerRows = 0;
     let rateLimited = false;
     let stopReason = '';
@@ -936,12 +903,11 @@ async function handleScrapeAllItems() {
         break;
       }
 
-      const { filteredResult, fromCache } = scrapeOutcome;
+      const { filteredResult } = scrapeOutcome;
       if (filteredResult.error) {
         failedCount += 1;
         aggregateResults.push({
           item,
-          fromCache,
           error: filteredResult.error,
           rateLimited: !!filteredResult.rateLimited,
           totalSellers: filteredResult.totalSellers || 0,
@@ -964,11 +930,9 @@ async function handleScrapeAllItems() {
       }
 
       successCount += 1;
-      if (fromCache) cachedCount += 1;
       totalSellerRows += filteredResult.totalSellers || 0;
       aggregateResults.push({
         item,
-        fromCache,
         error: '',
         rateLimited: !!filteredResult.rateLimited,
         totalSellers: filteredResult.totalSellers || 0,
@@ -991,7 +955,7 @@ async function handleScrapeAllItems() {
       });
 
       appendStatus(
-        `Item ${index + 1}/${latestExtractedItems.length}: ${filteredResult.totalSellers}${fromCache ? ' cached' : ''} seller rows for ${itemLabel}.`,
+        `Item ${index + 1}/${latestExtractedItems.length}: ${filteredResult.totalSellers} seller rows for ${itemLabel}.`,
         filteredResult.totalSellers ? 'good' : 'bad'
       );
 
@@ -1008,7 +972,6 @@ async function handleScrapeAllItems() {
       { label: 'Items scraped', value: String(successCount), tone: successCount ? 'good' : '' },
       { label: 'Items failed', value: String(failedCount), tone: failedCount ? 'bad' : '' },
       { label: 'Items skipped', value: String(skippedCount), tone: skippedCount ? 'bad' : '' },
-      { label: 'Cached hits', value: String(cachedCount), tone: cachedCount ? 'good' : '' },
       { label: 'Seller rows kept', value: String(totalSellerRows), tone: totalSellerRows ? 'good' : '' },
       { label: 'Rate limited', value: rateLimited ? 'yes' : 'no', tone: rateLimited ? 'bad' : '' },
       { label: 'Stopped reason', value: stopReason || 'completed' },
@@ -1021,8 +984,6 @@ async function handleScrapeAllItems() {
       finishedAt: new Date().toISOString(),
       requestSettings: {
         delayMs,
-        useCache: useSellerCacheInput.checked,
-        matchWantLanguage: matchWantLanguageInput.checked,
         sellerCountries: getSelectedSellerCountries(),
       },
       totals: {
@@ -1030,13 +991,13 @@ async function handleScrapeAllItems() {
         successCount,
         failedCount,
         skippedCount,
-        cachedCount,
         totalSellerRows,
         rateLimited,
         stopReason,
       },
       results: aggregateResults,
     });
+    setActiveResultTab('sellers');
 
     if (stopReason) {
       appendStatus(`Batch scrape stopped: ${stopReason}`, rateLimited ? 'bad' : '');
@@ -1071,7 +1032,7 @@ async function handleProbeRateLimits() {
 
     const probeRuns = clampProbeRuns(probeRequestCountInput.value);
     const probePages = clampProbePageBudget(probePageBudgetInput.value);
-    const requestLanguageId = matchWantLanguageInput.checked ? getCardmarketLanguageId(getSingleItemLanguage(firstItem)) : '';
+    const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(firstItem));
     const requestCountryIds = getCardmarketCountryIdsFromCountries(getSelectedSellerCountries());
     const requestFilters = {
       languageId: requestLanguageId,
@@ -1182,6 +1143,7 @@ async function handleProbeRateLimits() {
       jitterRatio: REQUEST_JITTER_RATIO,
       testedAt: new Date().toISOString(),
     });
+    setActiveResultTab('overview');
 
     if (lastSafeDelay) {
       appendStatus(`Seller delay updated to ${recommendedDelay} ms based on the last clean probe stage.`, 'good');
@@ -1275,83 +1237,60 @@ async function ensureSellerScrapeNotCoolingDown() {
   }
 }
 
-function buildSellerCacheKey(tabUrl, item, requestLanguageId, requestCountryIds) {
-  return `${SELLER_CACHE_PREFIX}${SELLER_CACHE_VERSION}:${tabUrl.split('?')[0]}:${item.idProduct}:lang=${requestLanguageId || 'all'}:country=${requestCountryIds.join(',') || 'all'}`;
-}
-
 async function scrapeWantItemSellerData({ tab, item, delayMs, logPartitionRetry }) {
   await ensureSellerScrapeNotCoolingDown();
 
-  const tabUrl = tab.url || '';
-  const requestLanguageId = matchWantLanguageInput.checked ? getCardmarketLanguageId(getSingleItemLanguage(item)) : '';
+  const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(item));
   const requestCountryIds = getCardmarketCountryIdsFromCountries(getSelectedSellerCountries());
-  const cacheKey = buildSellerCacheKey(tabUrl, item, requestLanguageId, requestCountryIds);
-  let result = null;
-  let fromCache = false;
+  const baseRequestFilters = {
+    languageId: requestLanguageId,
+    sellerCountryIds: requestCountryIds,
+  };
+  const baseResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+    item,
+    delay: delayMs,
+    previewLimit: 12,
+    requestFilters: baseRequestFilters,
+  }]);
+  if (!baseResult) {
+    throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
+  }
+  let result = baseResult;
 
-  if (useSellerCacheInput.checked) {
-    const cached = await getSellerCacheEntry(cacheKey);
-    if (cached) {
-      result = cached.value;
-      fromCache = true;
+  const countryScopes = buildSellerCountryScopes({
+    requestCountryIds,
+    availableSellerFilters: baseResult.availableSellerFilters,
+  });
+  const shouldPartitionByCountry = shouldPartitionSellerScrape(baseResult, countryScopes);
+  if (shouldPartitionByCountry) {
+    const partitionLabels = countryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
+    if (logPartitionRetry) {
+      appendStatus(`Broad seller scope looks capped. Retrying in ${countryScopes.length} country partitions: ${partitionLabels.join(', ')}.`, 'good');
     }
+    const partitionResults = [];
+    for (const scope of countryScopes) {
+      const scopeResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+        item,
+        delay: delayMs,
+        previewLimit: 12,
+        requestFilters: {
+          languageId: requestLanguageId,
+          sellerCountryIds: [scope.countryId],
+        },
+      }]);
+      if (scopeResult) {
+        scopeResult.partitionLabel = scope.label;
+        partitionResults.push(scopeResult);
+      }
+    }
+    result = mergeSellerScopeResults(baseResult, partitionResults);
   }
 
-  if (!result) {
-    const baseRequestFilters = {
-      languageId: requestLanguageId,
-      sellerCountryIds: requestCountryIds,
-    };
-    const baseResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
-      item,
-      delay: delayMs,
-      previewLimit: 12,
-      requestFilters: baseRequestFilters,
-    }]);
-    if (!baseResult) {
-      throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
-    }
-    result = baseResult;
-
-    const countryScopes = buildSellerCountryScopes({
-      requestCountryIds,
-      availableSellerFilters: baseResult.availableSellerFilters,
-    });
-    const shouldPartitionByCountry = shouldPartitionSellerScrape(baseResult, countryScopes);
-    if (shouldPartitionByCountry) {
-      const partitionLabels = countryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
-      if (logPartitionRetry) {
-        appendStatus(`Broad seller scope looks capped. Retrying in ${countryScopes.length} country partitions: ${partitionLabels.join(', ')}.`, 'good');
-      }
-      const partitionResults = [];
-      for (const scope of countryScopes) {
-        const scopeResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
-          item,
-          delay: delayMs,
-          previewLimit: 12,
-          requestFilters: {
-            languageId: requestLanguageId,
-            sellerCountryIds: [scope.countryId],
-          },
-        }]);
-        if (scopeResult) {
-          scopeResult.partitionLabel = scope.label;
-          partitionResults.push(scopeResult);
-        }
-      }
-      result = mergeSellerScopeResults(baseResult, partitionResults);
-    }
-
-    if (result.rateLimited) {
-      await setSellerCooldownUntil(Date.now() + SELLER_COOLDOWN_MS);
-    }
-    if (!result.error && result.totalSellers > 0 && useSellerCacheInput.checked) {
-      await setSellerCacheEntry(cacheKey, result);
-    }
+  if (result.rateLimited) {
+    await setSellerCooldownUntil(Date.now() + SELLER_COOLDOWN_MS);
   }
 
   return {
-    fromCache,
     filteredResult: applySellerFilters(result, item),
   };
 }
@@ -1370,55 +1309,22 @@ async function handleCopyPayload() {
   }
 }
 
-async function handleInspectFilters() {
-  setBusy(true);
-  try {
-    const tab = await ensureCardmarketTab();
-    const result = await executeInTab(tab.id, inspectAvailableSellerFilters);
-    if (!result) {
-      throw new Error('Filter inspection returned no result.');
-    }
-
-    renderSummary([
-      { label: 'Page title', value: result.title || '-' },
-      { label: 'Filter form found', value: result.filterFormAction ? 'yes' : 'no', tone: result.filterFormAction ? 'good' : 'bad' },
-      { label: 'Filter action', value: result.filterFormAction || '-' },
-      { label: 'Filter groups', value: String(Object.keys(result.filters || {}).length) },
-    ]);
-    renderPayload(result);
-    appendStatus(`Inspected ${Object.keys(result.filters || {}).length} filter groups from the current Cardmarket page.`, Object.keys(result.filters || {}).length ? 'good' : 'bad');
-  } catch (error) {
-    appendStatus(error.message, 'bad');
-  } finally {
-    setBusy(false);
-  }
-}
-
 extractItemsButton.addEventListener('click', handleExtractItems);
 scrapeFirstItemButton.addEventListener('click', handleScrapeFirstItem);
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
-inspectFiltersButton.addEventListener('click', handleInspectFilters);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
+resultTabButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    setActiveResultTab(button.dataset.resultTab || 'overview');
+  });
+});
 sellerDelayInput.addEventListener('change', saveSellerSettings);
 probeRequestCountInput.addEventListener('change', saveSellerSettings);
 probePageBudgetInput.addEventListener('change', saveSellerSettings);
-useSellerCacheInput.addEventListener('change', saveSellerSettings);
-matchWantLanguageInput.addEventListener('change', saveSellerSettings);
 sellerLocationFilterListEl.addEventListener('change', (event) => {
   if (event.target instanceof HTMLInputElement && event.target.name === 'sellerCountryFilter') {
     saveSellerSettings();
-  }
-});
-clearSellerCacheButton.addEventListener('click', async () => {
-  setBusy(true);
-  try {
-    await clearSellerCache();
-    appendStatus('Cleared cached seller results and cooldown state.', 'good');
-  } catch (error) {
-    appendStatus(`Failed to clear seller cache: ${error.message}`, 'bad');
-  } finally {
-    setBusy(false);
   }
 });
 
@@ -1458,127 +1364,6 @@ Promise.allSettled([
     });
   }
 });
-
-function inspectAvailableSellerFilters() {
-  const textOf = (value) => String(value || '').trim().replace(/\s+/g, ' ');
-  const relevantFieldPattern = /^(sellerCountry|sellerType|sellerReputation|maxShippingTime|idExpansion|language|minCondition|extra\[.+\]|apply)$/i;
-  const nodes = [...document.querySelectorAll('input[name], select[name], textarea[name]')]
-    .filter((node) => relevantFieldPattern.test(node.name || ''));
-  const filters = {};
-
-  for (const node of nodes) {
-    const rawName = node.name || '';
-    const fieldKey = rawName.replace(/\[.*\]$/, '');
-    if (!filters[fieldKey]) filters[fieldKey] = [];
-
-    if (node.tagName === 'SELECT') {
-      const options = [...node.options].map((option) => ({
-        rawName,
-        value: option.value,
-        label: textOf(option.textContent),
-        selected: option.selected,
-      })).filter((option) => option.value || option.label);
-      filters[fieldKey].push(...options);
-      continue;
-    }
-
-    const label = extractInputLabel(node);
-    const entry = {
-      rawName,
-      value: node.value || '',
-      label,
-      checked: node.checked === true,
-      type: node.type || node.tagName.toLowerCase(),
-    };
-    filters[fieldKey].push(entry);
-  }
-
-  Object.keys(filters).forEach((key) => {
-    const seen = new Set();
-    filters[key] = filters[key].filter((entry) => {
-      const marker = `${entry.rawName}|${entry.value}|${entry.label}`;
-      if (seen.has(marker)) return false;
-      seen.add(marker);
-      return true;
-    });
-  });
-
-  const filterForm = document.querySelector('form[action*="Product_Filter_FilterMetacard"], form[action*="FilterMetacard"]');
-  const activeQuery = collectActiveQuery();
-  const submittedFormData = collectFormData(filterForm);
-  mergeActiveValues(filters, activeQuery, 'url');
-  mergeActiveValues(filters, submittedFormData, 'form');
-
-  return {
-    title: document.title,
-    href: location.href,
-    filterFormAction: filterForm?.getAttribute('action') || '',
-    activeQuery,
-    submittedFormData,
-    filters,
-  };
-
-  function collectActiveQuery() {
-    const query = {};
-    const params = new URLSearchParams(location.search);
-    params.forEach((value, key) => {
-      if (!relevantFieldPattern.test(key)) return;
-      query[key] = value.split(',').map((part) => textOf(part)).filter(Boolean);
-    });
-    return query;
-  }
-
-  function collectFormData(form) {
-    if (!form) return {};
-    const data = {};
-    const formData = new FormData(form);
-    for (const [key, value] of formData.entries()) {
-      if (!relevantFieldPattern.test(key)) continue;
-      if (!data[key]) data[key] = [];
-      data[key].push(textOf(value));
-    }
-    return data;
-  }
-
-  function mergeActiveValues(targetFilters, activeValues, source) {
-    Object.entries(activeValues).forEach(([rawName, values]) => {
-      const fieldKey = rawName.replace(/\[.*\]$/, '');
-      if (!targetFilters[fieldKey]) targetFilters[fieldKey] = [];
-      const seen = new Set(targetFilters[fieldKey].map((entry) => `${entry.rawName}|${entry.value}`));
-      values.forEach((value) => {
-        const marker = `${rawName}|${value}`;
-        if (seen.has(marker)) return;
-        seen.add(marker);
-        targetFilters[fieldKey].push({
-          rawName,
-          value,
-          label: '',
-          active: true,
-          source,
-        });
-      });
-    });
-  }
-
-  function extractInputLabel(node) {
-    const directLabel = node.closest('label');
-    if (directLabel) return textOf(directLabel.textContent);
-
-    const id = node.getAttribute('id');
-    if (id) {
-      const forLabel = document.querySelector(`label[for="${CSS.escape(id)}"]`);
-      if (forLabel) return textOf(forLabel.textContent);
-    }
-
-    const wrapper = node.closest('.form-check, .checkbox, .radio, .filter-row, li, .list-group-item, .form-group');
-    if (wrapper) return textOf(wrapper.textContent);
-
-    const siblingText = [node.nextSibling, node.previousSibling]
-      .map((sibling) => textOf(sibling?.textContent || ''))
-      .find(Boolean);
-    return siblingText || '';
-  }
-}
 
 function detectCurrentPage() {
   const pathname = location.pathname || '';
