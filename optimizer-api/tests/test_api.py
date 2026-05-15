@@ -11,6 +11,41 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_REQUESTS_DIR = ROOT / "tests" / "fixtures" / "requests"
 
 EXPECTED_FIXTURE_RESULTS = {
+    "ob_nixilis_improvements": {
+        "status": "optimal",
+        "totals": {
+            "item_subtotal": 7.67,
+            "shipping_total": 6.5,
+            "grand_total": 14.17,
+        },
+        "chosen_sellers": [
+            {
+                "seller_id": "Quelharoka",
+                "item_subtotal": 1.75,
+                "shipping_cost": 1.55,
+                "total_units": 3,
+            },
+            {
+                "seller_id": "The-Archivist",
+                "item_subtotal": 0.5,
+                "shipping_cost": 1.7,
+                "total_units": 6,
+            },
+            {
+                "seller_id": "Zarthor",
+                "item_subtotal": 2.05,
+                "shipping_cost": 1.7,
+                "total_units": 3,
+            },
+            {
+                "seller_id": "cernyrytir",
+                "item_subtotal": 3.37,
+                "shipping_cost": 1.55,
+                "total_units": 5,
+            },
+        ],
+        "allocation_count": 17,
+    },
     "small_wantslist": {
         "status": "optimal",
         "totals": {
@@ -33,7 +68,7 @@ EXPECTED_FIXTURE_RESULTS = {
             },
         ],
         "allocation_count": 2,
-    }
+    },
 }
 
 

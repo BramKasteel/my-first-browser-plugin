@@ -1035,18 +1035,74 @@ async function getTargetTab() {
   return tab || null;
 }
 
-async function openDetachedPopup({ autoStart = '' } = {}) {
+function getDetachedPopupUrl({ autoStart = '', tabId = null } = {}) {
   const params = new URLSearchParams({ detached: '1' });
   if (autoStart) params.set('autoStart', autoStart);
+  if (Number.isInteger(tabId)) params.set('tabId', String(tabId));
+  return `${chrome.runtime.getURL('popup.html')}?${params.toString()}`;
+}
 
-  const tab = await getTargetTab();
-  if (tab?.id && /https:\/\/www\.cardmarket\.com\//.test(tab.url || '')) {
-    params.set('tabId', String(tab.id));
+function parseDetachedPopupUrl(url) {
+  if (!url) return null;
+
+  try {
+    const parsed = new URL(url);
+    const popupUrl = new URL(chrome.runtime.getURL('popup.html'));
+    if (parsed.origin !== popupUrl.origin || parsed.pathname !== popupUrl.pathname) {
+      return null;
+    }
+    if (parsed.searchParams.get('detached') !== '1') {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function findDetachedPopupWindows() {
+  const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['popup'] });
+  return windows
+    .map((popupWindow) => {
+      const popupTab = popupWindow.tabs?.find((tab) => parseDetachedPopupUrl(tab.url));
+      if (!popupTab) return null;
+      return { popupWindow, popupTab };
+    })
+    .filter(Boolean);
+}
+
+async function focusDetachedPopup(entry, nextUrl) {
+  const currentUrl = entry.popupTab.url || '';
+  if (currentUrl !== nextUrl && entry.popupTab.id) {
+    await chrome.tabs.update(entry.popupTab.id, { url: nextUrl });
   }
 
+  await chrome.windows.update(entry.popupWindow.id, { focused: true });
+  if (entry.popupTab.id) {
+    await chrome.tabs.update(entry.popupTab.id, { active: true });
+  }
+}
+
+async function openDetachedPopup({ autoStart = '' } = {}) {
+  const tab = await getTargetTab();
+  const targetTabId = tab?.id && /https:\/\/www\.cardmarket\.com\//.test(tab.url || '')
+    ? tab.id
+    : null;
+  const detachedPopupUrl = getDetachedPopupUrl({ autoStart, tabId: targetTabId });
+
   await saveSellerSettings();
+
+  const detachedWindows = await findDetachedPopupWindows();
+  if (detachedWindows.length) {
+    const [primaryWindow, ...duplicateWindows] = detachedWindows;
+
+    await Promise.all(duplicateWindows.map(({ popupWindow }) => chrome.windows.remove(popupWindow.id)));
+    await focusDetachedPopup(primaryWindow, detachedPopupUrl);
+    return;
+  }
+
   await chrome.windows.create({
-    url: `${chrome.runtime.getURL('popup.html')}?${params.toString()}`,
+    url: detachedPopupUrl,
     type: 'popup',
     width: 460,
     height: 920,
