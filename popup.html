@@ -268,6 +268,72 @@
       margin: 0;
     }
 
+    .country-section {
+      display: grid;
+      gap: 8px;
+    }
+
+    .country-section-label {
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .country-selected-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-height: 44px;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      background: rgba(217, 119, 6, 0.08);
+    }
+
+    .country-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(245, 158, 11, 0.28);
+      background: rgba(17, 22, 27, 0.92);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .country-chip-remove {
+      border: 0;
+      padding: 0;
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      background: rgba(248, 113, 113, 0.18);
+      color: #fecaca;
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .country-chip-remove:hover:not(:disabled) {
+      transform: none;
+      filter: brightness(1.06);
+    }
+
+    .country-chip-remove:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .country-empty {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
     .summary {
       display: grid;
       gap: 8px;
@@ -530,11 +596,18 @@
 
       <section class="panel config-grid">
         <div class="panel-header">
-          <h2 class="panel-title">Seller Scrape Filters</h2>
+          <h2 class="panel-title">Seller Country Filter</h2>
         </div>
         <div class="config-label">
-          <span>Seller country filter</span>
-          <div id="sellerLocationFilterList" class="country-list" role="group" aria-label="Seller country filter"></div>
+          <span>Choose seller countries to include when scraping.</span>
+          <div class="country-section">
+            <span class="country-section-label">Selected countries</span>
+            <div id="selectedSellerCountries" class="country-selected-list" role="group" aria-label="Selected seller countries"></div>
+          </div>
+          <div class="country-section">
+            <span class="country-section-label">Other countries</span>
+            <div id="sellerLocationFilterList" class="country-list" role="group" aria-label="Other seller countries"></div>
+          </div>
         </div>
         <div class="actions">
           <button id="scrapeAllItems" class="secondary">Scrape sellers</button>

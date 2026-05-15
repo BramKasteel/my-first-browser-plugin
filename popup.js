@@ -5,6 +5,7 @@ const sellerDelayInput = document.getElementById('sellerDelayMs');
 const probeRequestCountInput = document.getElementById('probeRequestCount');
 const probePageBudgetInput = document.getElementById('probePageBudget');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
+const selectedSellerCountriesEl = document.getElementById('selectedSellerCountries');
 const copyPayloadButton = document.getElementById('copyPayload');
 const wantListPreviewEl = document.getElementById('wantListPreview');
 const wantListWarningEl = document.getElementById('wantListWarning');
@@ -29,6 +30,8 @@ const forcedTabId = urlParams.get('tabId') ? parseInt(urlParams.get('tabId'), 10
 let latestExtractPayload = null;
 let latestExtractedItems = [];
 let isRunActive = false;
+let isUiBusy = false;
+let selectedSellerCountries = [];
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
@@ -75,6 +78,8 @@ const SELLER_COUNTRY_OPTIONS = [
   'United Kingdom',
 ];
 
+selectedSellerCountries = [...DEFAULT_SELLER_COUNTRIES];
+
 function appendStatus(message, tone = '') {
   const entry = document.createElement('li');
   if (tone) entry.className = tone;
@@ -97,6 +102,7 @@ function syncSellerScrapeButton(isBusy = false) {
 }
 
 function setBusy(isBusy) {
+  isUiBusy = isBusy;
   extractItemsButton.disabled = isBusy;
   extractItemsButton.classList.toggle('is-busy', isBusy);
   probeRateLimitsButton.disabled = isBusy;
@@ -106,6 +112,9 @@ function setBusy(isBusy) {
   probePageBudgetInput.disabled = isBusy;
   sellerLocationFilterListEl.querySelectorAll('input').forEach((input) => {
     input.disabled = isBusy;
+  });
+  selectedSellerCountriesEl.querySelectorAll('button').forEach((button) => {
+    button.disabled = isBusy;
   });
   copyPayloadButton.disabled = isBusy;
   copyPayloadButton.classList.toggle('is-busy', isBusy);
@@ -248,9 +257,59 @@ function getActiveSellerFilters(item) {
   };
 }
 
-function renderSellerCountryFilterList() {
+function getOrderedSellerCountries(selectedCountries = []) {
+  const selected = new Set((selectedCountries || []).map((value) => normalizeCountryName(value)).filter(Boolean));
+  return [...SELLER_COUNTRY_OPTIONS].sort((left, right) => {
+    const leftSelected = selected.has(normalizeCountryName(left));
+    const rightSelected = selected.has(normalizeCountryName(right));
+    if (leftSelected === rightSelected) {
+      return left.localeCompare(right);
+    }
+    return leftSelected ? -1 : 1;
+  });
+}
+
+function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTRIES) {
+  const normalizedSelectedCountries = [...new Set((selectedCountries || [])
+    .map((value) => normalizeCountryName(value))
+    .filter(Boolean))];
+  selectedSellerCountries = normalizedSelectedCountries;
+
+  selectedSellerCountriesEl.replaceChildren();
   sellerLocationFilterListEl.replaceChildren();
-  SELLER_COUNTRY_OPTIONS.forEach((country) => {
+  const selected = new Set(normalizedSelectedCountries);
+
+  if (normalizedSelectedCountries.length) {
+    normalizedSelectedCountries.forEach((country) => {
+      const chip = document.createElement('div');
+      chip.className = 'country-chip';
+
+      const text = document.createElement('span');
+      text.textContent = country;
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'country-chip-remove';
+      removeButton.dataset.countryRemove = country;
+      removeButton.disabled = isUiBusy;
+      removeButton.setAttribute('aria-label', `Remove ${country} from selected seller countries`);
+      removeButton.textContent = 'x';
+
+      chip.append(text, removeButton);
+      selectedSellerCountriesEl.appendChild(chip);
+    });
+  } else {
+    const empty = document.createElement('p');
+    empty.className = 'country-empty';
+    empty.textContent = 'No countries selected yet.';
+    selectedSellerCountriesEl.appendChild(empty);
+  }
+
+  getOrderedSellerCountries(selectedCountries).forEach((country) => {
+    if (selected.has(normalizeCountryName(country))) {
+      return;
+    }
+
     const option = document.createElement('label');
     option.className = 'country-option';
 
@@ -258,7 +317,8 @@ function renderSellerCountryFilterList() {
     input.type = 'checkbox';
     input.name = 'sellerCountryFilter';
     input.value = country;
-    input.checked = DEFAULT_SELLER_COUNTRIES.includes(country);
+    input.checked = false;
+    input.disabled = isUiBusy;
 
     const text = document.createElement('span');
     text.textContent = country;
@@ -269,16 +329,11 @@ function renderSellerCountryFilterList() {
 }
 
 function getSelectedSellerCountries() {
-  return [...sellerLocationFilterListEl.querySelectorAll('input[name="sellerCountryFilter"]:checked')]
-    .map((input) => normalizeCountryName(input.value))
-    .filter(Boolean);
+  return [...selectedSellerCountries];
 }
 
 function setSelectedSellerCountries(countries) {
-  const selected = new Set((countries || []).map((value) => normalizeCountryName(value)).filter(Boolean));
-  sellerLocationFilterListEl.querySelectorAll('input[name="sellerCountryFilter"]').forEach((input) => {
-    input.checked = selected.has(normalizeCountryName(input.value));
-  });
+  renderSellerCountryFilterList(countries);
 }
 
 function getStoredSellerCountries(settings) {
@@ -1384,8 +1439,24 @@ probeRequestCountInput.addEventListener('change', saveSellerSettings);
 probePageBudgetInput.addEventListener('change', saveSellerSettings);
 sellerLocationFilterListEl.addEventListener('change', (event) => {
   if (event.target instanceof HTMLInputElement && event.target.name === 'sellerCountryFilter') {
+    const country = normalizeCountryName(event.target.value);
+    if (event.target.checked && country && !selectedSellerCountries.includes(country)) {
+      setSelectedSellerCountries([...selectedSellerCountries, country]);
+    }
     saveSellerSettings();
   }
+});
+selectedSellerCountriesEl.addEventListener('click', (event) => {
+  const removeButton = event.target instanceof HTMLElement
+    ? event.target.closest('button[data-country-remove]')
+    : null;
+  if (!(removeButton instanceof HTMLButtonElement)) return;
+
+  const country = normalizeCountryName(removeButton.dataset.countryRemove || '');
+  if (!country) return;
+
+  setSelectedSellerCountries(selectedSellerCountries.filter((value) => value !== country));
+  saveSellerSettings();
 });
 window.addEventListener('focus', () => {
   refreshWantListWarning().catch(() => {
