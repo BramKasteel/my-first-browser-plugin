@@ -1,17 +1,34 @@
-Implement something smart:
+Do not require to be on a specific wants list page.
+Instead -- show a drop-down to load a wants list.
 
-- if we obtain the capped 300 result --> ignore this card (for now)
-- instead, optimize on the other cards
-- look through sellers to see if they have this very common card
+---------
 
-or
+Get an estimate for the shopping wizard prices:
+- reduced price
+- reduced shipments
+- if you come from a shopping wizard result -- take that information
 
-- get the average price from the 300 results
-- do a next pass through where the max-price is at 20% of this average or something
-- (after optimizing) search the sellers to see if they have the card
-
+---------
+for a certain query cache the results for 5 minutes
 
 ----------
+
+if an order cannot be filled -- remove the articleid that wasn't available.
+Run the optimizer again.
+
+----------
+
+Try to make the scraping faster
+
+----------
+
+create light mode / dark mode
+
+---------
+
+create a default settings tab that hides much of the stuff
+
+---------
 
 searching for foils doesnt work
 
