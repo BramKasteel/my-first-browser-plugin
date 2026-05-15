@@ -19,14 +19,12 @@
     {
       "seller_id": "seller-alpha",
       "name": "Alpha Cards",
-      "country": "Germany",
-      "reputation_percent": 99.8
+      "country": "Germany"
     },
     {
       "seller_id": "seller-beta",
       "name": "Beta Games",
-      "country": "Netherlands",
-      "reputation_percent": 99.2
+      "country": "Netherlands"
     }
   ],
   "offers": [

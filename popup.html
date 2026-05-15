@@ -702,7 +702,8 @@
             <div class="result-tabs" role="tablist" aria-label="Result views">
               <button type="button" class="secondary mini-button result-tab active" id="resultTabOverview" data-result-tab="overview" aria-selected="true"><span class="tab-label">Overview</span></button>
               <button type="button" class="secondary mini-button result-tab" id="resultTabSellers" data-result-tab="sellers" aria-selected="false"><span class="tab-label">Sellers</span></button>
-              <button type="button" class="secondary mini-button result-tab" id="resultTabPayload" data-result-tab="payload" aria-selected="false"><span class="tab-label">Payload</span></button>
+              <button type="button" class="secondary mini-button result-tab" id="resultTabPayload" data-result-tab="payload" aria-selected="false"><span class="tab-label">Optimizer</span></button>
+              <button type="button" class="secondary mini-button result-tab" id="resultTabFrontend" data-result-tab="frontend" aria-selected="false"><span class="tab-label">Frontend</span></button>
               <button type="button" class="secondary mini-button result-tab" id="resultTabActivity" data-result-tab="activity" aria-selected="false"><span class="tab-label">Activity <span id="activityBadge" class="tab-badge" aria-hidden="true"></span></span></button>
             </div>
 
@@ -716,10 +717,18 @@
 
             <div class="result-view" data-result-panel="payload">
               <div class="panel-header">
-                <h3 class="panel-title">Latest Extract Payload</h3>
+                <h3 class="panel-title">Optimizer Payload</h3>
                 <button id="copyPayload" class="secondary mini-button">Copy JSON</button>
               </div>
-              <pre id="payloadView" class="code-view">No extracted payload yet.</pre>
+              <pre id="payloadView" class="code-view">No optimizer payload yet.</pre>
+            </div>
+
+            <div class="result-view" data-result-panel="frontend">
+              <div class="panel-header">
+                <h3 class="panel-title">Frontend Dump</h3>
+                <button id="copyFrontendPayload" class="secondary mini-button">Copy JSON</button>
+              </div>
+              <pre id="frontendPayloadView" class="code-view">No frontend dump yet.</pre>
             </div>
 
             <div class="result-view" data-result-panel="activity">

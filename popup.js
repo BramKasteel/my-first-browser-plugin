@@ -10,12 +10,14 @@ const sellerTypeFilterEl = document.getElementById('sellerTypeFilter');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
 const selectedSellerCountriesEl = document.getElementById('selectedSellerCountries');
 const copyPayloadButton = document.getElementById('copyPayload');
+const copyFrontendPayloadButton = document.getElementById('copyFrontendPayload');
 const wantListPreviewEl = document.getElementById('wantListPreview');
 const wantListWarningEl = document.getElementById('wantListWarning');
 const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
 const sellerItemsEl = document.getElementById('sellerItems');
 const payloadViewEl = document.getElementById('payloadView');
+const frontendPayloadViewEl = document.getElementById('frontendPayloadView');
 const statusLogEl = document.getElementById('statusLog');
 const runStatusEl = document.getElementById('runStatus');
 const runStatusTextEl = document.getElementById('runStatusText');
@@ -31,6 +33,7 @@ const keepPopupMode = urlParams.get('popup') === '1';
 const forcedTabId = urlParams.get('tabId') ? parseInt(urlParams.get('tabId'), 10) : null;
 
 let latestExtractPayload = null;
+let latestFrontendPayload = null;
 let latestExtractedItems = [];
 let isRunActive = false;
 let isUiBusy = false;
@@ -124,6 +127,8 @@ function setBusy(isBusy) {
   });
   copyPayloadButton.disabled = isBusy;
   copyPayloadButton.classList.toggle('is-busy', isBusy);
+  copyFrontendPayloadButton.disabled = isBusy;
+  copyFrontendPayloadButton.classList.toggle('is-busy', isBusy);
   syncSellerScrapeButton(isBusy);
 }
 
@@ -718,10 +723,185 @@ async function setSellerCooldownUntil(timestamp) {
   await storageArea.set({ sellerScrapeCooldownUntil: timestamp });
 }
 
+function slugifyValue(value, fallback = 'unknown') {
+  const normalized = textOf(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return normalized || fallback;
+}
+
+function parseIntegerOrFallback(value, fallback = 1) {
+  const parsed = parseInt(String(value || '').replace(/[^\d-]+/g, ''), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return parsed;
+}
+
+function parseEuroAmount(value) {
+  const normalized = textOf(value)
+    .replace(/\s*€\s*$/i, '')
+    .replace(/\./g, '')
+    .replace(/,/g, '.');
+  if (!normalized) return null;
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function inferBuyerCountry() {
+  const regionToCountry = {
+    AT: 'Austria',
+    BE: 'Belgium',
+    BG: 'Bulgaria',
+    CA: 'Canada',
+    CH: 'Switzerland',
+    CY: 'Cyprus',
+    CZ: 'Czechia',
+    DE: 'Germany',
+    DK: 'Denmark',
+    EE: 'Estonia',
+    ES: 'Spain',
+    FI: 'Finland',
+    FR: 'France',
+    GB: 'United Kingdom',
+    GR: 'Greece',
+    HR: 'Croatia',
+    HU: 'Hungary',
+    IE: 'Ireland',
+    IS: 'Iceland',
+    IT: 'Italy',
+    JP: 'Japan',
+    LI: 'Liechtenstein',
+    LT: 'Lithuania',
+    LU: 'Luxembourg',
+    LV: 'Latvia',
+    MT: 'Malta',
+    NL: 'Netherlands',
+    NO: 'Norway',
+    PL: 'Poland',
+    PT: 'Portugal',
+    RO: 'Romania',
+    SE: 'Sweden',
+    SG: 'Singapore',
+    SI: 'Slovenia',
+    SK: 'Slovakia',
+    UK: 'United Kingdom',
+  };
+  const locales = [...new Set([
+    ...(Array.isArray(navigator.languages) ? navigator.languages : []),
+    navigator.language,
+  ].filter(Boolean))];
+  for (const locale of locales) {
+    const regionMatch = String(locale).match(/-([A-Za-z]{2})\b/);
+    if (!regionMatch) continue;
+    const country = regionToCountry[regionMatch[1].toUpperCase()];
+    if (country) return country;
+  }
+  return 'Unknown';
+}
+
+function buildOptimizerItemId(item, index) {
+  if (textOf(item?.idWant)) return `want-${textOf(item.idWant)}`;
+  if (textOf(item?.idProduct)) return `product-${textOf(item.idProduct)}`;
+  return `item-${index + 1}-${slugifyValue(item?.productName, 'card')}`;
+}
+
+function buildOptimizerSellerId(seller) {
+  const sellerUrl = textOf(seller?.sellerUrl);
+  if (sellerUrl) {
+    try {
+      const pathname = new URL(sellerUrl).pathname;
+      const match = pathname.match(/\/Users\/([^/?#]+)/i);
+      if (match?.[1]) return decodeURIComponent(match[1]);
+    } catch {
+      // Ignore bad seller URLs and fall back to name/location-based IDs.
+    }
+  }
+
+  const namePart = slugifyValue(seller?.sellerName, 'seller');
+  const countryPart = slugifyValue(normalizeCountryName(seller?.location) || seller?.location, 'unknown');
+  return `${namePart}-${countryPart}`;
+}
+
+function buildOptimizerPayload(batchResult) {
+  if (!batchResult || batchResult.kind !== 'seller-scrape-batch') return null;
+
+  const sellersById = new Map();
+  const itemsById = new Map();
+  const offers = [];
+
+  batchResult.results.forEach((result, resultIndex) => {
+    const sellerRows = Array.isArray(result?.sellers) ? result.sellers : [];
+    if (!sellerRows.length) return;
+
+    const item = result.item || {};
+    const itemId = buildOptimizerItemId(item, resultIndex);
+
+    sellerRows.forEach((sellerRow, sellerIndex) => {
+      const unitPrice = parseEuroAmount(sellerRow?.price);
+      if (unitPrice === null) return;
+
+      const sellerId = buildOptimizerSellerId(sellerRow);
+      const sellerName = textOf(sellerRow?.sellerName) || sellerId;
+      const country = normalizeCountryName(sellerRow?.location) || 'Unknown';
+      if (!sellersById.has(sellerId)) {
+        sellersById.set(sellerId, {
+          seller_id: sellerId,
+          name: sellerName,
+          country,
+        });
+      }
+
+      itemsById.set(itemId, {
+        item_id: itemId,
+        name: textOf(item?.productName) || itemId,
+        quantity: parseIntegerOrFallback(item?.quantity, 1),
+        min_condition: normalizeCardCondition(item?.minCondition) || null,
+        preferred_languages: getItemLanguages(item),
+      });
+
+      const articleId = textOf(sellerRow?.articleId);
+      offers.push({
+        offer_id: articleId || `${itemId}-${sellerId}-${sellerIndex + 1}`,
+        item_id: itemId,
+        seller_id: sellerId,
+        unit_price: unitPrice,
+        available_quantity: parseIntegerOrFallback(sellerRow?.amount, 1),
+        condition: normalizeCardCondition(sellerRow?.condition) || textOf(sellerRow?.condition) || null,
+        language: textOf(sellerRow?.language) || null,
+      });
+    });
+  });
+
+  if (!offers.length || !itemsById.size || !sellersById.size) {
+    return null;
+  }
+
+  return {
+    buyer_country: inferBuyerCountry(),
+    currency: 'EUR',
+    items: [...itemsById.values()],
+    sellers: [...sellersById.values()],
+    offers,
+    shipping_profiles: [],
+    preferences: {
+      max_sellers: null,
+      allowed_countries: getSelectedSellerCountries(),
+      blocked_seller_ids: [],
+      return_alternatives: 0,
+    },
+  };
+}
+
 function renderPayload(payload) {
   latestExtractPayload = payload;
-  payloadViewEl.textContent = payload ? JSON.stringify(payload, null, 2) : 'No extracted payload yet.';
+  payloadViewEl.textContent = payload ? JSON.stringify(payload, null, 2) : 'No optimizer payload yet.';
   copyPayloadButton.disabled = !payload;
+}
+
+function renderFrontendPayload(payload) {
+  latestFrontendPayload = payload;
+  frontendPayloadViewEl.textContent = payload ? JSON.stringify(payload, null, 2) : 'No frontend dump yet.';
+  copyFrontendPayloadButton.disabled = !payload;
 }
 
 function renderSummary(rows) {
@@ -961,7 +1141,8 @@ async function handleExtractItems() {
     syncSellerScrapeButton();
     renderItems(result.items.slice(0, 8), result.totalVisible);
     renderSellers([], 0, result.items[0]?.productName || 'the first item');
-    renderPayload(result);
+    renderFrontendPayload(result);
+    renderPayload(null);
     setActiveResultTab('overview');
     appendStatus(`Extracted ${result.totalVisible} visible want items from the current page.`, result.totalVisible ? 'good' : 'bad');
     finishRun(`Extracted ${result.totalVisible} visible want items.`, result.totalVisible ? 'good' : 'bad');
@@ -1128,7 +1309,7 @@ async function handleScrapeAllItems() {
       { label: 'Stopped reason', value: stopReason || 'completed' },
     ]);
     renderSellers(previewSellers, totalSellerRows, 'the extracted want list');
-    renderPayload({
+    const batchPayload = {
       kind: 'seller-scrape-batch',
       wantListId: latestExtractedItems[0]?.wantListId || '',
       startedAt,
@@ -1150,8 +1331,20 @@ async function handleScrapeAllItems() {
         stopReason,
       },
       results: aggregateResults,
-    });
+    };
+    const optimizerPayload = buildOptimizerPayload(batchPayload);
+    renderFrontendPayload(batchPayload);
+    renderPayload(optimizerPayload);
     setActiveResultTab('sellers');
+
+    if (optimizerPayload) {
+      appendStatus(
+        `Optimizer payload ready: ${optimizerPayload.items.length} items, ${optimizerPayload.sellers.length} sellers, ${optimizerPayload.offers.length} offers.`,
+        'good'
+      );
+    } else {
+      appendStatus('No optimizer payload built. Seller rows missing valid price data.', 'bad');
+    }
 
     if (stopReason) {
       appendStatus(`Batch scrape stopped: ${stopReason}`, rateLimited ? 'bad' : '');
@@ -1289,7 +1482,7 @@ async function handleProbeRateLimits() {
       { label: 'Probe budget', value: `${probeRuns} runs x ${probePages} page${probePages === 1 ? '' : 's'}` },
     ]);
 
-    renderPayload({
+    renderFrontendPayload({
       kind: 'seller-rate-probe',
       item: {
         idProduct: firstItem.idProduct,
@@ -1305,6 +1498,7 @@ async function handleProbeRateLimits() {
       jitterRatio: REQUEST_JITTER_RATIO,
       testedAt: new Date().toISOString(),
     });
+    renderPayload(null);
     setActiveResultTab('overview');
 
     if (lastSafeDelay) {
@@ -1468,13 +1662,27 @@ async function scrapeWantItemSellerData({ tab, item, delayMs, logPartitionRetry 
 
 async function handleCopyPayload() {
   if (!latestExtractPayload) {
-    appendStatus('No payload available to copy yet.', 'bad');
+    appendStatus('No optimizer payload available to copy yet.', 'bad');
     return;
   }
 
   try {
     await navigator.clipboard.writeText(JSON.stringify(latestExtractPayload, null, 2));
-    appendStatus('Copied latest payload JSON to clipboard.', 'good');
+    appendStatus('Copied optimizer payload JSON to clipboard.', 'good');
+  } catch (error) {
+    appendStatus(`Clipboard copy failed: ${error.message}`, 'bad');
+  }
+}
+
+async function handleCopyFrontendPayload() {
+  if (!latestFrontendPayload) {
+    appendStatus('No frontend dump available to copy yet.', 'bad');
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(latestFrontendPayload, null, 2));
+    appendStatus('Copied frontend dump JSON to clipboard.', 'good');
   } catch (error) {
     appendStatus(`Clipboard copy failed: ${error.message}`, 'bad');
   }
@@ -1484,6 +1692,7 @@ extractItemsButton.addEventListener('click', handleExtractItems);
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
+copyFrontendPayloadButton.addEventListener('click', handleCopyFrontendPayload);
 resultTabButtons.forEach((button) => {
   button.addEventListener('click', () => {
     setActiveResultTab(button.dataset.resultTab || 'overview');
@@ -1530,6 +1739,7 @@ finishRun('Idle. Start extract, scrape, or probe.');
 renderItems([], 0);
 renderSellers([], 0);
 renderPayload(null);
+renderFrontendPayload(null);
 renderSellerCountryFilterList();
 syncSellerScrapeButton();
 scrapeAllItemsButton.textContent = 'Scrape sellers';

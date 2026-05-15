@@ -27,6 +27,8 @@ Supported constraints:
 - optional free-shipping threshold per seller
 - optional minimum order value per seller
 
+Seller reputation intentionally stays out of optimizer payload. Filter by reputation during scrape stage, then treat remaining sellers as equal on that dimension.
+
 This is deliberate first cut. Real Cardmarket shipping rules can be layered in later by extending `ShippingProfile` and solver constraints.
 
 ## Layout

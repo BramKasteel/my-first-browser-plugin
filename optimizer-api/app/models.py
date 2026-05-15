@@ -21,7 +21,6 @@ class Seller(BaseModel):
     seller_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
     country: str = Field(min_length=1)
-    reputation_percent: float | None = Field(default=None, ge=0, le=100)
 
 
 class Offer(BaseModel):
