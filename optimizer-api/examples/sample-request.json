@@ -1,0 +1,89 @@
+{
+  "buyer_country": "Netherlands",
+  "currency": "EUR",
+  "items": [
+    {
+      "item_id": "item-lightning-bolt",
+      "name": "Lightning Bolt",
+      "quantity": 2,
+      "preferred_languages": ["English"]
+    },
+    {
+      "item_id": "item-counterspell",
+      "name": "Counterspell",
+      "quantity": 1,
+      "preferred_languages": ["English"]
+    }
+  ],
+  "sellers": [
+    {
+      "seller_id": "seller-alpha",
+      "name": "Alpha Cards",
+      "country": "Germany",
+      "reputation_percent": 99.8
+    },
+    {
+      "seller_id": "seller-beta",
+      "name": "Beta Games",
+      "country": "Netherlands",
+      "reputation_percent": 99.2
+    }
+  ],
+  "offers": [
+    {
+      "offer_id": "offer-a1",
+      "item_id": "item-lightning-bolt",
+      "seller_id": "seller-alpha",
+      "unit_price": 1.2,
+      "available_quantity": 2,
+      "condition": "NM",
+      "language": "English"
+    },
+    {
+      "offer_id": "offer-a2",
+      "item_id": "item-counterspell",
+      "seller_id": "seller-alpha",
+      "unit_price": 2.1,
+      "available_quantity": 1,
+      "condition": "NM",
+      "language": "English"
+    },
+    {
+      "offer_id": "offer-b1",
+      "item_id": "item-lightning-bolt",
+      "seller_id": "seller-beta",
+      "unit_price": 0.95,
+      "available_quantity": 2,
+      "condition": "EX",
+      "language": "English"
+    },
+    {
+      "offer_id": "offer-b2",
+      "item_id": "item-counterspell",
+      "seller_id": "seller-beta",
+      "unit_price": 2.4,
+      "available_quantity": 1,
+      "condition": "NM",
+      "language": "English"
+    }
+  ],
+  "shipping_profiles": [
+    {
+      "seller_id": "seller-alpha",
+      "base_cost": 4.0,
+      "per_item_cost": 0.0,
+      "free_shipping_threshold": 10.0
+    },
+    {
+      "seller_id": "seller-beta",
+      "base_cost": 2.5,
+      "per_item_cost": 0.2
+    }
+  ],
+  "preferences": {
+    "max_sellers": 2,
+    "allowed_countries": ["Germany", "Netherlands"],
+    "blocked_seller_ids": [],
+    "return_alternatives": 0
+  }
+}

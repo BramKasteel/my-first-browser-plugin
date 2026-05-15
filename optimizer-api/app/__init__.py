@@ -1,0 +1,1 @@
+"""Cardmarket optimizer API package."""
