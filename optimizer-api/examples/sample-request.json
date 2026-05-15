@@ -65,19 +65,6 @@
       "language": "English"
     }
   ],
-  "shipping_profiles": [
-    {
-      "seller_id": "seller-alpha",
-      "base_cost": 4.0,
-      "per_item_cost": 0.0,
-      "free_shipping_threshold": 10.0
-    },
-    {
-      "seller_id": "seller-beta",
-      "base_cost": 2.5,
-      "per_item_cost": 0.2
-    }
-  ],
   "preferences": {
     "max_sellers": 2,
     "allowed_countries": ["Germany", "Netherlands"],

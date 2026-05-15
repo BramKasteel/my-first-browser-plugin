@@ -882,7 +882,6 @@ function buildOptimizerPayload(batchResult) {
     items: [...itemsById.values()],
     sellers: [...sellersById.values()],
     offers,
-    shipping_profiles: [],
     preferences: {
       max_sellers: null,
       allowed_countries: getSelectedSellerCountries(),

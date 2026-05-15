@@ -16,20 +16,17 @@ Out of scope for first scaffold:
 
 Solver currently minimizes:
 - item price
-- per-seller flat shipping cost
-- per-seller per-item shipping cost
+- fixed 1 EUR shipping cost per active seller
 
 Supported constraints:
 - fulfill requested quantity for each wanted item
 - optional seller-country allow list
 - optional seller block list
 - optional max seller count
-- optional free-shipping threshold per seller
-- optional minimum order value per seller
 
 Seller reputation intentionally stays out of optimizer payload. Filter by reputation during scrape stage, then treat remaining sellers as equal on that dimension.
 
-This is deliberate first cut. Real Cardmarket shipping rules can be layered in later by extending `ShippingProfile` and solver constraints.
+This is deliberate first cut. Real Cardmarket shipping should later be internal optimizer logic based on buyer country, seller country, and package characteristics, not frontend-provided shipping data.
 
 ## Layout
 
@@ -38,6 +35,28 @@ This is deliberate first cut. Real Cardmarket shipping rules can be layered in l
 - `app/solver.py` OR-Tools optimization model
 - `examples/sample-request.json` example payload from extension side
 - `examples/sample-response.json` example optimized response
+- `tests/fixtures/requests/` real optimizer payload dumps copied from plugin popup
+- `tests/test_api.py` fixture-driven API tests
+
+## Real data fixtures
+
+Put real plugin dumps in `tests/fixtures/requests/`.
+
+Recommended flow:
+- run plugin scrape
+- open `Optimizer` tab in popup
+- copy JSON
+- save as `tests/fixtures/requests/<short-case-name>.json`
+
+Good fixture names:
+- `single-seller-cheap.json`
+- `two-seller-tradeoff.json`
+- `country-filter-edge.json`
+- `large-want-list-01.json`
+
+Keep fixtures sanitized if seller names or other details should not leave local machine.
+
+Tests will automatically pick up every `*.json` file in that directory.
 
 ## Local run
 
@@ -50,6 +69,14 @@ uvicorn app.main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` for Swagger UI.
+
+Run tests:
+
+```bash
+cd optimizer-api
+pip install -e .[dev]
+pytest -q
+```
 
 ## API
 
@@ -88,13 +115,6 @@ Example request:
       "seller_id": "seller-a",
       "unit_price": 1.45,
       "available_quantity": 2
-    }
-  ],
-  "shipping_profiles": [
-    {
-      "seller_id": "seller-a",
-      "base_cost": 3.5,
-      "per_item_cost": 0.1
     }
   ]
 }

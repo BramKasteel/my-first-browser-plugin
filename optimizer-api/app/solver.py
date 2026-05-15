@@ -10,6 +10,12 @@ from .models import (
     SellerResult,
 )
 
+DEFAULT_ORDER_SHIPPING_EUR = 1.0
+ROUTE_SHIPPING_EUR = {
+    ("germany", "netherlands"): 1.55,
+    ("netherlands", "netherlands"): 1.70,
+}
+
 
 def _to_cents(amount: float) -> int:
     return int(round(amount * 100))
@@ -17,6 +23,14 @@ def _to_cents(amount: float) -> int:
 
 def _from_cents(amount: int) -> float:
     return round(amount / 100, 2)
+
+
+def _shipping_cost_cents(*, seller_country: str, buyer_country: str) -> int:
+    route_amount = ROUTE_SHIPPING_EUR.get(
+        (seller_country.strip().casefold(), buyer_country.strip().casefold()),
+        DEFAULT_ORDER_SHIPPING_EUR,
+    )
+    return _to_cents(route_amount)
 
 
 def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
@@ -27,9 +41,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             "OR-Tools not installed. Run `pip install -e .` inside optimizer-api first."
         ) from exc
 
-    item_map = {item.item_id: item for item in request.items}
     seller_map = {seller.seller_id: seller for seller in request.sellers}
-    shipping_map = {profile.seller_id: profile for profile in request.shipping_profiles}
 
     allowed_countries = set(
         country.strip().casefold()
@@ -76,7 +88,6 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
 
     offer_vars = {}
     seller_active_vars = {}
-    seller_free_shipping_vars = {}
 
     seller_offers = defaultdict(list)
     for offer in usable_offers:
@@ -87,11 +98,6 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
 
     for seller_id in seller_offers:
         seller_active_vars[seller_id] = model.NewBoolVar(f"seller_active_{seller_id}")
-        profile = shipping_map.get(seller_id)
-        if profile and profile.free_shipping_threshold is not None:
-            seller_free_shipping_vars[seller_id] = model.NewBoolVar(
-                f"free_shipping_{seller_id}"
-            )
 
     for item in request.items:
         model.Add(
@@ -110,28 +116,6 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         model.Add(total_units <= max_units * active)
         model.Add(total_units >= active)
 
-        profile = shipping_map.get(seller_id)
-        if profile and profile.min_order_value_for_shipping > 0:
-            seller_spend = sum(
-                _to_cents(offer.unit_price) * offer_vars[offer.offer_id]
-                for offer in offers
-            )
-            model.Add(
-                seller_spend >= _to_cents(profile.min_order_value_for_shipping) * active
-            )
-
-        free_shipping = seller_free_shipping_vars.get(seller_id)
-        if profile and free_shipping is not None:
-            seller_spend = sum(
-                _to_cents(offer.unit_price) * offer_vars[offer.offer_id]
-                for offer in offers
-            )
-            model.Add(free_shipping <= active)
-            model.Add(
-                seller_spend
-                >= _to_cents(profile.free_shipping_threshold) * free_shipping
-            )
-
     if request.preferences.max_sellers is not None:
         model.Add(sum(seller_active_vars.values()) <= request.preferences.max_sellers)
 
@@ -139,24 +123,16 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     for offer in usable_offers:
         objective_terms.append(_to_cents(offer.unit_price) * offer_vars[offer.offer_id])
 
-    for seller_id, offers in seller_offers.items():
-        active = seller_active_vars[seller_id]
-        total_units = sum(offer_vars[offer.offer_id] for offer in offers)
-        profile = shipping_map.get(seller_id)
-        if not profile:
-            continue
+    shipping_costs_by_seller = {
+        seller_id: _shipping_cost_cents(
+            seller_country=seller_map[seller_id].country,
+            buyer_country=request.buyer_country,
+        )
+        for seller_id in seller_active_vars
+    }
 
-        if profile.base_cost > 0:
-            free_shipping = seller_free_shipping_vars.get(seller_id)
-            if free_shipping is None:
-                objective_terms.append(_to_cents(profile.base_cost) * active)
-            else:
-                objective_terms.append(
-                    _to_cents(profile.base_cost) * (active - free_shipping)
-                )
-
-        if profile.per_item_cost > 0:
-            objective_terms.append(_to_cents(profile.per_item_cost) * total_units)
+    for seller_id, active in seller_active_vars.items():
+        objective_terms.append(shipping_costs_by_seller[seller_id] * active)
 
     model.Minimize(sum(objective_terms))
 
@@ -201,18 +177,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         if solver.Value(active_var) <= 0:
             continue
 
-        profile = shipping_map.get(seller_id)
-        shipping_total = 0
-        if profile:
-            shipping_total += (
-                _to_cents(profile.per_item_cost) * seller_unit_totals[seller_id]
-            )
-            free_shipping = seller_free_shipping_vars.get(seller_id)
-            free_shipping_hit = (
-                free_shipping is not None and solver.Value(free_shipping) > 0
-            )
-            if not free_shipping_hit:
-                shipping_total += _to_cents(profile.base_cost)
+        shipping_total = shipping_costs_by_seller[seller_id]
 
         seller_shipping_totals[seller_id] = shipping_total
         chosen_sellers.append(
@@ -229,8 +194,8 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     grand_total = item_subtotal + shipping_total
 
     notes = [
-        "Shipping model uses flat plus per-item costs per seller.",
-        "Real Cardmarket checkout shipping tiers still need richer constraints.",
+        "Shipping proxy uses seller-country to buyer-country route costs when known.",
+        "Current route table: Germany -> Netherlands = 1.55 EUR, Netherlands -> Netherlands = 1.70 EUR, fallback = 1.00 EUR.",
     ]
     if filtered_sellers:
         notes.append(

@@ -35,16 +35,6 @@ class Offer(BaseModel):
     language: str | None = None
 
 
-class ShippingProfile(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    seller_id: str = Field(min_length=1)
-    base_cost: float = Field(ge=0)
-    per_item_cost: float = Field(default=0, ge=0)
-    min_order_value_for_shipping: float = Field(default=0, ge=0)
-    free_shipping_threshold: float | None = Field(default=None, ge=0)
-
-
 class OptimizationPreferences(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -62,7 +52,6 @@ class OptimizationRequest(BaseModel):
     items: list[WantedItem] = Field(min_length=1)
     sellers: list[Seller] = Field(min_length=1)
     offers: list[Offer] = Field(min_length=1)
-    shipping_profiles: list[ShippingProfile] = Field(default_factory=list)
     preferences: OptimizationPreferences = Field(
         default_factory=OptimizationPreferences
     )
@@ -90,18 +79,6 @@ class OptimizationRequest(BaseModel):
         if unknown_offer_sellers:
             raise ValueError(
                 f"Offers reference unknown seller IDs: {', '.join(unknown_offer_sellers)}"
-            )
-
-        unknown_shipping_sellers = sorted(
-            {
-                profile.seller_id
-                for profile in self.shipping_profiles
-                if profile.seller_id not in seller_ids
-            }
-        )
-        if unknown_shipping_sellers:
-            raise ValueError(
-                f"Shipping profiles reference unknown seller IDs: {', '.join(unknown_shipping_sellers)}"
             )
 
         blocked_unknown = sorted(
