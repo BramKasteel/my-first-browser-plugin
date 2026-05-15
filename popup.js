@@ -2,6 +2,7 @@ const extractItemsButton = document.getElementById('extractItems');
 const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
 const loadOptimizerFixtureButton = document.getElementById('loadOptimizerFixture');
 const optimizeOrderButton = document.getElementById('optimizeOrder');
+const fillCartButton = document.getElementById('fillCart');
 const probeRateLimitsButton = document.getElementById('probeRateLimits');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
 const probeRequestCountInput = document.getElementById('probeRequestCount');
@@ -132,6 +133,19 @@ function syncOptimizeButton(isBusy = false) {
   optimizeOrderButton.classList.toggle('secondary', !hasPayload);
 }
 
+function hasOptimizedCart() {
+  return latestOptimizationResult?.status === 'optimal'
+    && Array.isArray(latestOptimizationResult?.cart?.sellers)
+    && latestOptimizationResult.cart.sellers.length > 0;
+}
+
+function syncFillCartButton(isBusy = false) {
+  const hasCart = hasOptimizedCart();
+  fillCartButton.disabled = isBusy || !hasCart;
+  fillCartButton.classList.toggle('is-busy', isBusy);
+  fillCartButton.classList.toggle('secondary', !hasCart);
+}
+
 function syncFixtureButton(isBusy = false) {
   loadOptimizerFixtureButton.disabled = isBusy;
   loadOptimizerFixtureButton.classList.toggle('is-busy', isBusy);
@@ -145,6 +159,8 @@ function setBusy(isBusy) {
   loadOptimizerFixtureButton.classList.toggle('is-busy', isBusy);
   optimizeOrderButton.disabled = isBusy;
   optimizeOrderButton.classList.toggle('is-busy', isBusy);
+  fillCartButton.disabled = isBusy;
+  fillCartButton.classList.toggle('is-busy', isBusy);
   probeRateLimitsButton.disabled = isBusy;
   probeRateLimitsButton.classList.toggle('is-busy', isBusy);
   sellerDelayInput.disabled = isBusy;
@@ -168,6 +184,7 @@ function setBusy(isBusy) {
   syncSellerScrapeButton(isBusy);
   syncFixtureButton(isBusy);
   syncOptimizeButton(isBusy);
+  syncFillCartButton(isBusy);
 }
 
 function setRunState({ active, message, tone = '' }) {
@@ -1096,6 +1113,7 @@ function renderSellers(sellers, totalVisible, itemLabel = '') {
 function renderOptimizationResult(result) {
   latestOptimizationResult = result;
   cartItemsEl.replaceChildren();
+  syncFillCartButton(isUiBusy);
 
   if (!result) {
     const empty = document.createElement('p');
@@ -1152,6 +1170,114 @@ function renderOptimizationResult(result) {
     }
 
     cartItemsEl.appendChild(card);
+  }
+}
+
+function buildCartFillPayload(result) {
+  const cartSellers = Array.isArray(result?.cart?.sellers) ? result.cart.sellers : [];
+  const groupedArticles = new Map();
+
+  for (const seller of cartSellers) {
+    const sellerItems = Array.isArray(seller?.items) ? seller.items : [];
+    for (const item of sellerItems) {
+      const articleId = textOf(item?.offer_id);
+      const quantity = parseIntegerOrFallback(item?.quantity, 0);
+      if (!articleId || quantity < 1) {
+        throw new Error('Optimizer cart contains row without valid Cardmarket article id and quantity.');
+      }
+      groupedArticles.set(articleId, (groupedArticles.get(articleId) || 0) + quantity);
+    }
+  }
+
+  if (!groupedArticles.size) {
+    throw new Error('No optimized cart rows available to add.');
+  }
+
+  const idArticle = {};
+  const amount = {};
+  for (const [articleId, quantity] of groupedArticles.entries()) {
+    idArticle[articleId] = articleId;
+    amount[articleId] = String(quantity);
+  }
+
+  return {
+    articleCount: groupedArticles.size,
+    unitCount: [...groupedArticles.values()].reduce((sum, value) => sum + value, 0),
+    idArticle,
+    amount,
+  };
+}
+
+async function submitOptimizedCartInTab(payload) {
+  const tab = await ensureCardmarketTab();
+  return executeInTab(tab.id, async (cartPayload) => {
+    const pathParts = location.pathname.split('/').filter(Boolean);
+    const lang = pathParts[0] || 'en';
+    const game = pathParts[1] || 'Magic';
+    const cmtkn = document.querySelector('input[name="__cmtkn"]')?.value || '';
+    if (!cmtkn) {
+      throw new Error('Missing __cmtkn on active Cardmarket page. Open seller or wants page first.');
+    }
+
+    const formData = new FormData();
+    formData.append('__cmtkn', cmtkn);
+    formData.append('idArticle', JSON.stringify(cartPayload.idArticle));
+    formData.append('amount', JSON.stringify(cartPayload.amount));
+
+    const response = await fetch(`${location.origin}/${lang}/${game}/AjaxAction/ShoppingCart_Add_AddArticlesFromUserOffers`, {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+      headers: {
+        Accept: '*/*',
+      },
+    });
+
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new Error(`Cardmarket cart add failed (${response.status}).`);
+    }
+
+    const xml = new DOMParser().parseFromString(responseText, 'application/xml');
+    const root = xml.querySelector('ajaxResponse');
+    if (!root) {
+      throw new Error('Cardmarket cart add returned non-AJAX response.');
+    }
+
+    const parserError = xml.querySelector('parsererror');
+    if (parserError) {
+      throw new Error('Cardmarket cart add returned invalid XML.');
+    }
+
+    return {
+      ok: true,
+      articleCount: Object.keys(cartPayload.idArticle).length,
+      unitCount: Object.values(cartPayload.amount).reduce((sum, value) => sum + Number(value || 0), 0),
+      hasMenuMarkup: Boolean(root.querySelector('scMenuHubResponsive')),
+      responsePreview: responseText.slice(0, 240),
+    };
+  }, [payload]);
+}
+
+async function handleFillCart() {
+  if (!hasOptimizedCart()) {
+    appendStatus('No optimal cart ready yet. Run optimizer first.', 'bad');
+    return;
+  }
+
+  startRun('Posting optimized cart to Cardmarket...');
+  setBusy(true);
+  try {
+    const payload = buildCartFillPayload(latestOptimizationResult);
+    appendStatus(`Posting ${payload.articleCount} articles and ${payload.unitCount} units to Cardmarket cart.`);
+    const result = await submitOptimizedCartInTab(payload);
+    appendStatus(`Cardmarket cart updated: ${result.articleCount} articles, ${result.unitCount} units.`, 'good');
+    finishRun('Optimized cart pushed to Cardmarket.', 'good');
+  } catch (error) {
+    appendStatus(error.message, 'bad');
+    finishRun(error.message, 'bad');
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -2161,6 +2287,7 @@ extractItemsButton.addEventListener('click', handleExtractItems);
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 loadOptimizerFixtureButton.addEventListener('click', handleLoadOptimizerFixture);
 optimizeOrderButton.addEventListener('click', handleOptimizeOrder);
+fillCartButton.addEventListener('click', handleFillCart);
 probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
 copyFrontendPayloadButton.addEventListener('click', handleCopyFrontendPayload);
@@ -2218,6 +2345,7 @@ renderSellerCountryFilterList();
 syncSellerScrapeButton();
 syncFixtureButton();
 syncOptimizeButton();
+syncFillCartButton();
 scrapeAllItemsButton.textContent = 'Scrape sellers';
 appendStatus(isDetached
   ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'
