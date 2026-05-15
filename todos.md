@@ -16,3 +16,8 @@ or
 searching for foils doesnt work
 
 ----------
+
+currently implemented: if we have >300 results for a country, only query powersellers
+This causes the search to be not full
+
+---------

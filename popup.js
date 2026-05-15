@@ -1520,8 +1520,7 @@ function shouldPartitionSellerScrape(baseResult, countryScopes) {
   if (!countryScopes.length) return false;
   if (countryScopes.length === 1 && (baseResult.requestFilters?.sellerCountryIds || []).length === 1) return false;
   if ((baseResult.requestFilters?.sellerCountryIds || []).length > 1) return true;
-  if (baseResult.ajaxDebug?.maxPaginatedResultsReached) return true;
-  return (baseResult.totalSellers || 0) >= 250;
+  return isSellerScopeLikelyCapped(baseResult, 250);
 }
 
 function buildSellerCountryScopes({ requestCountryIds, availableSellerFilters }) {
@@ -1541,8 +1540,27 @@ function buildSellerCountryScopes({ requestCountryIds, availableSellerFilters })
   return discoveredIds.map((countryId) => ({ countryId, label: `country:${countryId}` }));
 }
 
+function isSellerScopeLikelyCapped(result, minimumSellerCount = 300) {
+  if (!result || result.error) return false;
+  if (result.ajaxDebug?.maxPaginatedResultsReached) return true;
+  return (result.totalSellers || 0) >= minimumSellerCount;
+}
+
+function hasPowerSellerFilterOption(availableSellerFilters) {
+  const sellerTypeOptions = Array.isArray(availableSellerFilters?.sellerType)
+    ? availableSellerFilters.sellerType
+    : [];
+  return sellerTypeOptions.some((entry) => {
+    const value = String(entry?.value || '').trim();
+    const label = String(entry?.label || '').trim();
+    return value === '2' || /power\s+seller/i.test(label);
+  });
+}
+
 function mergeSellerScopeResults(baseResult, partitionResults) {
   const allResults = [baseResult, ...(partitionResults || [])].filter(Boolean);
+  const seedResult = baseResult || partitionResults?.[0] || {};
+  const hasBaseResult = !!baseResult;
   const mergedSellers = [];
   const seenArticleIds = new Set();
   const attemptedUrls = [];
@@ -1569,7 +1587,7 @@ function mergeSellerScopeResults(baseResult, partitionResults) {
   });
 
   return {
-    ...baseResult,
+    ...seedResult,
     error: firstError,
     sellers: mergedSellers,
     sellerPreview: mergedSellers.slice(0, 12),
@@ -1578,7 +1596,7 @@ function mergeSellerScopeResults(baseResult, partitionResults) {
     attemptedUrls,
     partitionCount: allResults.length,
     partitions: allResults.map((result, index) => ({
-      label: index === 0 ? 'base' : (result.partitionLabel || `partition-${index}`),
+      label: result.partitionLabel || (hasBaseResult && index === 0 ? 'base' : `partition-${index + 1}`),
       sellerCount: result.totalSellers || 0,
       pagesFetched: result.pagesFetched || 0,
       rateLimited: !!result.rateLimited,
@@ -1595,59 +1613,182 @@ async function ensureSellerScrapeNotCoolingDown() {
   }
 }
 
+function describeSellerScope({ sellerCountryIds, sellerTypeId }) {
+  const countries = [...new Set((sellerCountryIds || []).filter(Boolean))]
+    .map((countryId) => getCountryNameById(countryId) || `country:${countryId}`);
+  const parts = [];
+  if (countries.length === 1) {
+    parts.push(`country ${countries[0]}`);
+  } else if (countries.length > 1) {
+    parts.push(`countries ${countries.join(', ')}`);
+  } else {
+    parts.push('all seller countries');
+  }
+
+  if (sellerTypeId === getCardmarketSellerTypeId('Power Seller')) {
+    parts.push('Power Seller subset');
+  } else {
+    const explicitSellerType = sellerTypeFilterEl?.value || '';
+    const normalizedSellerType = normalizeSellerType(explicitSellerType);
+    if (normalizedSellerType) parts.push(`${normalizedSellerType} sellers`);
+  }
+
+  return parts.join(', ');
+}
+
+async function executeSellerScopeScrape({
+  tabId,
+  item,
+  delayMs,
+  previewLimit,
+  requestLanguageId,
+  sellerCountryIds,
+  sellerReputationId,
+  maxShippingTimeId,
+  sellerTypeId,
+  partitionLabel,
+  logPowerSellerFallback,
+}) {
+  const requestFilters = {
+    languageId: requestLanguageId,
+    sellerCountryIds,
+    sellerReputationId,
+    maxShippingTimeId,
+    sellerTypeId,
+  };
+  appendStatus(`Querying seller scope: ${describeSellerScope({ sellerCountryIds, sellerTypeId })}.`);
+  let scopeResult = await executeInTab(tabId, scrapeSingleWantItemSellers, [{
+    item,
+    delay: delayMs,
+    previewLimit,
+    requestFilters,
+  }]);
+  if (!scopeResult) return null;
+
+  const powerSellerTypeId = getCardmarketSellerTypeId('Power Seller');
+  const shouldRetryWithPowerSeller = !sellerTypeId
+    && hasPowerSellerFilterOption(scopeResult.availableSellerFilters)
+    && isSellerScopeLikelyCapped(scopeResult, 300);
+
+  if (shouldRetryWithPowerSeller) {
+    if (logPowerSellerFallback) {
+      appendStatus(`${partitionLabel} looks capped. Applying Power Seller subset.`, 'good');
+    }
+    appendStatus(`Querying seller scope: ${describeSellerScope({ sellerCountryIds, sellerTypeId: powerSellerTypeId })}.`);
+    const powerSellerResult = await executeInTab(tabId, scrapeSingleWantItemSellers, [{
+      item,
+      delay: delayMs,
+      previewLimit,
+      requestFilters: {
+        ...requestFilters,
+        sellerTypeId: powerSellerTypeId,
+      },
+    }]);
+    if (powerSellerResult) {
+      powerSellerResult.powerSellerFallbackApplied = true;
+      scopeResult = powerSellerResult;
+    }
+  }
+
+  return scopeResult;
+}
+
 async function scrapeWantItemSellerData({ tab, item, delayMs, logPartitionRetry }) {
   await ensureSellerScrapeNotCoolingDown();
 
   const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(item));
   const requestCountryIds = getCardmarketCountryIdsFromCountries(getSelectedSellerCountries());
+  const sellerReputationId = getCardmarketSellerReputationId(sellerReputationFilterEl.value);
+  const maxShippingTimeId = getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value);
+  const sellerTypeId = getCardmarketSellerTypeId(sellerTypeFilterEl.value);
   const baseRequestFilters = {
     languageId: requestLanguageId,
     sellerCountryIds: requestCountryIds,
-    sellerReputationId: getCardmarketSellerReputationId(sellerReputationFilterEl.value),
-    maxShippingTimeId: getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value),
-    sellerTypeId: getCardmarketSellerTypeId(sellerTypeFilterEl.value),
+    sellerReputationId,
+    maxShippingTimeId,
+    sellerTypeId,
   };
-  const baseResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
-    item,
-    delay: delayMs,
-    previewLimit: 12,
-    requestFilters: baseRequestFilters,
-  }]);
-  if (!baseResult) {
-    throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
-  }
-  let result = baseResult;
-
-  const countryScopes = buildSellerCountryScopes({
+  const explicitCountryScopes = buildSellerCountryScopes({
     requestCountryIds,
-    availableSellerFilters: baseResult.availableSellerFilters,
+    availableSellerFilters: null,
   });
-  const shouldPartitionByCountry = shouldPartitionSellerScrape(baseResult, countryScopes);
-  if (shouldPartitionByCountry) {
-    const partitionLabels = countryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
-    if (logPartitionRetry) {
-      appendStatus(`Broad seller scope looks capped. Retrying in ${countryScopes.length} country partitions: ${partitionLabels.join(', ')}.`, 'good');
+  let result;
+
+  if (explicitCountryScopes.length) {
+    const partitionLabels = explicitCountryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
+    if (logPartitionRetry && explicitCountryScopes.length > 1) {
+      appendStatus(`Scraping ${explicitCountryScopes.length} country partitions directly: ${partitionLabels.join(', ')}.`, 'good');
     }
     const partitionResults = [];
-    for (const scope of countryScopes) {
-      const scopeResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+    for (const scope of explicitCountryScopes) {
+      const scopeLabel = getCountryNameById(scope.countryId) || scope.label;
+      const scopeResult = await executeSellerScopeScrape({
+        tabId: tab.id,
         item,
-        delay: delayMs,
+        delayMs,
         previewLimit: 12,
-        requestFilters: {
-          languageId: requestLanguageId,
-          sellerCountryIds: [scope.countryId],
-          sellerReputationId: getCardmarketSellerReputationId(sellerReputationFilterEl.value),
-          maxShippingTimeId: getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value),
-          sellerTypeId: getCardmarketSellerTypeId(sellerTypeFilterEl.value),
-        },
-      }]);
+        requestLanguageId,
+        sellerCountryIds: [scope.countryId],
+        sellerReputationId,
+        maxShippingTimeId,
+        sellerTypeId,
+        partitionLabel: scopeLabel,
+        logPowerSellerFallback: logPartitionRetry,
+      });
       if (scopeResult) {
         scopeResult.partitionLabel = scope.label;
         partitionResults.push(scopeResult);
       }
     }
-    result = mergeSellerScopeResults(baseResult, partitionResults);
+    if (!partitionResults.length) {
+      throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
+    }
+    result = mergeSellerScopeResults(null, partitionResults);
+  } else {
+    const baseResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+      item,
+      delay: delayMs,
+      previewLimit: 12,
+      requestFilters: baseRequestFilters,
+    }]);
+    if (!baseResult) {
+      throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
+    }
+    result = baseResult;
+
+    const countryScopes = buildSellerCountryScopes({
+      requestCountryIds,
+      availableSellerFilters: baseResult.availableSellerFilters,
+    });
+    const shouldPartitionByCountry = shouldPartitionSellerScrape(baseResult, countryScopes);
+    if (shouldPartitionByCountry) {
+      const partitionLabels = countryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
+      if (logPartitionRetry) {
+        appendStatus(`Broad seller scope looks capped. Retrying in ${countryScopes.length} country partitions: ${partitionLabels.join(', ')}.`, 'good');
+      }
+      const partitionResults = [];
+      for (const scope of countryScopes) {
+        const scopeLabel = getCountryNameById(scope.countryId) || scope.label;
+        const scopeResult = await executeSellerScopeScrape({
+          tabId: tab.id,
+          item,
+          delayMs,
+          previewLimit: 12,
+          requestLanguageId,
+          sellerCountryIds: [scope.countryId],
+          sellerReputationId,
+          maxShippingTimeId,
+          sellerTypeId,
+          partitionLabel: scopeLabel,
+          logPowerSellerFallback: logPartitionRetry,
+        });
+        if (scopeResult) {
+          scopeResult.partitionLabel = scope.label;
+          partitionResults.push(scopeResult);
+        }
+      }
+      result = mergeSellerScopeResults(baseResult, partitionResults);
+    }
   }
 
   if (result.rateLimited) {
