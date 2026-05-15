@@ -8,7 +8,6 @@ from app.main import app
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLES_DIR = ROOT / "examples"
 FIXTURE_REQUESTS_DIR = ROOT / "tests" / "fixtures" / "requests"
 
 EXPECTED_FIXTURE_RESULTS = {
@@ -56,31 +55,6 @@ def test_health(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-
-
-def test_optimize_sample_request(client: TestClient) -> None:
-    payload = load_json(EXAMPLES_DIR / "sample-request.json")
-
-    response = client.post("/optimize", json=payload)
-
-    assert response.status_code == 200
-
-    body = response.json()
-    assert body["status"] == "optimal"
-    assert body["currency"] == payload["currency"]
-    assert body["totals"] == {
-        "item_subtotal": 4.3,
-        "shipping_total": 1.7,
-        "grand_total": 6.0,
-    }
-    assert body["chosen_sellers"] == [
-        {
-            "seller_id": "seller-beta",
-            "item_subtotal": 4.3,
-            "shipping_cost": 1.7,
-            "total_units": 3,
-        }
-    ]
 
 
 @pytest.mark.parametrize(

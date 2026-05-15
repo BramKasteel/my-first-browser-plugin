@@ -33,8 +33,6 @@ This is deliberate first cut. Real Cardmarket shipping should later be internal 
 - `app/main.py` FastAPI app and endpoints
 - `app/models.py` request/response schema
 - `app/solver.py` OR-Tools optimization model
-- `examples/sample-request.json` example payload from extension side
-- `examples/sample-response.json` example optimized response
 - `tests/fixtures/requests/` real optimizer payload dumps copied from plugin popup
 - `tests/test_api.py` fixture-driven API tests
 
@@ -86,39 +84,7 @@ Basic health and version check.
 
 ### `POST /optimize`
 
-Accepts optimization payload, returns cheapest valid order under current model.
-
-Example request:
-
-```json
-{
-  "buyer_country": "Netherlands",
-  "currency": "EUR",
-  "items": [
-    {
-      "item_id": "item-1",
-      "name": "Lightning Bolt",
-      "quantity": 2
-    }
-  ],
-  "sellers": [
-    {
-      "seller_id": "seller-a",
-      "name": "Trader One",
-      "country": "Germany"
-    }
-  ],
-  "offers": [
-    {
-      "offer_id": "offer-1",
-      "item_id": "item-1",
-      "seller_id": "seller-a",
-      "unit_price": 1.45,
-      "available_quantity": 2
-    }
-  ]
-}
-```
+Accepts optimization payload from plugin fixture dumps in `tests/fixtures/requests/` and returns cheapest valid order under current model.
 
 ## Extension boundary
 
