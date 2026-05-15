@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "description": "Inspect Cardmarket want lists and prepare seller data for optimization.",
   "permissions": ["activeTab", "scripting", "tabs", "storage"],
-  "host_permissions": ["https://www.cardmarket.com/*"],
+  "host_permissions": [
+    "https://www.cardmarket.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Cardmarket Wants Optimizer"

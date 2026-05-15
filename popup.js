@@ -1,9 +1,13 @@
 const extractItemsButton = document.getElementById('extractItems');
 const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
+const loadOptimizerFixtureButton = document.getElementById('loadOptimizerFixture');
+const optimizeOrderButton = document.getElementById('optimizeOrder');
 const probeRateLimitsButton = document.getElementById('probeRateLimits');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
 const probeRequestCountInput = document.getElementById('probeRequestCount');
 const probePageBudgetInput = document.getElementById('probePageBudget');
+const optimizerFixtureSelectEl = document.getElementById('optimizerFixtureSelect');
+const optimizerApiUrlInput = document.getElementById('optimizerApiUrl');
 const sellerReputationFilterEl = document.getElementById('sellerReputationFilter');
 const sellerDeliveryTimeFilterEl = document.getElementById('sellerDeliveryTimeFilter');
 const sellerTypeFilterEl = document.getElementById('sellerTypeFilter');
@@ -15,6 +19,7 @@ const wantListPreviewEl = document.getElementById('wantListPreview');
 const wantListWarningEl = document.getElementById('wantListWarning');
 const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
+const cartItemsEl = document.getElementById('cartItems');
 const sellerItemsEl = document.getElementById('sellerItems');
 const payloadViewEl = document.getElementById('payloadView');
 const frontendPayloadViewEl = document.getElementById('frontendPayloadView');
@@ -34,6 +39,7 @@ const forcedTabId = urlParams.get('tabId') ? parseInt(urlParams.get('tabId'), 10
 
 let latestExtractPayload = null;
 let latestFrontendPayload = null;
+let latestOptimizationResult = null;
 let latestExtractedItems = [];
 let isRunActive = false;
 let isUiBusy = false;
@@ -46,6 +52,18 @@ const MIN_SELLER_DELAY_MS = 250;
 const REQUEST_JITTER_RATIO = 0.15;
 const RATE_PROBE_DELAYS_MS = [1500, 1000, 750, 500, 350, 300, 250, 200];
 const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
+const DEFAULT_OPTIMIZER_API_URL = 'http://127.0.0.1:8000/optimize';
+const DEFAULT_OPTIMIZER_FIXTURE = 'small_wantslist';
+const OPTIMIZER_FIXTURE_OPTIONS = [
+  {
+    value: 'small_wantslist',
+    path: 'optimizer-api/tests/fixtures/requests/small_wantslist.json',
+  },
+  {
+    value: 'ob_nixilis_improvements',
+    path: 'optimizer-api/tests/fixtures/requests/ob_nixilis_improvements.json',
+  },
+];
 const SELLER_COUNTRY_OPTIONS = [
   'Austria',
   'Belgium',
@@ -107,15 +125,33 @@ function syncSellerScrapeButton(isBusy = false) {
   scrapeAllItemsButton.classList.toggle('secondary', !hasItems);
 }
 
+function syncOptimizeButton(isBusy = false) {
+  const hasPayload = !!latestExtractPayload;
+  optimizeOrderButton.disabled = isBusy || !hasPayload;
+  optimizeOrderButton.classList.toggle('is-busy', isBusy);
+  optimizeOrderButton.classList.toggle('secondary', !hasPayload);
+}
+
+function syncFixtureButton(isBusy = false) {
+  loadOptimizerFixtureButton.disabled = isBusy;
+  loadOptimizerFixtureButton.classList.toggle('is-busy', isBusy);
+}
+
 function setBusy(isBusy) {
   isUiBusy = isBusy;
   extractItemsButton.disabled = isBusy;
   extractItemsButton.classList.toggle('is-busy', isBusy);
+  loadOptimizerFixtureButton.disabled = isBusy;
+  loadOptimizerFixtureButton.classList.toggle('is-busy', isBusy);
+  optimizeOrderButton.disabled = isBusy;
+  optimizeOrderButton.classList.toggle('is-busy', isBusy);
   probeRateLimitsButton.disabled = isBusy;
   probeRateLimitsButton.classList.toggle('is-busy', isBusy);
   sellerDelayInput.disabled = isBusy;
   probeRequestCountInput.disabled = isBusy;
   probePageBudgetInput.disabled = isBusy;
+  optimizerFixtureSelectEl.disabled = isBusy;
+  optimizerApiUrlInput.disabled = isBusy;
   sellerReputationFilterEl.disabled = isBusy;
   sellerDeliveryTimeFilterEl.disabled = isBusy;
   sellerTypeFilterEl.disabled = isBusy;
@@ -130,6 +166,8 @@ function setBusy(isBusy) {
   copyFrontendPayloadButton.disabled = isBusy;
   copyFrontendPayloadButton.classList.toggle('is-busy', isBusy);
   syncSellerScrapeButton(isBusy);
+  syncFixtureButton(isBusy);
+  syncOptimizeButton(isBusy);
 }
 
 function setRunState({ active, message, tone = '' }) {
@@ -185,6 +223,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function sanitizeOptimizerApiUrl(value) {
+  const normalized = textOf(value);
+  return normalized || DEFAULT_OPTIMIZER_API_URL;
+}
+
+function sanitizeOptimizerFixture(value) {
+  const normalized = textOf(value);
+  if (OPTIMIZER_FIXTURE_OPTIONS.some((entry) => entry.value === normalized)) {
+    return normalized;
+  }
+  return DEFAULT_OPTIMIZER_FIXTURE;
+}
+
 function clampProbeRuns(value) {
   return Math.min(8, Math.max(1, parseInt(value, 10) || 3));
 }
@@ -220,6 +271,8 @@ async function loadSellerSettings() {
   sellerDelayInput.value = String(sanitizeSellerDelay(settings.delayMs));
   probeRequestCountInput.value = String(clampProbeRuns(settings.probeRuns));
   probePageBudgetInput.value = String(clampProbePageBudget(settings.probePages));
+  optimizerFixtureSelectEl.value = sanitizeOptimizerFixture(settings.optimizerFixture);
+  optimizerApiUrlInput.value = sanitizeOptimizerApiUrl(settings.optimizerApiUrl);
   sellerReputationFilterEl.value = normalizeSellerReputation(settings.sellerReputationFilter);
   sellerDeliveryTimeFilterEl.value = normalizeMaxShippingTime(settings.sellerDeliveryTimeFilter);
   sellerTypeFilterEl.value = normalizeSellerType(settings.sellerTypeFilter);
@@ -256,6 +309,8 @@ async function saveSellerSettings() {
       delayMs: sanitizeSellerDelay(sellerDelayInput.value),
       probeRuns: clampProbeRuns(probeRequestCountInput.value),
       probePages: clampProbePageBudget(probePageBudgetInput.value),
+      optimizerFixture: sanitizeOptimizerFixture(optimizerFixtureSelectEl.value),
+      optimizerApiUrl: sanitizeOptimizerApiUrl(optimizerApiUrlInput.value),
       sellerReputationFilter: normalizeSellerReputation(sellerReputationFilterEl.value),
       sellerDeliveryTimeFilter: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
       sellerTypeFilter: normalizeSellerType(sellerTypeFilterEl.value),
@@ -747,6 +802,17 @@ function parseEuroAmount(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function formatCurrencyAmount(amount, currency = 'EUR') {
+  const numericAmount = Number(amount);
+  if (!Number.isFinite(numericAmount)) return `${amount}`;
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(numericAmount);
+}
+
 function inferBuyerCountry() {
   const regionToCountry = {
     AT: 'Austria',
@@ -892,9 +958,14 @@ function buildOptimizerPayload(batchResult) {
 }
 
 function renderPayload(payload) {
+  const payloadChanged = latestExtractPayload !== payload;
   latestExtractPayload = payload;
+  if (payloadChanged) {
+    renderOptimizationResult(null);
+  }
   payloadViewEl.textContent = payload ? JSON.stringify(payload, null, 2) : 'No optimizer payload yet.';
   copyPayloadButton.disabled = !payload;
+  syncOptimizeButton(isUiBusy);
 }
 
 function renderFrontendPayload(payload) {
@@ -1019,6 +1090,208 @@ function renderSellers(sellers, totalVisible, itemLabel = '') {
     more.className = 'subtle';
     more.textContent = `Showing ${sellers.length} of ${totalVisible} seller rows.`;
     sellerItemsEl.appendChild(more);
+  }
+}
+
+function renderOptimizationResult(result) {
+  latestOptimizationResult = result;
+  cartItemsEl.replaceChildren();
+
+  if (!result) {
+    const empty = document.createElement('p');
+    empty.className = 'subtle';
+    empty.textContent = 'No optimized cart yet.';
+    cartItemsEl.appendChild(empty);
+    return;
+  }
+
+  const cartSellers = Array.isArray(result?.cart?.sellers) ? result.cart.sellers : [];
+  if (!cartSellers.length) {
+    const empty = document.createElement('p');
+    empty.className = 'subtle';
+    empty.textContent = result.status === 'infeasible'
+      ? (result.notes?.[0] || 'Optimizer returned no feasible cart.')
+      : 'Optimizer returned no cart rows.';
+    cartItemsEl.appendChild(empty);
+    return;
+  }
+
+  for (const seller of cartSellers) {
+    const card = document.createElement('article');
+    card.className = 'item';
+
+    const title = document.createElement('h2');
+    title.className = 'item-title';
+    title.textContent = seller.seller_name || seller.seller_id || 'Unknown seller';
+
+    const meta = document.createElement('p');
+    meta.className = 'item-meta';
+    meta.textContent = [
+      seller.seller_id ? `seller=${seller.seller_id}` : null,
+      seller.country ? `country=${seller.country}` : null,
+      `units=${seller.total_units || 0}`,
+      `subtotal=${formatCurrencyAmount(seller.item_subtotal, result.currency)}`,
+      `shipping=${formatCurrencyAmount(seller.shipping_cost, result.currency)}`,
+      `total=${formatCurrencyAmount(seller.grand_total, result.currency)}`,
+    ].filter(Boolean).join(' | ');
+
+    card.append(title, meta);
+
+    for (const item of seller.items || []) {
+      const line = document.createElement('p');
+      line.className = 'item-meta';
+      line.textContent = [
+        `${item.quantity}x ${item.item_name || item.item_id}`,
+        `offer=${item.offer_id}`,
+        `unit=${formatCurrencyAmount(item.unit_price, result.currency)}`,
+        `line=${formatCurrencyAmount(item.line_total, result.currency)}`,
+        item.language ? `lang=${item.language}` : null,
+        item.condition ? `cond=${item.condition}` : null,
+      ].filter(Boolean).join(' | ');
+      card.appendChild(line);
+    }
+
+    cartItemsEl.appendChild(card);
+  }
+}
+
+function parseOptimizerErrorBody(body) {
+  if (!body || typeof body !== 'object') return '';
+  if (typeof body.detail === 'string') return body.detail;
+  if (Array.isArray(body.detail)) {
+    return body.detail
+      .map((entry) => {
+        if (typeof entry === 'string') return entry;
+        if (entry && typeof entry === 'object') {
+          const path = Array.isArray(entry.loc) ? entry.loc.join('.') : '';
+          return [path, entry.msg].filter(Boolean).join(': ');
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('; ');
+  }
+  return '';
+}
+
+async function loadOptimizerFixturePayload(fixtureName) {
+  const fixture = OPTIMIZER_FIXTURE_OPTIONS.find((entry) => entry.value === fixtureName);
+  if (!fixture) {
+    throw new Error(`Unknown optimizer fixture: ${fixtureName}`);
+  }
+
+  const response = await fetch(chrome.runtime.getURL(fixture.path));
+  if (!response.ok) {
+    throw new Error(`Fixture load failed (${response.status}) for ${fixture.value}.`);
+  }
+
+  const payload = await response.json();
+  if (!Array.isArray(payload?.items) || !Array.isArray(payload?.sellers) || !Array.isArray(payload?.offers)) {
+    throw new Error(`Fixture ${fixture.value} is not valid optimizer request payload.`);
+  }
+
+  return { fixture, payload };
+}
+
+async function handleLoadOptimizerFixture() {
+  const fixtureName = sanitizeOptimizerFixture(optimizerFixtureSelectEl.value);
+  optimizerFixtureSelectEl.value = fixtureName;
+  await saveSellerSettings();
+
+  startRun(`Loading optimizer fixture ${fixtureName}...`);
+  setBusy(true);
+  try {
+    const { fixture, payload } = await loadOptimizerFixturePayload(fixtureName);
+    renderPayload(payload);
+    renderFrontendPayload({
+      kind: 'optimizer-fixture',
+      fixture: fixture.value,
+      path: fixture.path,
+      loadedAt: new Date().toISOString(),
+      totals: {
+        items: payload.items.length,
+        sellers: payload.sellers.length,
+        offers: payload.offers.length,
+      },
+    });
+    renderSummary([
+      { label: 'Source', value: `fixture:${fixture.value}`, tone: 'good' },
+      { label: 'Items', value: String(payload.items.length) },
+      { label: 'Sellers', value: String(payload.sellers.length) },
+      { label: 'Offers', value: String(payload.offers.length) },
+      { label: 'Buyer country', value: payload.buyer_country || '?' },
+      { label: 'Currency', value: payload.currency || 'EUR' },
+    ]);
+    setActiveResultTab('payload');
+    appendStatus(`Loaded optimizer fixture ${fixture.value}: ${payload.items.length} items, ${payload.sellers.length} sellers, ${payload.offers.length} offers.`, 'good');
+    finishRun(`Fixture ${fixture.value} loaded. Ready to optimize.`, 'good');
+  } catch (error) {
+    appendStatus(error.message, 'bad');
+    finishRun(error.message, 'bad');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleOptimizeOrder() {
+  if (!latestExtractPayload) {
+    appendStatus('No optimizer payload ready yet. Scrape sellers first.', 'bad');
+    return;
+  }
+
+  const endpoint = sanitizeOptimizerApiUrl(optimizerApiUrlInput.value);
+  optimizerApiUrlInput.value = endpoint;
+  await saveSellerSettings();
+
+  startRun('Sending payload to optimizer API...');
+  setBusy(true);
+  try {
+    appendStatus(`Posting optimizer payload to ${endpoint}.`);
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(latestExtractPayload),
+    });
+
+    let responseBody = null;
+    try {
+      responseBody = await response.json();
+    } catch {
+      responseBody = null;
+    }
+
+    if (!response.ok) {
+      const detail = parseOptimizerErrorBody(responseBody) || response.statusText || 'Unknown optimizer error.';
+      throw new Error(`Optimizer API failed (${response.status}): ${detail}`);
+    }
+
+    const result = responseBody || {};
+    renderOptimizationResult(result);
+    renderSummary([
+      { label: 'Optimizer status', value: result.status || 'unknown', tone: result.status === 'optimal' ? 'good' : 'bad' },
+      { label: 'Grand total', value: formatCurrencyAmount(result?.totals?.grand_total || 0, result.currency || 'EUR'), tone: result.status === 'optimal' ? 'good' : '' },
+      { label: 'Item subtotal', value: formatCurrencyAmount(result?.totals?.item_subtotal || 0, result.currency || 'EUR') },
+      { label: 'Shipping total', value: formatCurrencyAmount(result?.totals?.shipping_total || 0, result.currency || 'EUR') },
+      { label: 'Chosen sellers', value: String(result?.cart?.total_sellers || 0) },
+      { label: 'Total units', value: String(result?.cart?.total_units || 0) },
+      { label: 'Notes', value: Array.isArray(result?.notes) && result.notes.length ? result.notes.join(' | ') : '-' },
+    ]);
+    setActiveResultTab('cart');
+
+    if (result.status === 'optimal') {
+      appendStatus(`Optimizer returned cart with ${result.cart?.total_sellers || 0} sellers and ${result.cart?.total_units || 0} units.`, 'good');
+      finishRun(`Optimizer finished. Total ${formatCurrencyAmount(result?.totals?.grand_total || 0, result.currency || 'EUR')}.`, 'good');
+    } else {
+      appendStatus(`Optimizer returned infeasible result. ${Array.isArray(result.notes) && result.notes.length ? result.notes[0] : ''}`.trim(), 'bad');
+      finishRun('Optimizer finished with no feasible order.', 'bad');
+    }
+  } catch (error) {
+    appendStatus(error.message, 'bad');
+    finishRun(error.message, 'bad');
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -1886,6 +2159,8 @@ async function handleCopyFrontendPayload() {
 
 extractItemsButton.addEventListener('click', handleExtractItems);
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
+loadOptimizerFixtureButton.addEventListener('click', handleLoadOptimizerFixture);
+optimizeOrderButton.addEventListener('click', handleOptimizeOrder);
 probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
 copyFrontendPayloadButton.addEventListener('click', handleCopyFrontendPayload);
@@ -1897,6 +2172,8 @@ resultTabButtons.forEach((button) => {
 sellerDelayInput.addEventListener('change', saveSellerSettings);
 probeRequestCountInput.addEventListener('change', saveSellerSettings);
 probePageBudgetInput.addEventListener('change', saveSellerSettings);
+optimizerFixtureSelectEl.addEventListener('change', saveSellerSettings);
+optimizerApiUrlInput.addEventListener('change', saveSellerSettings);
 sellerReputationFilterEl.addEventListener('change', saveSellerSettings);
 sellerDeliveryTimeFilterEl.addEventListener('change', saveSellerSettings);
 sellerTypeFilterEl.addEventListener('change', saveSellerSettings);
@@ -1933,11 +2210,14 @@ renderSummary([
 ]);
 finishRun('Idle. Start extract, scrape, or probe.');
 renderItems([], 0);
+renderOptimizationResult(null);
 renderSellers([], 0);
 renderPayload(null);
 renderFrontendPayload(null);
 renderSellerCountryFilterList();
 syncSellerScrapeButton();
+syncFixtureButton();
+syncOptimizeButton();
 scrapeAllItemsButton.textContent = 'Scrape sellers';
 appendStatus(isDetached
   ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'

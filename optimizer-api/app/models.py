@@ -122,6 +122,40 @@ class OptimizationTotals(BaseModel):
     grand_total: float = Field(ge=0)
 
 
+class CartItemResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    offer_id: str
+    item_id: str
+    item_name: str = Field(min_length=1)
+    quantity: int = Field(ge=1)
+    unit_price: float = Field(ge=0)
+    line_total: float = Field(ge=0)
+    condition: str | None = None
+    language: str | None = None
+
+
+class CartSellerResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    seller_id: str
+    seller_name: str = Field(min_length=1)
+    country: str = Field(min_length=1)
+    item_subtotal: float = Field(ge=0)
+    shipping_cost: float = Field(ge=0)
+    grand_total: float = Field(ge=0)
+    total_units: int = Field(ge=0)
+    items: list[CartItemResult] = Field(default_factory=list)
+
+
+class OptimizationCart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sellers: list[CartSellerResult] = Field(default_factory=list)
+    total_sellers: int = Field(ge=0)
+    total_units: int = Field(ge=0)
+
+
 class OptimizationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -130,4 +164,5 @@ class OptimizationResponse(BaseModel):
     totals: OptimizationTotals
     chosen_sellers: list[SellerResult] = Field(default_factory=list)
     allocations: list[AllocationResult] = Field(default_factory=list)
+    cart: OptimizationCart = Field(default_factory=OptimizationCart)
     notes: list[str] = Field(default_factory=list)

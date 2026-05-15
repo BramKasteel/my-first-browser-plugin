@@ -113,9 +113,15 @@ def test_real_request_fixtures_acceptance(
         "totals",
         "chosen_sellers",
         "allocations",
+        "cart",
         "notes",
     }
     assert body["currency"] == payload.get("currency", "EUR")
+    assert set(body["cart"].keys()) == {"sellers", "total_sellers", "total_units"}
+    assert body["cart"]["total_sellers"] == len(body["cart"]["sellers"])
+    assert body["cart"]["total_units"] == sum(
+        allocation["quantity"] for allocation in body["allocations"]
+    )
 
     expected = EXPECTED_FIXTURE_RESULTS.get(fixture_path.stem)
     if expected:
@@ -123,6 +129,7 @@ def test_real_request_fixtures_acceptance(
         assert body["totals"] == expected["totals"]
         assert body["chosen_sellers"] == expected["chosen_sellers"]
         assert len(body["allocations"]) == expected["allocation_count"]
+        assert body["cart"]["total_sellers"] == len(expected["chosen_sellers"])
 
 
 def test_real_request_fixture_directory_exists() -> None:

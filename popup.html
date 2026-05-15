@@ -655,6 +655,19 @@
           </div>
         </div>
         <div class="actions">
+          <label class="config-label" for="optimizerFixtureSelect">
+            <span>Optimizer fixture</span>
+            <select id="optimizerFixtureSelect">
+              <option value="small_wantslist">small_wantslist</option>
+              <option value="ob_nixilis_improvements">ob_nixilis_improvements</option>
+            </select>
+          </label>
+          <button id="loadOptimizerFixture" class="secondary">Load fixture</button>
+          <label class="config-label" for="optimizerApiUrl">
+            <span>Optimizer API URL</span>
+            <input id="optimizerApiUrl" type="text" value="http://127.0.0.1:8000/optimize" spellcheck="false" autocomplete="off">
+          </label>
+          <button id="optimizeOrder" class="secondary">Optimize order</button>
           <button id="scrapeAllItems" class="secondary">Scrape sellers</button>
         </div>
       </section>
@@ -701,6 +714,7 @@
           <div class="collapsible-body">
             <div class="result-tabs" role="tablist" aria-label="Result views">
               <button type="button" class="secondary mini-button result-tab active" id="resultTabOverview" data-result-tab="overview" aria-selected="true"><span class="tab-label">Overview</span></button>
+              <button type="button" class="secondary mini-button result-tab" id="resultTabCart" data-result-tab="cart" aria-selected="false"><span class="tab-label">Cart</span></button>
               <button type="button" class="secondary mini-button result-tab" id="resultTabSellers" data-result-tab="sellers" aria-selected="false"><span class="tab-label">Sellers</span></button>
               <button type="button" class="secondary mini-button result-tab" id="resultTabPayload" data-result-tab="payload" aria-selected="false"><span class="tab-label">Optimizer</span></button>
               <button type="button" class="secondary mini-button result-tab" id="resultTabFrontend" data-result-tab="frontend" aria-selected="false"><span class="tab-label">Frontend</span></button>
@@ -709,6 +723,10 @@
 
             <div class="result-view active" data-result-panel="overview">
               <div id="summary" class="summary"></div>
+            </div>
+
+            <div class="result-view" data-result-panel="cart">
+              <div id="cartItems" class="items"></div>
             </div>
 
             <div class="result-view" data-result-panel="sellers">

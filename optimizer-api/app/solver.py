@@ -4,6 +4,9 @@ from collections import defaultdict
 
 from .models import (
     AllocationResult,
+    CartItemResult,
+    CartSellerResult,
+    OptimizationCart,
     OptimizationRequest,
     OptimizationResponse,
     OptimizationTotals,
@@ -42,6 +45,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         ) from exc
 
     seller_map = {seller.seller_id: seller for seller in request.sellers}
+    item_map = {item.item_id: item for item in request.items}
 
     allowed_countries = set(
         country.strip().casefold()
@@ -51,6 +55,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     blocked_sellers = set(request.preferences.blocked_seller_ids)
 
     usable_offers = []
+    offer_map = {}
     filtered_sellers = set()
     for offer in request.offers:
         seller = seller_map[offer.seller_id]
@@ -62,6 +67,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             filtered_sellers.add(offer.seller_id)
             continue
         usable_offers.append(offer)
+        offer_map[offer.offer_id] = offer
 
     coverage = defaultdict(int)
     for offer in usable_offers:
@@ -81,6 +87,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             status="infeasible",
             currency=request.currency,
             totals=OptimizationTotals(item_subtotal=0, shipping_total=0, grand_total=0),
+            cart=OptimizationCart(),
             notes=notes,
         )
 
@@ -146,10 +153,12 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             status="infeasible",
             currency=request.currency,
             totals=OptimizationTotals(item_subtotal=0, shipping_total=0, grand_total=0),
+            cart=OptimizationCart(),
             notes=["Solver found no feasible solution."],
         )
 
     allocations = []
+    cart_items_by_seller = defaultdict(list)
     seller_item_subtotals = defaultdict(int)
     seller_shipping_totals = defaultdict(int)
     seller_unit_totals = defaultdict(int)
@@ -169,10 +178,23 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
                 line_total=_from_cents(line_total),
             )
         )
+        cart_items_by_seller[offer.seller_id].append(
+            CartItemResult(
+                offer_id=offer.offer_id,
+                item_id=offer.item_id,
+                item_name=item_map[offer.item_id].name,
+                quantity=quantity,
+                unit_price=offer.unit_price,
+                line_total=_from_cents(line_total),
+                condition=offer.condition,
+                language=offer.language,
+            )
+        )
         seller_item_subtotals[offer.seller_id] += line_total
         seller_unit_totals[offer.seller_id] += quantity
 
     chosen_sellers = []
+    cart_sellers = []
     for seller_id, active_var in seller_active_vars.items():
         if solver.Value(active_var) <= 0:
             continue
@@ -188,10 +210,29 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
                 total_units=seller_unit_totals[seller_id],
             )
         )
+        seller = seller_map[seller_id]
+        cart_sellers.append(
+            CartSellerResult(
+                seller_id=seller_id,
+                seller_name=seller.name,
+                country=seller.country,
+                item_subtotal=_from_cents(seller_item_subtotals[seller_id]),
+                shipping_cost=_from_cents(shipping_total),
+                grand_total=_from_cents(
+                    seller_item_subtotals[seller_id] + shipping_total
+                ),
+                total_units=seller_unit_totals[seller_id],
+                items=sorted(
+                    cart_items_by_seller[seller_id],
+                    key=lambda item: (item.item_name.casefold(), item.offer_id),
+                ),
+            )
+        )
 
     item_subtotal = sum(seller_item_subtotals.values())
     shipping_total = sum(seller_shipping_totals.values())
     grand_total = item_subtotal + shipping_total
+    total_units = sum(seller_unit_totals.values())
 
     notes = [
         "Shipping proxy uses seller-country to buyer-country route costs when known.",
@@ -218,6 +259,11 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
                 allocation.seller_id,
                 allocation.offer_id,
             ),
+        ),
+        cart=OptimizationCart(
+            sellers=sorted(cart_sellers, key=lambda seller: seller.seller_id),
+            total_sellers=len(cart_sellers),
+            total_units=total_units,
         ),
         notes=notes,
     )

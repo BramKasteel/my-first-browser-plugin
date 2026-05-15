@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from .models import OptimizationRequest, OptimizationResponse
 from .solver import optimize_order
@@ -13,6 +14,14 @@ app = FastAPI(
         "Receives normalized seller offers from browser extension and returns "
         "lowest-cost valid order under current simplified shipping model."
     ),
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
