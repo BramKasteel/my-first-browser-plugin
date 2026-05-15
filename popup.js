@@ -4,6 +4,9 @@ const probeRateLimitsButton = document.getElementById('probeRateLimits');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
 const probeRequestCountInput = document.getElementById('probeRequestCount');
 const probePageBudgetInput = document.getElementById('probePageBudget');
+const sellerReputationFilterEl = document.getElementById('sellerReputationFilter');
+const sellerDeliveryTimeFilterEl = document.getElementById('sellerDeliveryTimeFilter');
+const sellerTypeFilterEl = document.getElementById('sellerTypeFilter');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
 const selectedSellerCountriesEl = document.getElementById('selectedSellerCountries');
 const copyPayloadButton = document.getElementById('copyPayload');
@@ -110,6 +113,9 @@ function setBusy(isBusy) {
   sellerDelayInput.disabled = isBusy;
   probeRequestCountInput.disabled = isBusy;
   probePageBudgetInput.disabled = isBusy;
+  sellerReputationFilterEl.disabled = isBusy;
+  sellerDeliveryTimeFilterEl.disabled = isBusy;
+  sellerTypeFilterEl.disabled = isBusy;
   sellerLocationFilterListEl.querySelectorAll('input').forEach((input) => {
     input.disabled = isBusy;
   });
@@ -209,6 +215,9 @@ async function loadSellerSettings() {
   sellerDelayInput.value = String(sanitizeSellerDelay(settings.delayMs));
   probeRequestCountInput.value = String(clampProbeRuns(settings.probeRuns));
   probePageBudgetInput.value = String(clampProbePageBudget(settings.probePages));
+  sellerReputationFilterEl.value = normalizeSellerReputation(settings.sellerReputationFilter);
+  sellerDeliveryTimeFilterEl.value = normalizeMaxShippingTime(settings.sellerDeliveryTimeFilter);
+  sellerTypeFilterEl.value = normalizeSellerType(settings.sellerTypeFilter);
   const selectedCountries = getStoredSellerCountries(settings);
   setSelectedSellerCountries(selectedCountries.length ? selectedCountries : DEFAULT_SELLER_COUNTRIES);
 }
@@ -242,6 +251,9 @@ async function saveSellerSettings() {
       delayMs: sanitizeSellerDelay(sellerDelayInput.value),
       probeRuns: clampProbeRuns(probeRequestCountInput.value),
       probePages: clampProbePageBudget(probePageBudgetInput.value),
+      sellerReputationFilter: normalizeSellerReputation(sellerReputationFilterEl.value),
+      sellerDeliveryTimeFilter: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
+      sellerTypeFilter: normalizeSellerType(sellerTypeFilterEl.value),
       sellerLocationFilter: getSelectedSellerCountries(),
     },
   });
@@ -250,9 +262,15 @@ async function saveSellerSettings() {
 function getActiveSellerFilters(item) {
   const requestedLanguages = getItemLanguages(item);
   const allowedCountries = getSelectedSellerCountries();
+  const sellerReputation = normalizeSellerReputation(sellerReputationFilterEl.value);
+  const maxShippingTime = normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value);
+  const sellerType = normalizeSellerType(sellerTypeFilterEl.value);
   return {
     requestedLanguages,
     allowedCountries,
+    sellerReputation,
+    maxShippingTime,
+    sellerType,
     locationFilterText: allowedCountries.join(', '),
   };
 }
@@ -374,6 +392,9 @@ function applySellerFilters(result, item) {
       requestedLanguages: filters.requestedLanguages,
       sellerCountries: filters.allowedCountries,
       sellerCountryFilterText: filters.locationFilterText,
+      sellerReputation: filters.sellerReputation,
+      maxShippingTime: filters.maxShippingTime,
+      sellerType: filters.sellerType,
     },
   };
 }
@@ -471,6 +492,28 @@ function getCardmarketSellerReputationId(value) {
     Good: '3',
     Average: '4',
     Bad: '5',
+  };
+  return ids[normalized] || '';
+}
+
+function normalizeSellerType(value) {
+  const normalized = textOf(value).toLowerCase();
+  const aliases = {
+    private: 'Private',
+    professional: 'Professional',
+    pro: 'Professional',
+    'power seller': 'Power Seller',
+    powerseller: 'Power Seller',
+  };
+  return aliases[normalized] || '';
+}
+
+function getCardmarketSellerTypeId(value) {
+  const normalized = normalizeSellerType(value);
+  const ids = {
+    Private: '0',
+    Professional: '1',
+    'Power Seller': '2',
   };
   return ids[normalized] || '';
 }
@@ -1092,6 +1135,9 @@ async function handleScrapeAllItems() {
       finishedAt: new Date().toISOString(),
       requestSettings: {
         delayMs,
+        sellerReputation: normalizeSellerReputation(sellerReputationFilterEl.value),
+        maxShippingTime: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
+        sellerType: normalizeSellerType(sellerTypeFilterEl.value),
         sellerCountries: getSelectedSellerCountries(),
       },
       totals: {
@@ -1150,6 +1196,9 @@ async function handleProbeRateLimits() {
     const requestFilters = {
       languageId: requestLanguageId,
       sellerCountryIds: requestCountryIds,
+      sellerReputationId: getCardmarketSellerReputationId(sellerReputationFilterEl.value),
+      maxShippingTimeId: getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value),
+      sellerTypeId: getCardmarketSellerTypeId(sellerTypeFilterEl.value),
     };
 
     const stageResults = [];
@@ -1361,6 +1410,9 @@ async function scrapeWantItemSellerData({ tab, item, delayMs, logPartitionRetry 
   const baseRequestFilters = {
     languageId: requestLanguageId,
     sellerCountryIds: requestCountryIds,
+    sellerReputationId: getCardmarketSellerReputationId(sellerReputationFilterEl.value),
+    maxShippingTimeId: getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value),
+    sellerTypeId: getCardmarketSellerTypeId(sellerTypeFilterEl.value),
   };
   const baseResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
     item,
@@ -1392,6 +1444,9 @@ async function scrapeWantItemSellerData({ tab, item, delayMs, logPartitionRetry 
         requestFilters: {
           languageId: requestLanguageId,
           sellerCountryIds: [scope.countryId],
+          sellerReputationId: getCardmarketSellerReputationId(sellerReputationFilterEl.value),
+          maxShippingTimeId: getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value),
+          sellerTypeId: getCardmarketSellerTypeId(sellerTypeFilterEl.value),
         },
       }]);
       if (scopeResult) {
@@ -1437,6 +1492,9 @@ resultTabButtons.forEach((button) => {
 sellerDelayInput.addEventListener('change', saveSellerSettings);
 probeRequestCountInput.addEventListener('change', saveSellerSettings);
 probePageBudgetInput.addEventListener('change', saveSellerSettings);
+sellerReputationFilterEl.addEventListener('change', saveSellerSettings);
+sellerDeliveryTimeFilterEl.addEventListener('change', saveSellerSettings);
+sellerTypeFilterEl.addEventListener('change', saveSellerSettings);
 sellerLocationFilterListEl.addEventListener('change', (event) => {
   if (event.target instanceof HTMLInputElement && event.target.name === 'sellerCountryFilter') {
     const country = normalizeCountryName(event.target.value);
@@ -2007,6 +2065,15 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     }
     if (activeFilters.sellerCountryIds?.length) {
       url.searchParams.set('sellerCountry', activeFilters.sellerCountryIds.join(','));
+    }
+    if (activeFilters.sellerReputationId) {
+      url.searchParams.set('sellerReputation', activeFilters.sellerReputationId);
+    }
+    if (activeFilters.maxShippingTimeId) {
+      url.searchParams.set('maxShippingTime', activeFilters.maxShippingTimeId);
+    }
+    if (activeFilters.sellerTypeId) {
+      url.searchParams.set('sellerType', activeFilters.sellerTypeId);
     }
     return url.toString();
   }

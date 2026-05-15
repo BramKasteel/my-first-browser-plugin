@@ -202,7 +202,8 @@
     }
 
     input[type="number"],
-    input[type="text"] {
+    input[type="text"],
+    select {
       width: 100%;
       padding: 10px 12px;
       border-radius: 10px;
@@ -215,6 +216,12 @@
 
     .config-grid {
       display: grid;
+      gap: 10px;
+    }
+
+    .filter-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
     }
 
@@ -559,6 +566,10 @@
     }
 
     @media (max-width: 440px) {
+      .filter-grid {
+        grid-template-columns: 1fr;
+      }
+
       .result-tabs {
         grid-template-columns: 1fr;
       }
@@ -596,7 +607,41 @@
 
       <section class="panel config-grid">
         <div class="panel-header">
-          <h2 class="panel-title">Seller Country Filter</h2>
+          <h2 class="panel-title">Seller Filters</h2>
+        </div>
+        <div class="filter-grid">
+          <label class="config-label" for="sellerReputationFilter">
+            <span>Seller reputation</span>
+            <select id="sellerReputationFilter">
+              <option value="">Any</option>
+              <option value="Outstanding">Outstanding</option>
+              <option value="Very good">Very good</option>
+              <option value="Good">Good</option>
+              <option value="Average">Average</option>
+              <option value="Bad">Bad</option>
+            </select>
+          </label>
+          <label class="config-label" for="sellerDeliveryTimeFilter">
+            <span>Max delivery time</span>
+            <select id="sellerDeliveryTimeFilter">
+              <option value="">Any</option>
+              <option value="2">2 days</option>
+              <option value="3">3 days</option>
+              <option value="4">4 days</option>
+              <option value="5">5 days</option>
+              <option value="6">6 days</option>
+              <option value="7">7+ days</option>
+            </select>
+          </label>
+          <label class="config-label" for="sellerTypeFilter">
+            <span>Seller type</span>
+            <select id="sellerTypeFilter">
+              <option value="">Any</option>
+              <option value="Private">Private</option>
+              <option value="Professional">Professional</option>
+              <option value="Power Seller">Power Seller</option>
+            </select>
+          </label>
         </div>
         <div class="config-label">
           <span>Choose seller countries to include when scraping.</span>
