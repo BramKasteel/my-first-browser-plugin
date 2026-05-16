@@ -33,6 +33,7 @@ const resultTabButtons = [...document.querySelectorAll('[data-result-tab]')];
 const resultPanels = [...document.querySelectorAll('[data-result-panel]')];
 const workflowStepButtons = [...document.querySelectorAll('[data-workflow-step]')];
 const workflowStepPanels = [...document.querySelectorAll('[data-step-panel]')];
+const debugToolsEl = document.getElementById('debugTools');
 const workflowCurrentStepEl = document.getElementById('workflowCurrentStep');
 const workflowStepHintEl = document.getElementById('workflowStepHint');
 const workflowBackButton = document.getElementById('workflowBack');
@@ -70,8 +71,8 @@ const DEFAULT_OPTIMIZER_FIXTURE = 'small_wantslist';
 const WORKFLOW_STEPS = ['source', 'sellers', 'optimize', 'fill'];
 const WORKFLOW_META = {
   source: {
-    title: 'Load Source',
-    hint: 'Load want list from active Cardmarket tab, or load fixture to jump straight to optimization.',
+    title: 'Select Cards',
+    hint: 'Extract want list from active Cardmarket tab. Debug fixture path lives in debug tools.',
   },
   sellers: {
     title: 'Get Seller Data',
@@ -135,6 +136,12 @@ const SELLER_COUNTRY_OPTIONS = [
 ];
 
 selectedSellerCountries = [...DEFAULT_SELLER_COUNTRIES];
+
+function openDebugTools() {
+  if (debugToolsEl) {
+    debugToolsEl.open = true;
+  }
+}
 
 function appendStatus(message, tone = '') {
   const entry = document.createElement('li');
@@ -1545,6 +1552,7 @@ async function handleLoadOptimizerFixture() {
   optimizerFixtureSelectEl.value = fixtureName;
   await saveSellerSettings();
 
+  openDebugTools();
   startRun(`Loading optimizer fixture ${fixtureName}...`);
   setBusy(true);
   try {
