@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -18,15 +19,33 @@ def normalize_country_name(country: str) -> str:
 
 
 def parse_eur_to_cents(amount: str) -> int:
-    normalized = (
-        amount.replace("€", "")
-        .replace(" ", "")
-        .replace(".", "")
-        .replace(",", ".")
-        .strip()
-    )
+    numeric_match = re.search(r"\d[\d.,\s]*", amount)
+    if numeric_match is None:
+        raise ValueError("Empty EUR amount")
+
+    normalized = numeric_match.group(0).replace(" ", "").strip()
     if not normalized:
         raise ValueError("Empty EUR amount")
+
+    last_dot = normalized.rfind(".")
+    last_comma = normalized.rfind(",")
+    if last_dot != -1 and last_comma != -1:
+        decimal_separator = "." if last_dot > last_comma else ","
+    elif last_dot != -1:
+        decimal_separator = "." if len(normalized) - last_dot - 1 == 2 else None
+    elif last_comma != -1:
+        decimal_separator = "," if len(normalized) - last_comma - 1 == 2 else None
+    else:
+        decimal_separator = None
+
+    if decimal_separator == ".":
+        normalized = normalized.replace(",", "")
+    elif decimal_separator == ",":
+        normalized = normalized.replace(".", "")
+        normalized = normalized.replace(",", ".")
+    else:
+        normalized = normalized.replace(".", "").replace(",", "")
+
     return int(round(float(normalized) * 100))
 
 

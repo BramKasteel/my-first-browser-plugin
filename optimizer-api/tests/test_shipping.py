@@ -8,6 +8,8 @@ from app.shipping import _load_shipping_route_book, parse_eur_to_cents
 def test_parse_eur_to_cents_handles_cardmarket_format() -> None:
     assert parse_eur_to_cents("1,55 €") == 155
     assert parse_eur_to_cents("1.000,00 €") == 100000
+    assert parse_eur_to_cents("4.10лв") == 410
+    assert parse_eur_to_cents("46,00 kr") == 4600
 
 
 def test_load_shipping_route_book_normalizes_countries(tmp_path) -> None:

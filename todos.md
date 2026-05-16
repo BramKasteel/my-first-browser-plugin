@@ -2,6 +2,11 @@ Shipping costs might actually differ: in Germany there is a 'large letter' which
 Asked a seller, should ask more
 ---------
 
+what to do which different currencies. delevery costs is in multiple currencies.
+For now: only deal with countries that use euros
+
+--------
+
 Do not require to be on a specific wants list page.
 Instead -- show a drop-down to load a wants list.
 

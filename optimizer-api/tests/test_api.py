@@ -14,11 +14,17 @@ EXPECTED_FIXTURE_RESULTS = {
     "ob_nixilis_improvements": {
         "status": "optimal",
         "totals": {
-            "item_subtotal": 7.67,
-            "shipping_total": 6.5,
-            "grand_total": 14.17,
+            "item_subtotal": 7.12,
+            "shipping_total": 8.05,
+            "grand_total": 15.17,
         },
         "chosen_sellers": [
+            {
+                "seller_id": "Command-Signet",
+                "item_subtotal": 2.84,
+                "shipping_cost": 1.55,
+                "total_units": 4,
+            },
             {
                 "seller_id": "Quelharoka",
                 "item_subtotal": 1.75,
@@ -27,9 +33,9 @@ EXPECTED_FIXTURE_RESULTS = {
             },
             {
                 "seller_id": "The-Archivist",
-                "item_subtotal": 0.5,
+                "item_subtotal": 0.4,
                 "shipping_cost": 1.7,
-                "total_units": 6,
+                "total_units": 4,
             },
             {
                 "seller_id": "Zarthor",
@@ -38,10 +44,10 @@ EXPECTED_FIXTURE_RESULTS = {
                 "total_units": 3,
             },
             {
-                "seller_id": "cernyrytir",
-                "item_subtotal": 3.37,
+                "seller_id": "amdfrk",
+                "item_subtotal": 0.08,
                 "shipping_cost": 1.55,
-                "total_units": 5,
+                "total_units": 3,
             },
         ],
         "allocation_count": 17,
