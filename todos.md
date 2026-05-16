@@ -1,3 +1,7 @@
+Shipping costs might actually differ: in Germany there is a 'large letter' which is absent from the tables
+Asked a seller, should ask more
+---------
+
 Do not require to be on a specific wants list page.
 Instead -- show a drop-down to load a wants list.
 
