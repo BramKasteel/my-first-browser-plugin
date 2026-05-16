@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from argparse import ArgumentParser
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -21,6 +22,14 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
+LOGGER = logging.getLogger(__name__)
+
+
+def _configure_logging(*, verbose: bool) -> None:
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
 
 
 def _request_json(url: str, *, locale: str, retries: int = DEFAULT_RETRIES) -> object:
@@ -34,11 +43,20 @@ def _request_json(url: str, *, locale: str, retries: int = DEFAULT_RETRIES) -> o
     )
     for attempt in range(retries):
         try:
+            LOGGER.debug("Requesting %s", url)
             with urlopen(request, timeout=DEFAULT_TIMEOUT_SECONDS) as response:
                 return json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError) as exc:
             if attempt + 1 >= retries:
                 raise RuntimeError(f"Request failed for {url}: {exc}") from exc
+            LOGGER.warning(
+                "Request failed for %s on attempt %d/%d: %s. Retrying in %ds.",
+                url,
+                attempt + 1,
+                retries,
+                exc,
+                2**attempt,
+            )
             sleep(2**attempt)
     raise RuntimeError(f"Request failed for {url}")
 
@@ -94,13 +112,30 @@ def build_shipping_snapshot(
     from_country_filters: set[str],
     to_country_filters: set[str],
 ) -> dict[str, object]:
+    LOGGER.info("Fetching country list for locale=%s", locale)
     countries = _fetch_countries(locale)
     from_countries = _selected_countries(countries, allowed_names=from_country_filters)
     to_countries = _selected_countries(countries, allowed_names=to_country_filters)
+    total_routes = len(from_countries) * len(to_countries)
+    LOGGER.info(
+        "Import starting: %d sender countries x %d receiver countries = %d routes",
+        len(from_countries),
+        len(to_countries),
+        total_routes,
+    )
 
     routes = []
+    route_index = 0
     for from_country in from_countries:
         for to_country in to_countries:
+            route_index += 1
+            LOGGER.info(
+                "Route %d/%d: %s -> %s",
+                route_index,
+                total_routes,
+                from_country["name"],
+                to_country["name"],
+            )
             methods = _fetch_route_methods(
                 locale=locale,
                 from_country_id=int(from_country["externalId"]),
@@ -114,6 +149,14 @@ def build_shipping_snapshot(
                     "to_country_id": int(to_country["externalId"]),
                     "methods": methods,
                 }
+            )
+            LOGGER.info(
+                "Route %d/%d done: %s -> %s (%d methods)",
+                route_index,
+                total_routes,
+                from_country["name"],
+                to_country["name"],
+                len(methods),
             )
             sleep(delay_seconds)
 
@@ -134,24 +177,33 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=SHIPPING_DATA_PATH)
     parser.add_argument("--from-country", action="append", default=[])
     parser.add_argument("--to-country", action="append", default=[])
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
+    _configure_logging(verbose=args.verbose)
 
-    snapshot = build_shipping_snapshot(
-        locale=args.locale,
-        delay_seconds=args.delay_seconds,
-        from_country_filters={
-            normalize_country_name(country) for country in args.from_country
-        },
-        to_country_filters={
-            normalize_country_name(country) for country in args.to_country
-        },
-    )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
-    print(
-        f"Saved {len(snapshot['routes'])} routes for {len(snapshot['countries'])} countries to {args.output}"
-    )
-    return 0
+    try:
+        snapshot = build_shipping_snapshot(
+            locale=args.locale,
+            delay_seconds=args.delay_seconds,
+            from_country_filters={
+                normalize_country_name(country) for country in args.from_country
+            },
+            to_country_filters={
+                normalize_country_name(country) for country in args.to_country
+            },
+        )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+        LOGGER.info(
+            "Saved %d routes for %d countries to %s",
+            len(snapshot["routes"]),
+            len(snapshot["countries"]),
+            args.output,
+        )
+        return 0
+    except KeyboardInterrupt:
+        LOGGER.warning("Import interrupted by user")
+        return 130
 
 
 if __name__ == "__main__":
