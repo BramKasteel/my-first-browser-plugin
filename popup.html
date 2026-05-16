@@ -86,6 +86,179 @@
       gap: 12px;
     }
 
+    .workflow-shell {
+      display: grid;
+      gap: 12px;
+    }
+
+    .workflow-header {
+      display: grid;
+      gap: 10px;
+    }
+
+    .workflow-steps {
+      display: block;
+    }
+
+    .workflow-step {
+      display: none;
+      gap: 5px;
+      padding: 12px;
+      text-align: left;
+      color: var(--text);
+      background: linear-gradient(180deg, rgba(49, 65, 79, 0.92), rgba(40, 54, 67, 0.92));
+      border: 1px solid transparent;
+    }
+
+    .workflow-step.active {
+      display: grid;
+    }
+
+    .workflow-step[data-state="locked"] {
+      opacity: 0.56;
+    }
+
+    .workflow-step[data-state="active"] {
+      color: #17120b;
+      border-color: rgba(245, 158, 11, 0.4);
+      background: linear-gradient(135deg, var(--accent-strong), #fbbf24);
+    }
+
+    .workflow-step[data-state="done"] {
+      border-color: rgba(52, 211, 153, 0.34);
+      background: linear-gradient(180deg, rgba(17, 94, 89, 0.65), rgba(22, 101, 52, 0.55));
+    }
+
+    .workflow-step-index {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      opacity: 0.82;
+    }
+
+    .workflow-step-title {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .workflow-step-meta {
+      font-size: 12px;
+      line-height: 1.4;
+      opacity: 0.82;
+    }
+
+    .workflow-current {
+      display: grid;
+      gap: 4px;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(159, 176, 190, 0.16);
+      background: rgba(17, 22, 27, 0.52);
+    }
+
+    .workflow-current-label {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .workflow-current-title {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .workflow-current-note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .workflow-nav {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .workflow-nav-meta {
+      margin: 0;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .panel.step-panel {
+      display: none;
+    }
+
+    .panel.step-panel.active {
+      display: grid;
+      gap: 12px;
+    }
+
+    .step-card-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .step-card {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(159, 176, 190, 0.16);
+      background: rgba(17, 22, 27, 0.44);
+    }
+
+    .step-card-title {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .step-card-actions {
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .step-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      width: fit-content;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(159, 176, 190, 0.18);
+      background: rgba(159, 176, 190, 0.08);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .step-pill.good {
+      border-color: rgba(52, 211, 153, 0.3);
+      background: rgba(16, 185, 129, 0.14);
+      color: #bbf7d0;
+    }
+
+    .step-highlight {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(159, 176, 190, 0.16);
+      background: rgba(17, 22, 27, 0.44);
+    }
+
     .actions {
       display: grid;
       gap: 8px;
@@ -566,8 +739,17 @@
     }
 
     @media (max-width: 440px) {
+      .step-card-grid,
       .filter-grid {
         grid-template-columns: 1fr;
+      }
+
+      .workflow-nav {
+        grid-template-columns: 1fr;
+      }
+
+      .workflow-nav-meta {
+        order: -1;
       }
 
       .result-tabs {
@@ -589,14 +771,76 @@
       <p class="subtle">Load in your wants list, and obtain the combination of sellers that result in the minimal price!</p>
     </section>
 
-    <section class="panel-stack">
-      <section class="panel">
+    <section class="panel workflow-shell">
+      <div class="workflow-header">
         <div class="panel-header">
-          <h2 class="panel-title">Want List</h2>
-          <button id="extractItems" class="secondary mini-button">Extract Visible Want Items</button>
+          <h2 class="panel-title">Workflow</h2>
         </div>
-        <p class="panel-note">Load your wants list by going to it's page and pressing the button.</p>
-        <p id="wantListWarning" class="inline-notice" hidden></p>
+        <div class="workflow-steps" role="tablist" aria-label="Optimization workflow">
+          <button type="button" class="secondary workflow-step" data-workflow-step="source" data-state="active" aria-selected="true">
+            <span class="workflow-step-index">Step 1</span>
+            <span class="workflow-step-title">Load Source</span>
+            <span class="workflow-step-meta">Want list or fixture</span>
+          </button>
+          <button type="button" class="secondary workflow-step" data-workflow-step="sellers" data-state="locked" aria-selected="false">
+            <span class="workflow-step-index">Step 2</span>
+            <span class="workflow-step-title">Get Sellers</span>
+            <span class="workflow-step-meta">Scrape market rows</span>
+          </button>
+          <button type="button" class="secondary workflow-step" data-workflow-step="optimize" data-state="locked" aria-selected="false">
+            <span class="workflow-step-index">Step 3</span>
+            <span class="workflow-step-title">Optimize</span>
+            <span class="workflow-step-meta">Price and shipping</span>
+          </button>
+          <button type="button" class="secondary workflow-step" data-workflow-step="fill" data-state="locked" aria-selected="false">
+            <span class="workflow-step-index">Step 4</span>
+            <span class="workflow-step-title">Fill Cart</span>
+            <span class="workflow-step-meta">Push chosen offers</span>
+          </button>
+        </div>
+        <div class="workflow-current" aria-live="polite">
+          <p class="workflow-current-label">Current step</p>
+          <h2 id="workflowCurrentStep" class="workflow-current-title">Load Source</h2>
+          <p id="workflowStepHint" class="workflow-current-note">Load want list from active Cardmarket tab, or load fixture to jump straight to optimization.</p>
+        </div>
+        <div class="workflow-nav">
+          <button type="button" id="workflowBack" class="secondary">Back</button>
+          <p id="workflowNavMeta" class="workflow-nav-meta">Step 1 of 4</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel-stack">
+      <section class="panel step-panel active" data-step-panel="source">
+        <div class="panel-header">
+          <h2 class="panel-title">Step 1: Load Source</h2>
+          <span id="sourceStepBadge" class="step-pill">Waiting</span>
+        </div>
+        <div class="step-card-grid">
+          <section class="step-card">
+            <h3 class="step-card-title">From Cardmarket want list</h3>
+            <p class="panel-note">Open specific Cardmarket want list page, then extract visible rows from current tab.</p>
+            <div class="step-card-actions">
+              <button id="extractItems" class="secondary">Extract Visible Want Items</button>
+              <p id="wantListWarning" class="inline-notice" hidden></p>
+            </div>
+          </section>
+
+          <section class="step-card">
+            <h3 class="step-card-title">From local fixture</h3>
+            <p class="panel-note">Skip seller scraping and load known optimizer input directly.</p>
+            <div class="step-card-actions">
+              <label class="config-label" for="optimizerFixtureSelect">
+                <span>Optimizer fixture</span>
+                <select id="optimizerFixtureSelect">
+                  <option value="small_wantslist">small_wantslist</option>
+                  <option value="ob_nixilis_improvements">ob_nixilis_improvements</option>
+                </select>
+              </label>
+              <button id="loadOptimizerFixture" class="secondary">Load fixture</button>
+            </div>
+          </section>
+        </div>
         <details id="wantListPreview" class="collapsible is-empty">
           <summary>Want list preview</summary>
           <div class="collapsible-body">
@@ -605,10 +849,12 @@
         </details>
       </section>
 
-      <section class="panel config-grid">
+      <section class="panel config-grid step-panel" data-step-panel="sellers">
         <div class="panel-header">
-          <h2 class="panel-title">Seller Filters</h2>
+          <h2 class="panel-title">Step 2: Get Seller Data</h2>
+          <span id="sellerStepBadge" class="step-pill">Locked</span>
         </div>
+        <p class="panel-note">Scrape seller rows only after want items loaded. Filters apply before optimizer payload build.</p>
         <div class="filter-grid">
           <label class="config-label" for="sellerReputationFilter">
             <span>Seller reputation</span>
@@ -655,51 +901,65 @@
           </div>
         </div>
         <div class="actions">
-          <label class="config-label" for="optimizerFixtureSelect">
-            <span>Optimizer fixture</span>
-            <select id="optimizerFixtureSelect">
-              <option value="small_wantslist">small_wantslist</option>
-              <option value="ob_nixilis_improvements">ob_nixilis_improvements</option>
-            </select>
-          </label>
-          <button id="loadOptimizerFixture" class="secondary">Load fixture</button>
-          <label class="config-label" for="optimizerApiUrl">
-            <span>Optimizer API URL</span>
-            <input id="optimizerApiUrl" type="text" value="http://127.0.0.1:8000/optimize" spellcheck="false" autocomplete="off">
-          </label>
-          <button id="optimizeOrder" class="secondary">Optimize order</button>
           <button id="scrapeAllItems" class="secondary">Scrape sellers</button>
+        </div>
+        <details class="collapsible is-ready">
+          <summary>Advanced rate probe</summary>
+          <div class="collapsible-body">
+            <section class="step-highlight">
+              <div class="panel-header">
+                <h3 class="panel-title">Rate Probe</h3>
+                <button id="probeRateLimits" class="secondary mini-button">Run Safe Rate Probe</button>
+              </div>
+              <div class="config-row">
+                <label class="config-label" for="sellerDelayMs">
+                  <span>Seller request delay (ms)</span>
+                  <input id="sellerDelayMs" type="number" min="250" step="50" value="2000">
+                </label>
+                <label class="config-label" for="probeRequestCount">
+                  <span>Probe runs per delay stage</span>
+                  <input id="probeRequestCount" type="number" min="1" max="8" step="1" value="3">
+                </label>
+              </div>
+              <div class="config-row">
+                <label class="config-label" for="probePageBudget">
+                  <span>Probe page budget per run</span>
+                  <input id="probePageBudget" type="number" min="1" max="3" step="1" value="2">
+                </label>
+              </div>
+              <p class="subtle">Probe mode tests one item serially at staged delays, applies small random jitter, stops on first warning, and recommends conservative seller delay.</p>
+            </section>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel config-grid step-panel" data-step-panel="optimize">
+        <div class="panel-header">
+          <h2 class="panel-title">Step 3: Optimize Order</h2>
+          <span id="optimizeStepBadge" class="step-pill">Locked</span>
+        </div>
+        <p class="panel-note">Once seller batch or fixture payload ready, send normalized request to optimizer API.</p>
+        <label class="config-label" for="optimizerApiUrl">
+          <span>Optimizer API URL</span>
+          <input id="optimizerApiUrl" type="text" value="http://127.0.0.1:8000/optimize" spellcheck="false" autocomplete="off">
+        </label>
+        <div class="actions">
+          <button id="optimizeOrder" class="secondary">Optimize order</button>
         </div>
       </section>
 
-      <details class="collapsible is-ready">
-        <summary>Advanced rate probe</summary>
-        <div class="collapsible-body">
-          <section class="panel config-grid">
-            <div class="panel-header">
-              <h2 class="panel-title">Rate Probe</h2>
-              <button id="probeRateLimits" class="secondary mini-button">Run Safe Rate Probe</button>
-            </div>
-            <div class="config-row">
-              <label class="config-label" for="sellerDelayMs">
-                <span>Seller request delay (ms)</span>
-                <input id="sellerDelayMs" type="number" min="250" step="50" value="2000">
-              </label>
-              <label class="config-label" for="probeRequestCount">
-                <span>Probe runs per delay stage</span>
-                <input id="probeRequestCount" type="number" min="1" max="8" step="1" value="3">
-              </label>
-            </div>
-            <div class="config-row">
-              <label class="config-label" for="probePageBudget">
-                <span>Probe page budget per run</span>
-                <input id="probePageBudget" type="number" min="1" max="3" step="1" value="2">
-              </label>
-            </div>
-            <p class="subtle">Probe mode tests one item serially at staged delays, applies small random jitter, stops on first warning, and recommends conservative seller delay.</p>
-          </section>
+      <section class="panel step-panel" data-step-panel="fill">
+        <div class="panel-header">
+          <h2 class="panel-title">Step 4: Fill Cart</h2>
+          <span id="fillStepBadge" class="step-pill">Locked</span>
         </div>
-      </details>
+        <div class="step-highlight">
+          <p class="panel-note">Push chosen Cardmarket article rows into current cart only after optimal cart looks right in results.</p>
+          <div class="actions">
+            <button id="fillCart" class="secondary mini-button" disabled>Fill cart</button>
+          </div>
+        </div>
+      </section>
 
       <section class="panel">
         <div class="panel-header">
@@ -728,7 +988,6 @@
             <div class="result-view" data-result-panel="cart">
               <div class="panel-header">
                 <h3 class="panel-title">Optimized Cart</h3>
-                <button id="fillCart" class="secondary mini-button" disabled>Fill cart</button>
               </div>
               <div id="cartItems" class="items"></div>
             </div>

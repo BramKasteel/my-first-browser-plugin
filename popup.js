@@ -31,6 +31,16 @@ const activityBadgeEl = document.getElementById('activityBadge');
 const activityTabButton = document.getElementById('resultTabActivity');
 const resultTabButtons = [...document.querySelectorAll('[data-result-tab]')];
 const resultPanels = [...document.querySelectorAll('[data-result-panel]')];
+const workflowStepButtons = [...document.querySelectorAll('[data-workflow-step]')];
+const workflowStepPanels = [...document.querySelectorAll('[data-step-panel]')];
+const workflowCurrentStepEl = document.getElementById('workflowCurrentStep');
+const workflowStepHintEl = document.getElementById('workflowStepHint');
+const workflowBackButton = document.getElementById('workflowBack');
+const workflowNavMetaEl = document.getElementById('workflowNavMeta');
+const sourceStepBadgeEl = document.getElementById('sourceStepBadge');
+const sellerStepBadgeEl = document.getElementById('sellerStepBadge');
+const optimizeStepBadgeEl = document.getElementById('optimizeStepBadge');
+const fillStepBadgeEl = document.getElementById('fillStepBadge');
 
 const urlParams = new URLSearchParams(window.location.search);
 const isDetached = urlParams.get('detached') === '1';
@@ -45,6 +55,8 @@ let latestExtractedItems = [];
 let isRunActive = false;
 let isUiBusy = false;
 let selectedSellerCountries = [];
+let activeWorkflowStep = 'source';
+let workflowHistory = [];
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
@@ -55,6 +67,25 @@ const RATE_PROBE_DELAYS_MS = [1500, 1000, 750, 500, 350, 300, 250, 200];
 const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
 const DEFAULT_OPTIMIZER_API_URL = 'http://127.0.0.1:8000/optimize';
 const DEFAULT_OPTIMIZER_FIXTURE = 'small_wantslist';
+const WORKFLOW_STEPS = ['source', 'sellers', 'optimize', 'fill'];
+const WORKFLOW_META = {
+  source: {
+    title: 'Load Source',
+    hint: 'Load want list from active Cardmarket tab, or load fixture to jump straight to optimization.',
+  },
+  sellers: {
+    title: 'Get Seller Data',
+    hint: 'Scrape seller rows after want items are loaded.',
+  },
+  optimize: {
+    title: 'Optimize Order',
+    hint: 'Send normalized payload to optimizer API and review total cost breakdown.',
+  },
+  fill: {
+    title: 'Fill Cart',
+    hint: 'Push chosen Cardmarket offers into your cart after reviewing optimized result.',
+  },
+};
 const OPTIMIZER_FIXTURE_OPTIONS = [
   {
     value: 'small_wantslist',
@@ -185,6 +216,7 @@ function setBusy(isBusy) {
   syncFixtureButton(isBusy);
   syncOptimizeButton(isBusy);
   syncFillCartButton(isBusy);
+  renderWorkflow();
 }
 
 function setRunState({ active, message, tone = '' }) {
@@ -222,6 +254,191 @@ function setActiveResultTab(tabName) {
   } else if (isRunActive) {
     activityBadgeEl.classList.add('visible');
   }
+}
+
+function getWorkflowState() {
+  const frontendKind = textOf(latestFrontendPayload?.kind);
+  return {
+    hasExtractedWants: latestExtractedItems.length > 0,
+    hasSellerBatch: frontendKind === 'seller-scrape-batch',
+    hasFixturePayload: frontendKind === 'optimizer-fixture' && !!latestExtractPayload,
+    hasOptimizerPayload: !!latestExtractPayload,
+    hasOptimizationResult: !!latestOptimizationResult,
+    hasOptimalCart: hasOptimizedCart(),
+  };
+}
+
+function canAccessWorkflowStep(stepName, state = getWorkflowState()) {
+  if (stepName === 'source') return true;
+  if (stepName === 'sellers') return state.hasExtractedWants;
+  if (stepName === 'optimize') return state.hasOptimizerPayload;
+  if (stepName === 'fill') return state.hasOptimalCart;
+  return false;
+}
+
+function getSuggestedWorkflowStep(state = getWorkflowState()) {
+  if (state.hasOptimalCart) return 'fill';
+  if (state.hasOptimizerPayload) return 'optimize';
+  if (state.hasExtractedWants) return 'sellers';
+  return 'source';
+}
+
+function getAccessibleWorkflowSteps(state = getWorkflowState()) {
+  return WORKFLOW_STEPS.filter((stepName) => canAccessWorkflowStep(stepName, state));
+}
+
+function getPreviousWorkflowStepFromHistory(state = getWorkflowState()) {
+  while (workflowHistory.length) {
+    const previousStep = workflowHistory[workflowHistory.length - 1];
+    if (canAccessWorkflowStep(previousStep, state)) {
+      return previousStep;
+    }
+    workflowHistory.pop();
+  }
+  return null;
+}
+
+function getWorkflowStepHint(stepName, state = getWorkflowState()) {
+  if (stepName === 'source') {
+    if (state.hasFixturePayload) {
+      return 'Fixture payload loaded. Seller scrape skipped. Continue with optimization or reload want-list path.';
+    }
+    if (state.hasExtractedWants) {
+      return 'Want items loaded. Next step: scrape seller rows with current filters.';
+    }
+  }
+
+  if (stepName === 'sellers') {
+    if (!state.hasExtractedWants) {
+      return 'Seller scrape locked until want items are extracted from Cardmarket page.';
+    }
+    if (state.hasSellerBatch) {
+      return 'Seller batch ready. Review preview rows or continue to optimization.';
+    }
+  }
+
+  if (stepName === 'optimize') {
+    if (!state.hasOptimizerPayload) {
+      return 'Optimization locked until fixture or seller payload exists.';
+    }
+    if (state.hasOptimizationResult && !state.hasOptimalCart) {
+      return 'Optimizer ran. Review infeasible or partial result before trying again.';
+    }
+    if (state.hasOptimalCart) {
+      return 'Optimal cart ready. Review totals and chosen sellers, then fill cart if result looks right.';
+    }
+  }
+
+  if (stepName === 'fill' && !state.hasOptimalCart) {
+    return 'Fill cart unlocks only after optimizer returns an optimal cart.';
+  }
+
+  return WORKFLOW_META[stepName]?.hint || '';
+}
+
+function setStepBadge(element, text, tone = '') {
+  if (!element) return;
+  element.textContent = text;
+  element.classList.toggle('good', tone === 'good');
+}
+
+function renderWorkflow() {
+  const state = getWorkflowState();
+  if (!canAccessWorkflowStep(activeWorkflowStep, state)) {
+    activeWorkflowStep = getSuggestedWorkflowStep(state);
+  }
+
+  workflowStepButtons.forEach((button) => {
+    const stepName = button.dataset.workflowStep || 'source';
+    const isActive = stepName === activeWorkflowStep;
+    const isAccessible = canAccessWorkflowStep(stepName, state);
+    let stepState = 'locked';
+    if (isAccessible) {
+      stepState = isActive ? 'active' : 'done';
+    }
+    if (stepName === 'source' && !state.hasExtractedWants && !state.hasFixturePayload) {
+      stepState = isActive ? 'active' : 'done';
+    }
+    if (stepName === 'sellers' && isAccessible && !state.hasSellerBatch && !isActive) {
+      stepState = 'done';
+    }
+    if (stepName === 'optimize' && isAccessible && !state.hasOptimizationResult && !isActive) {
+      stepState = 'done';
+    }
+
+    button.dataset.state = stepState;
+    button.classList.toggle('active', isActive);
+    button.disabled = isUiBusy || !isAccessible;
+    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+
+  workflowStepPanels.forEach((panel) => {
+    panel.classList.toggle('active', panel.dataset.stepPanel === activeWorkflowStep);
+  });
+
+  if (workflowCurrentStepEl) {
+    workflowCurrentStepEl.textContent = WORKFLOW_META[activeWorkflowStep]?.title || 'Workflow';
+  }
+  if (workflowStepHintEl) {
+    workflowStepHintEl.textContent = getWorkflowStepHint(activeWorkflowStep, state);
+  }
+  if (workflowNavMetaEl) {
+    const stepIndex = Math.max(0, WORKFLOW_STEPS.indexOf(activeWorkflowStep));
+    workflowNavMetaEl.textContent = `Step ${stepIndex + 1} of ${WORKFLOW_STEPS.length}`;
+  }
+
+  const previousStep = getPreviousWorkflowStepFromHistory(state);
+  if (workflowBackButton) {
+    workflowBackButton.disabled = isUiBusy || !previousStep;
+  }
+
+  if (state.hasFixturePayload) {
+    setStepBadge(sourceStepBadgeEl, 'Fixture loaded', 'good');
+  } else if (state.hasExtractedWants) {
+    setStepBadge(sourceStepBadgeEl, `${latestExtractedItems.length} items ready`, 'good');
+  } else {
+    setStepBadge(sourceStepBadgeEl, 'Waiting');
+  }
+
+  if (state.hasSellerBatch) {
+    setStepBadge(sellerStepBadgeEl, 'Seller data ready', 'good');
+  } else if (state.hasExtractedWants) {
+    setStepBadge(sellerStepBadgeEl, 'Ready');
+  } else {
+    setStepBadge(sellerStepBadgeEl, 'Locked');
+  }
+
+  if (state.hasOptimizationResult) {
+    setStepBadge(optimizeStepBadgeEl, state.hasOptimalCart ? 'Optimal result' : 'Result ready', 'good');
+  } else if (state.hasOptimizerPayload) {
+    setStepBadge(optimizeStepBadgeEl, 'Ready', 'good');
+  } else {
+    setStepBadge(optimizeStepBadgeEl, 'Locked');
+  }
+
+  if (state.hasOptimalCart) {
+    setStepBadge(fillStepBadgeEl, 'Ready', 'good');
+  } else {
+    setStepBadge(fillStepBadgeEl, 'Locked');
+  }
+}
+
+function setActiveWorkflowStep(stepName, { force = false, recordHistory = true } = {}) {
+  const state = getWorkflowState();
+  const nextStep = !force && !canAccessWorkflowStep(stepName, state)
+    ? getSuggestedWorkflowStep(state)
+    : stepName;
+
+  if (recordHistory && nextStep !== activeWorkflowStep) {
+    workflowHistory.push(activeWorkflowStep);
+  }
+
+  if (!force && !canAccessWorkflowStep(stepName, state)) {
+    activeWorkflowStep = getSuggestedWorkflowStep(state);
+  } else {
+    activeWorkflowStep = nextStep;
+  }
+  renderWorkflow();
 }
 
 function formatRemaining(ms) {
@@ -983,12 +1200,14 @@ function renderPayload(payload) {
   payloadViewEl.textContent = payload ? JSON.stringify(payload, null, 2) : 'No optimizer payload yet.';
   copyPayloadButton.disabled = !payload;
   syncOptimizeButton(isUiBusy);
+  renderWorkflow();
 }
 
 function renderFrontendPayload(payload) {
   latestFrontendPayload = payload;
   frontendPayloadViewEl.textContent = payload ? JSON.stringify(payload, null, 2) : 'No frontend dump yet.';
   copyFrontendPayloadButton.disabled = !payload;
+  renderWorkflow();
 }
 
 function renderSummary(rows) {
@@ -1171,6 +1390,8 @@ function renderOptimizationResult(result) {
 
     cartItemsEl.appendChild(card);
   }
+
+  renderWorkflow();
 }
 
 function buildCartFillPayload(result) {
@@ -1348,6 +1569,7 @@ async function handleLoadOptimizerFixture() {
       { label: 'Buyer country', value: payload.buyer_country || '?' },
       { label: 'Currency', value: payload.currency || 'EUR' },
     ]);
+    setActiveWorkflowStep('optimize', { force: true });
     setActiveResultTab('payload');
     appendStatus(`Loaded optimizer fixture ${fixture.value}: ${payload.items.length} items, ${payload.sellers.length} sellers, ${payload.offers.length} offers.`, 'good');
     finishRun(`Fixture ${fixture.value} loaded. Ready to optimize.`, 'good');
@@ -1404,6 +1626,7 @@ async function handleOptimizeOrder() {
       { label: 'Total units', value: String(result?.cart?.total_units || 0) },
       { label: 'Notes', value: Array.isArray(result?.notes) && result.notes.length ? result.notes.join(' | ') : '-' },
     ]);
+    setActiveWorkflowStep(result.status === 'optimal' ? 'fill' : 'optimize', { force: true });
     setActiveResultTab('cart');
 
     if (result.status === 'optimal') {
@@ -1597,12 +1820,14 @@ async function handleExtractItems() {
     renderSellers([], 0, result.items[0]?.productName || 'the first item');
     renderFrontendPayload(result);
     renderPayload(null);
+    setActiveWorkflowStep('sellers', { force: true });
     setActiveResultTab('overview');
     appendStatus(`Extracted ${result.totalVisible} visible want items from the current page.`, result.totalVisible ? 'good' : 'bad');
     finishRun(`Extracted ${result.totalVisible} visible want items.`, result.totalVisible ? 'good' : 'bad');
   } catch (error) {
     latestExtractedItems = [];
     syncSellerScrapeButton();
+    renderWorkflow();
     appendStatus(error.message, 'bad');
     finishRun(error.message, 'bad');
   } finally {
@@ -1789,6 +2014,7 @@ async function handleScrapeAllItems() {
     const optimizerPayload = buildOptimizerPayload(batchPayload);
     renderFrontendPayload(batchPayload);
     renderPayload(optimizerPayload);
+    setActiveWorkflowStep(optimizerPayload ? 'optimize' : 'sellers', { force: true });
     setActiveResultTab('sellers');
 
     if (optimizerPayload) {
@@ -2291,6 +2517,19 @@ fillCartButton.addEventListener('click', handleFillCart);
 probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
 copyFrontendPayloadButton.addEventListener('click', handleCopyFrontendPayload);
+workflowStepButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    const stepName = button.dataset.workflowStep || 'source';
+    setActiveWorkflowStep(stepName);
+  });
+});
+workflowBackButton?.addEventListener('click', () => {
+  const previousStep = getPreviousWorkflowStepFromHistory();
+  if (previousStep) {
+    workflowHistory.pop();
+    setActiveWorkflowStep(previousStep, { force: true, recordHistory: false });
+  }
+});
 resultTabButtons.forEach((button) => {
   button.addEventListener('click', () => {
     setActiveResultTab(button.dataset.resultTab || 'overview');
@@ -2346,6 +2585,7 @@ syncSellerScrapeButton();
 syncFixtureButton();
 syncOptimizeButton();
 syncFillCartButton();
+renderWorkflow();
 scrapeAllItemsButton.textContent = 'Scrape sellers';
 appendStatus(isDetached
   ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'
@@ -2363,6 +2603,7 @@ Promise.allSettled([
     loadDetachedBatchState().then((items) => {
       latestExtractedItems = items;
       syncSellerScrapeButton();
+      renderWorkflow();
       if (!latestExtractedItems.length) {
         appendStatus('Batch scrape workspace could not auto-start because no extracted items were passed from popup.', 'bad');
         return;
@@ -2370,6 +2611,7 @@ Promise.allSettled([
 
       renderItems(latestExtractedItems.slice(0, 8), latestExtractedItems.length);
       renderSellers([], 0, latestExtractedItems[0]?.productName || 'the first item');
+      setActiveWorkflowStep('sellers', { force: true });
       handleScrapeAllItems().catch((error) => {
         appendStatus(error.message, 'bad');
       });
