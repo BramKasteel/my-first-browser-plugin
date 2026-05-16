@@ -13,6 +13,9 @@ class WantedItem(BaseModel):
     quantity: int = Field(ge=1)
     min_condition: str | None = None
     preferred_languages: list[str] = Field(default_factory=list)
+    cards_per_unit: int = Field(default=1, ge=0)
+    unit_weight_grams: int | None = Field(default=None, ge=0)
+    requires_parcel: bool = False
 
 
 class Seller(BaseModel):

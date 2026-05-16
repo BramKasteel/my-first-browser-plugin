@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from . import shipping
 from .models import (
     AllocationResult,
     CartItemResult,
@@ -13,11 +14,8 @@ from .models import (
     SellerResult,
 )
 
-DEFAULT_ORDER_SHIPPING_EUR = 1.0
-ROUTE_SHIPPING_EUR = {
-    ("germany", "netherlands"): 1.55,
-    ("netherlands", "netherlands"): 1.70,
-}
+LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
+APPROX_GRAMS_PER_CARD = 2.5
 
 
 def _to_cents(amount: float) -> int:
@@ -28,12 +26,15 @@ def _from_cents(amount: int) -> float:
     return round(amount / 100, 2)
 
 
-def _shipping_cost_cents(*, seller_country: str, buyer_country: str) -> int:
-    route_amount = ROUTE_SHIPPING_EUR.get(
-        (seller_country.strip().casefold(), buyer_country.strip().casefold()),
-        DEFAULT_ORDER_SHIPPING_EUR,
-    )
-    return _to_cents(route_amount)
+def _method_card_capacity(max_weight_grams: int) -> int:
+    for weight_limit, card_limit in LETTER_CARD_LIMITS:
+        if max_weight_grams <= weight_limit:
+            return card_limit
+    return int(max_weight_grams / APPROX_GRAMS_PER_CARD)
+
+
+def _has_explicit_item_weights(request: OptimizationRequest) -> bool:
+    return all(item.unit_weight_grams is not None for item in request.items)
 
 
 def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
@@ -55,7 +56,6 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     blocked_sellers = set(request.preferences.blocked_seller_ids)
 
     usable_offers = []
-    offer_map = {}
     filtered_sellers = set()
     for offer in request.offers:
         seller = seller_map[offer.seller_id]
@@ -67,7 +67,6 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             filtered_sellers.add(offer.seller_id)
             continue
         usable_offers.append(offer)
-        offer_map[offer.offer_id] = offer
 
     coverage = defaultdict(int)
     for offer in usable_offers:
@@ -130,18 +129,119 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     for offer in usable_offers:
         objective_terms.append(_to_cents(offer.unit_price) * offer_vars[offer.offer_id])
 
-    shipping_costs_by_seller = {
-        seller_id: _shipping_cost_cents(
+    route_book = shipping.load_shipping_route_book()
+    use_rich_shipping = route_book is not None
+    use_explicit_weights = _has_explicit_item_weights(request)
+    seller_shipping_method_vars = {}
+    fallback_shipping_costs = {}
+    seller_value_upper_bounds = {}
+    seller_weight_upper_bounds = {}
+    seller_card_upper_bounds = {}
+    seller_unit_upper_bounds = {}
+
+    for seller_id, offers in seller_offers.items():
+        seller_value_upper_bounds[seller_id] = sum(
+            _to_cents(offer.unit_price) * offer.available_quantity for offer in offers
+        )
+        seller_weight_upper_bounds[seller_id] = sum(
+            (item_map[offer.item_id].unit_weight_grams or 0) * offer.available_quantity
+            for offer in offers
+        )
+        seller_card_upper_bounds[seller_id] = sum(
+            item_map[offer.item_id].cards_per_unit * offer.available_quantity
+            for offer in offers
+        )
+        seller_unit_upper_bounds[seller_id] = sum(
+            offer.available_quantity for offer in offers
+        )
+
+    for seller_id, active in seller_active_vars.items():
+        route_methods = ()
+        if use_rich_shipping and route_book is not None:
+            route_methods = tuple(
+                method
+                for method in route_book.lookup_methods(
+                    seller_country=seller_map[seller_id].country,
+                    buyer_country=request.buyer_country,
+                )
+                if not method.is_virtual
+            )
+
+        if route_methods:
+            total_value_expr = sum(
+                _to_cents(offer.unit_price) * offer_vars[offer.offer_id]
+                for offer in seller_offers[seller_id]
+            )
+            total_weight_expr = sum(
+                (item_map[offer.item_id].unit_weight_grams or 0)
+                * offer_vars[offer.offer_id]
+                for offer in seller_offers[seller_id]
+            )
+            total_card_expr = sum(
+                item_map[offer.item_id].cards_per_unit * offer_vars[offer.offer_id]
+                for offer in seller_offers[seller_id]
+            )
+            parcel_only_units_expr = sum(
+                offer_vars[offer.offer_id]
+                for offer in seller_offers[seller_id]
+                if item_map[offer.item_id].requires_parcel
+            )
+
+            seller_shipping_method_vars[seller_id] = []
+            for method_index, method in enumerate(route_methods):
+                method_var = model.NewBoolVar(f"ship_{seller_id}_{method_index}")
+                seller_shipping_method_vars[seller_id].append((method, method_var))
+                model.Add(
+                    total_value_expr
+                    <= method.max_value_cents
+                    + seller_value_upper_bounds[seller_id] * (1 - method_var)
+                )
+                model.Add(
+                    total_value_expr
+                    <= method.max_value_cents
+                    + seller_value_upper_bounds[seller_id] * (1 - method_var)
+                )
+                if use_explicit_weights:
+                    model.Add(
+                        total_weight_expr
+                        <= method.max_weight_grams
+                        + seller_weight_upper_bounds[seller_id] * (1 - method_var)
+                    )
+                else:
+                    model.Add(
+                        total_card_expr
+                        <= _method_card_capacity(method.max_weight_grams)
+                        + seller_card_upper_bounds[seller_id] * (1 - method_var)
+                    )
+                if method.is_letter:
+                    model.Add(
+                        parcel_only_units_expr
+                        <= seller_unit_upper_bounds[seller_id] * (1 - method_var)
+                    )
+
+            model.Add(
+                sum(
+                    method_var
+                    for _, method_var in seller_shipping_method_vars[seller_id]
+                )
+                == active
+            )
+            objective_terms.append(
+                sum(
+                    method.total_price_cents * method_var
+                    for method, method_var in seller_shipping_method_vars[seller_id]
+                )
+            )
+            continue
+
+        fallback_shipping_costs[seller_id] = shipping.legacy_shipping_cost_cents(
             seller_country=seller_map[seller_id].country,
             buyer_country=request.buyer_country,
         )
-        for seller_id in seller_active_vars
-    }
+        objective_terms.append(fallback_shipping_costs[seller_id] * active)
 
-    for seller_id, active in seller_active_vars.items():
-        objective_terms.append(shipping_costs_by_seller[seller_id] * active)
-
-    model.Minimize(sum(objective_terms))
+    objective_expr = sum(objective_terms)
+    model.Minimize(objective_expr)
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 10
@@ -156,6 +256,36 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             cart=OptimizationCart(),
             notes=["Solver found no feasible solution."],
         )
+
+    best_total_cost = int(round(solver.ObjectiveValue()))
+    seller_rank = {
+        seller_id: index
+        for index, seller_id in enumerate(sorted(seller_active_vars), start=1)
+    }
+    offer_rank = {
+        offer.offer_id: index
+        for index, offer in enumerate(
+            sorted(usable_offers, key=lambda offer: offer.offer_id), start=1
+        )
+    }
+    tie_break_terms = [
+        seller_rank[seller_id] * active
+        for seller_id, active in seller_active_vars.items()
+    ]
+    tie_break_terms.extend(
+        offer_rank[offer.offer_id] * offer_vars[offer.offer_id]
+        for offer in usable_offers
+    )
+    if tie_break_terms:
+        model.Add(objective_expr == best_total_cost)
+        model.Minimize(sum(tie_break_terms))
+
+        tie_break_solver = cp_model.CpSolver()
+        tie_break_solver.parameters.max_time_in_seconds = 5
+        tie_break_solver.parameters.num_search_workers = 1
+        tie_break_status = tie_break_solver.Solve(model)
+        if tie_break_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            solver = tie_break_solver
 
     allocations = []
     cart_items_by_seller = defaultdict(list)
@@ -199,7 +329,13 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         if solver.Value(active_var) <= 0:
             continue
 
-        shipping_total = shipping_costs_by_seller[seller_id]
+        shipping_total = fallback_shipping_costs.get(seller_id)
+        if shipping_total is None:
+            shipping_total = next(
+                method.total_price_cents
+                for method, method_var in seller_shipping_method_vars[seller_id]
+                if solver.Value(method_var) > 0
+            )
 
         seller_shipping_totals[seller_id] = shipping_total
         chosen_sellers.append(
@@ -234,10 +370,34 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     grand_total = item_subtotal + shipping_total
     total_units = sum(seller_unit_totals.values())
 
-    notes = [
-        "Shipping proxy uses seller-country to buyer-country route costs when known.",
-        "Current route table: Germany -> Netherlands = 1.55 EUR, Netherlands -> Netherlands = 1.70 EUR, fallback = 1.00 EUR.",
-    ]
+    notes = []
+    if use_rich_shipping:
+        notes.append(
+            "Shipping uses imported Cardmarket route tables when route data exists for a seller-country to buyer-country pair."
+        )
+        if use_explicit_weights:
+            notes.append(
+                "Shipment constraints use selected item value, summed item weight, and parcel-only item flags."
+            )
+        else:
+            notes.append(
+                "Shipment constraints use selected item value, card-count letter thresholds (4/17/40 cards), and parcel-only item flags."
+            )
+        if fallback_shipping_costs:
+            notes.append(
+                "Missing imported route data falls back to legacy route proxy per seller."
+            )
+    else:
+        notes.extend(
+            [
+                "Shipping proxy uses seller-country to buyer-country route costs when known.",
+                "Current route table: Germany -> Netherlands = 1.55 EUR, Netherlands -> Netherlands = 1.70 EUR, fallback = 1.00 EUR.",
+            ]
+        )
+        if route_book is None:
+            notes.append(
+                "Imported shipping data unavailable. Run `uv run cm-import-shipping` to enable route-method pricing."
+            )
     if filtered_sellers:
         notes.append(
             f"Filtered sellers excluded before solve: {', '.join(sorted(filtered_sellers))}"
