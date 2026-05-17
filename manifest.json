@@ -6,7 +6,7 @@
   "permissions": ["activeTab", "scripting", "tabs", "storage"],
   "host_permissions": [
     "https://www.cardmarket.com/*",
-    "https://3lgtnkh9xd.execute-api.eu-central-1.amazonaws.com/*",
+    "https://*.execute-api.eu-central-1.amazonaws.com/*",
     "http://127.0.0.1/*",
     "http://localhost/*"
   ],

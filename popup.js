@@ -14,6 +14,13 @@ const sellerDeliveryTimeFilterEl = document.getElementById('sellerDeliveryTimeFi
 const sellerTypeFilterEl = document.getElementById('sellerTypeFilter');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
 const selectedSellerCountriesEl = document.getElementById('selectedSellerCountries');
+const sellerSettingsBodyEl = document.getElementById('sellerSettingsBody');
+const sellerScrapeProgressEl = document.getElementById('sellerScrapeProgress');
+const sellerProgressLabelEl = document.getElementById('sellerProgressLabel');
+const sellerProgressCurrentEl = document.getElementById('sellerProgressCurrent');
+const sellerProgressPercentEl = document.getElementById('sellerProgressPercent');
+const sellerProgressDetailEl = document.getElementById('sellerProgressDetail');
+const sellerProgressBarEl = document.getElementById('sellerProgressBar');
 const copyPayloadButton = document.getElementById('copyPayload');
 const copyFrontendPayloadButton = document.getElementById('copyFrontendPayload');
 const wantListPreviewEl = document.getElementById('wantListPreview');
@@ -42,6 +49,10 @@ const sourceStepBadgeEl = document.getElementById('sourceStepBadge');
 const sellerStepBadgeEl = document.getElementById('sellerStepBadge');
 const optimizeStepBadgeEl = document.getElementById('optimizeStepBadge');
 const fillStepBadgeEl = document.getElementById('fillStepBadge');
+const optimizerSettingsBodyEl = document.getElementById('optimizerSettingsBody');
+const optimizerWaitingEl = document.getElementById('optimizerWaiting');
+const optimizerWaitingTextEl = document.getElementById('optimizerWaitingText');
+const optimizerWaitingDetailEl = document.getElementById('optimizerWaitingDetail');
 
 const urlParams = new URLSearchParams(window.location.search);
 const isDetached = urlParams.get('detached') === '1';
@@ -58,6 +69,7 @@ let isUiBusy = false;
 let selectedSellerCountries = [];
 let activeWorkflowStep = 'source';
 let workflowHistory = [];
+let activeStepActivity = null;
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
@@ -67,6 +79,9 @@ const REQUEST_JITTER_RATIO = 0.15;
 const RATE_PROBE_DELAYS_MS = [1500, 1000, 750, 500, 350, 300, 250, 200];
 const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
 const DEFAULT_OPTIMIZER_API_URL = window.APP_CONFIG?.optimizerApiUrl || 'http://127.0.0.1:8000/optimize';
+const LEGACY_OPTIMIZER_API_URLS = new Set([
+  'https://3lgtnkh9xd.execute-api.eu-central-1.amazonaws.com/optimize',
+]);
 const DEFAULT_OPTIMIZER_FIXTURE = 'small_wantslist';
 const WORKFLOW_STEPS = ['source', 'sellers', 'optimize', 'fill'];
 const WORKFLOW_META = {
@@ -245,6 +260,49 @@ function finishRun(message, tone = '') {
   setRunState({ active: false, message, tone });
 }
 
+function setStepActivity(activity = null) {
+  activeStepActivity = activity ? {
+    kind: activity.kind || '',
+    label: activity.label || '',
+    detail: activity.detail || '',
+    current: Number.isFinite(activity.current) ? activity.current : 0,
+    total: Number.isFinite(activity.total) ? activity.total : 0,
+    indeterminate: !!activity.indeterminate,
+  } : null;
+  renderStepActivity();
+}
+
+function renderStepActivity() {
+  const isSellerScrape = activeStepActivity?.kind === 'seller-scrape';
+  sellerSettingsBodyEl.hidden = isSellerScrape;
+  sellerScrapeProgressEl.hidden = !isSellerScrape;
+
+  if (isSellerScrape) {
+    const total = Math.max(0, activeStepActivity.total || 0);
+    const current = Math.min(total, Math.max(0, activeStepActivity.current || 0));
+    const isIndeterminate = !!activeStepActivity.indeterminate || total === 0;
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    sellerProgressLabelEl.textContent = activeStepActivity.label || 'Preparing seller scrape.';
+    sellerProgressCurrentEl.textContent = `${current} / ${total} items`;
+    sellerProgressPercentEl.textContent = isIndeterminate ? 'Working...' : `${percent}%`;
+    sellerProgressDetailEl.textContent = activeStepActivity.detail || 'Filters locked for this run.';
+    sellerProgressBarEl.classList.toggle('indeterminate', isIndeterminate);
+    sellerProgressBarEl.style.width = isIndeterminate ? '35%' : `${percent}%`;
+  } else {
+    sellerProgressBarEl.classList.remove('indeterminate');
+    sellerProgressBarEl.style.width = '0%';
+  }
+
+  const isOptimizerRequest = activeStepActivity?.kind === 'optimizer-request';
+  optimizerSettingsBodyEl.hidden = isOptimizerRequest;
+  optimizerWaitingEl.hidden = !isOptimizerRequest;
+
+  if (isOptimizerRequest) {
+    optimizerWaitingTextEl.textContent = activeStepActivity.label || 'Request sent. Waiting for reply.';
+    optimizerWaitingDetailEl.textContent = activeStepActivity.detail || 'Optimizer can take moment while it balances price against shipping.';
+  }
+}
+
 function setActiveResultTab(tabName) {
   resultTabButtons.forEach((button) => {
     const isActive = button.dataset.resultTab === tabName;
@@ -354,6 +412,8 @@ function renderWorkflow() {
   if (!canAccessWorkflowStep(activeWorkflowStep, state)) {
     activeWorkflowStep = getSuggestedWorkflowStep(state);
   }
+
+  renderStepActivity();
 
   workflowStepButtons.forEach((button) => {
     const stepName = button.dataset.workflowStep || 'source';
@@ -466,6 +526,9 @@ function sleep(ms) {
 
 function sanitizeOptimizerApiUrl(value) {
   const normalized = textOf(value);
+  if (LEGACY_OPTIMIZER_API_URLS.has(normalized)) {
+    return DEFAULT_OPTIMIZER_API_URL;
+  }
   return normalized || DEFAULT_OPTIMIZER_API_URL;
 }
 
@@ -1599,9 +1662,15 @@ async function handleOptimizeOrder() {
   optimizerApiUrlInput.value = endpoint;
   await saveSellerSettings();
 
-  startRun('Sending payload to optimizer API...');
+  startRun('Waiting for optimizer reply...');
   setBusy(true);
   try {
+    setStepActivity({
+      kind: 'optimizer-request',
+      label: 'Posting payload to optimizer API.',
+      detail: `Sending ${latestExtractPayload.items.length} items, ${latestExtractPayload.sellers.length} sellers, and ${latestExtractPayload.offers.length} offers to ${endpoint}.`,
+      indeterminate: true,
+    });
     appendStatus(`Posting optimizer payload to ${endpoint}.`);
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -1609,6 +1678,13 @@ async function handleOptimizeOrder() {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(latestExtractPayload),
+    });
+
+    setStepActivity({
+      kind: 'optimizer-request',
+      label: 'Optimizer request sent. Waiting for reply.',
+      detail: 'Solver is evaluating item price and shipping tradeoffs.',
+      indeterminate: true,
     });
 
     let responseBody = null;
@@ -1648,6 +1724,7 @@ async function handleOptimizeOrder() {
     appendStatus(error.message, 'bad');
     finishRun(error.message, 'bad');
   } finally {
+    setStepActivity(null);
     setBusy(false);
   }
 }
@@ -1907,9 +1984,25 @@ async function handleScrapeAllItems() {
       throw new Error('Extract want items first so the popup has products to scrape.');
     }
 
+    setStepActivity({
+      kind: 'seller-scrape',
+      label: 'Preparing seller scrape...',
+      detail: 'Validating extracted items and seller filters for this run.',
+      current: 0,
+      total: latestExtractedItems.length,
+    });
+
     const requestContext = await resolveSellerRequestContext(latestExtractedItems.find((item) => item?.productUrl) || latestExtractedItems[0]);
     const delayMs = sanitizeSellerDelay(sellerDelayInput.value);
     await ensureSellerScrapeNotCoolingDown();
+
+    setStepActivity({
+      kind: 'seller-scrape',
+      label: 'Seller scrape running.',
+      detail: `Using ${delayMs} ms pacing between seller requests.`,
+      current: 0,
+      total: latestExtractedItems.length,
+    });
 
     const startedAt = new Date().toISOString();
     const aggregateResults = [];
@@ -1926,6 +2019,13 @@ async function handleScrapeAllItems() {
       const itemLabel = item.productName || item.idProduct || `item ${index + 1}`;
 
       if (!item.idProduct) {
+        setStepActivity({
+          kind: 'seller-scrape',
+          label: `Skipping item ${index + 1} of ${latestExtractedItems.length}.`,
+          detail: `${itemLabel} has no idProduct, so no seller request can be made.`,
+          current: index + 1,
+          total: latestExtractedItems.length,
+        });
         skippedCount += 1;
         aggregateResults.push({
           item,
@@ -1936,6 +2036,13 @@ async function handleScrapeAllItems() {
         continue;
       }
 
+      setStepActivity({
+        kind: 'seller-scrape',
+        label: `Scraping item ${index + 1} of ${latestExtractedItems.length}.`,
+        detail: itemLabel,
+        current: index,
+        total: latestExtractedItems.length,
+      });
       appendStatus(`Scraping item ${index + 1}/${latestExtractedItems.length}: ${itemLabel}.`);
 
       let scrapeOutcome = null;
@@ -1947,6 +2054,13 @@ async function handleScrapeAllItems() {
           logPartitionRetry: false,
         });
       } catch (error) {
+        setStepActivity({
+          kind: 'seller-scrape',
+          label: `Seller scrape stopped on item ${index + 1} of ${latestExtractedItems.length}.`,
+          detail: error.message,
+          current: index + 1,
+          total: latestExtractedItems.length,
+        });
         failedCount += 1;
         stopReason = error.message;
         aggregateResults.push({
@@ -1960,6 +2074,13 @@ async function handleScrapeAllItems() {
 
       const { filteredResult } = scrapeOutcome;
       if (filteredResult.error) {
+        setStepActivity({
+          kind: 'seller-scrape',
+          label: `Item ${index + 1} finished with warning.`,
+          detail: filteredResult.error,
+          current: index + 1,
+          total: latestExtractedItems.length,
+        });
         failedCount += 1;
         aggregateResults.push({
           item,
@@ -2007,6 +2128,14 @@ async function handleScrapeAllItems() {
           ...seller,
           wantItemName: item.productName || item.idProduct || '',
         });
+      });
+
+      setStepActivity({
+        kind: 'seller-scrape',
+        label: `Finished item ${index + 1} of ${latestExtractedItems.length}.`,
+        detail: `${itemLabel}: ${filteredResult.totalSellers} seller rows kept.`,
+        current: index + 1,
+        total: latestExtractedItems.length,
       });
 
       appendStatus(
@@ -2074,6 +2203,13 @@ async function handleScrapeAllItems() {
       appendStatus(`Batch scrape stopped: ${stopReason}`, rateLimited ? 'bad' : '');
       finishRun(`Batch scrape stopped: ${stopReason}`, rateLimited ? 'bad' : '');
     } else {
+      setStepActivity({
+        kind: 'seller-scrape',
+        label: 'Seller scrape complete.',
+        detail: `Processed ${successCount + failedCount + skippedCount} of ${latestExtractedItems.length} items.`,
+        current: latestExtractedItems.length,
+        total: latestExtractedItems.length,
+      });
       const completionMessage = `Batch scrape completed for ${successCount} extracted item${successCount === 1 ? '' : 's'}.`;
       appendStatus(completionMessage, successCount ? 'good' : 'bad');
       finishRun(completionMessage, successCount ? 'good' : 'bad');
@@ -2082,6 +2218,7 @@ async function handleScrapeAllItems() {
     appendStatus(error.message, 'bad');
     finishRun(error.message, 'bad');
   } finally {
+    setStepActivity(null);
     setBusy(false);
   }
 }
@@ -2633,6 +2770,7 @@ syncSellerScrapeButton();
 syncFixtureButton();
 syncOptimizeButton();
 syncFillCartButton();
+renderStepActivity();
 renderWorkflow();
 scrapeAllItemsButton.textContent = 'Scrape sellers';
 appendStatus(isDetached

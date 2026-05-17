@@ -98,7 +98,12 @@ export class OptimizerServiceStack extends cdk.Stack {
           type: apigateway.JsonSchemaType.OBJECT,
           additionalProperties: false,
           properties: {
-            max_sellers: { type: apigateway.JsonSchemaType.INTEGER, minimum: 1 },
+            max_sellers: {
+              anyOf: [
+                { type: apigateway.JsonSchemaType.INTEGER, minimum: 1 },
+                { type: apigateway.JsonSchemaType.NULL },
+              ],
+            },
             allowed_countries: {
               type: apigateway.JsonSchemaType.ARRAY,
               maxItems: 100,

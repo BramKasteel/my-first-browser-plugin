@@ -243,6 +243,91 @@
       gap: 8px;
     }
 
+    .step-progress {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(245, 158, 11, 0.26);
+      background: linear-gradient(180deg, rgba(217, 119, 6, 0.14), rgba(17, 22, 27, 0.62));
+    }
+
+    .step-progress[hidden],
+    .config-block[hidden] {
+      display: none;
+    }
+
+    .step-progress-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .step-progress-spinner {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: var(--accent-strong);
+      box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.12);
+      animation: pulse 1.1s ease-in-out infinite;
+      flex: 0 0 auto;
+    }
+
+    .step-progress-title {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .step-progress-copy {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .progress-meter {
+      height: 8px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(17, 22, 27, 0.88);
+      border: 1px solid rgba(159, 176, 190, 0.12);
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent), #fbbf24);
+      transition: width 180ms ease;
+    }
+
+    .progress-fill.indeterminate {
+      width: 35%;
+      animation: progress-slide 1.1s ease-in-out infinite;
+    }
+
+    .step-progress-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .step-progress-meta strong {
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .step-progress-note {
+      margin: 0;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
     .panel-note {
       margin: 0;
       color: var(--muted);
@@ -764,6 +849,11 @@
       0%, 100% { transform: scale(1); opacity: 1; }
       50% { transform: scale(1.12); opacity: 0.72; }
     }
+
+    @keyframes progress-slide {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(320%); }
+    }
   </style>
 </head>
 <body>
@@ -838,83 +928,100 @@
           <h2 class="panel-title">Step 2: Get Seller Data</h2>
           <span id="sellerStepBadge" class="step-pill">Locked</span>
         </div>
-        <p class="panel-note">Scrape seller rows only after want items loaded. Filters apply before optimizer payload build.</p>
-        <div class="filter-grid">
-          <label class="config-label" for="sellerReputationFilter">
-            <span>Seller reputation</span>
-            <select id="sellerReputationFilter">
-              <option value="">Any</option>
-              <option value="Outstanding">Outstanding</option>
-              <option value="Very good">Very good</option>
-              <option value="Good">Good</option>
-              <option value="Average">Average</option>
-              <option value="Bad">Bad</option>
-            </select>
-          </label>
-          <label class="config-label" for="sellerDeliveryTimeFilter">
-            <span>Max delivery time</span>
-            <select id="sellerDeliveryTimeFilter">
-              <option value="">Any</option>
-              <option value="2">2 days</option>
-              <option value="3">3 days</option>
-              <option value="4">4 days</option>
-              <option value="5">5 days</option>
-              <option value="6">6 days</option>
-              <option value="7">7+ days</option>
-            </select>
-          </label>
-          <label class="config-label" for="sellerTypeFilter">
-            <span>Seller type</span>
-            <select id="sellerTypeFilter">
-              <option value="">Any</option>
-              <option value="Private">Private</option>
-              <option value="Professional">Professional</option>
-              <option value="Power Seller">Power Seller</option>
-            </select>
-          </label>
-        </div>
-        <div class="config-label">
-          <span>Choose seller countries to include when scraping.</span>
-          <div class="country-section">
-            <span class="country-section-label">Selected countries</span>
-            <div id="selectedSellerCountries" class="country-selected-list" role="group" aria-label="Selected seller countries"></div>
+        <div id="sellerSettingsBody" class="config-block">
+          <p class="panel-note">Scrape seller rows only after want items loaded. Filters apply before optimizer payload build.</p>
+          <div class="filter-grid">
+            <label class="config-label" for="sellerReputationFilter">
+              <span>Seller reputation</span>
+              <select id="sellerReputationFilter">
+                <option value="">Any</option>
+                <option value="Outstanding">Outstanding</option>
+                <option value="Very good">Very good</option>
+                <option value="Good">Good</option>
+                <option value="Average">Average</option>
+                <option value="Bad">Bad</option>
+              </select>
+            </label>
+            <label class="config-label" for="sellerDeliveryTimeFilter">
+              <span>Max delivery time</span>
+              <select id="sellerDeliveryTimeFilter">
+                <option value="">Any</option>
+                <option value="2">2 days</option>
+                <option value="3">3 days</option>
+                <option value="4">4 days</option>
+                <option value="5">5 days</option>
+                <option value="6">6 days</option>
+                <option value="7">7+ days</option>
+              </select>
+            </label>
+            <label class="config-label" for="sellerTypeFilter">
+              <span>Seller type</span>
+              <select id="sellerTypeFilter">
+                <option value="">Any</option>
+                <option value="Private">Private</option>
+                <option value="Professional">Professional</option>
+                <option value="Power Seller">Power Seller</option>
+              </select>
+            </label>
           </div>
-          <div class="country-section">
-            <span class="country-section-label">Other countries</span>
-            <div id="sellerLocationFilterList" class="country-list" role="group" aria-label="Other seller countries"></div>
+          <div class="config-label">
+            <span>Choose seller countries to include when scraping.</span>
+            <div class="country-section">
+              <span class="country-section-label">Selected countries</span>
+              <div id="selectedSellerCountries" class="country-selected-list" role="group" aria-label="Selected seller countries"></div>
+            </div>
+            <div class="country-section">
+              <span class="country-section-label">Other countries</span>
+              <div id="sellerLocationFilterList" class="country-list" role="group" aria-label="Other seller countries"></div>
+            </div>
           </div>
-        </div>
-        <div class="actions">
-          <button id="scrapeAllItems" class="secondary">Scrape sellers</button>
-        </div>
-        <details class="collapsible is-ready">
-          <summary>Advanced rate probe</summary>
-          <div class="collapsible-body">
-            <section class="step-highlight">
-              <div class="panel-header">
-                <h3 class="panel-title">Rate Probe</h3>
-                <button id="probeRateLimits" class="secondary mini-button">Run Safe Rate Probe</button>
-              </div>
-              <div class="config-row">
-                <label class="config-label" for="sellerDelayMs">
-                  <span>Seller request delay (ms)</span>
-                  <input id="sellerDelayMs" type="number" min="250" step="50" value="2000">
-                </label>
-                <label class="config-label" for="probeRequestCount">
-                  <span>Probe runs per delay stage</span>
-                  <input id="probeRequestCount" type="number" min="1" max="8" step="1" value="3">
-                </label>
-              </div>
-              <div class="config-row">
-                <label class="config-label" for="probePageBudget">
-                  <span>Probe page budget per run</span>
-                  <input id="probePageBudget" type="number" min="1" max="3" step="1" value="2">
-                </label>
-              </div>
-              <p class="subtle">Probe mode tests one item serially at staged delays, applies small random jitter, stops on first warning, and recommends conservative seller delay.</p>
-            </section>
+          <div class="actions">
+            <button id="scrapeAllItems" class="secondary">Scrape sellers</button>
           </div>
-        </details>
+          <details class="collapsible is-ready">
+            <summary>Advanced rate probe</summary>
+            <div class="collapsible-body">
+              <section class="step-highlight">
+                <div class="panel-header">
+                  <h3 class="panel-title">Rate Probe</h3>
+                  <button id="probeRateLimits" class="secondary mini-button">Run Safe Rate Probe</button>
+                </div>
+                <div class="config-row">
+                  <label class="config-label" for="sellerDelayMs">
+                    <span>Seller request delay (ms)</span>
+                    <input id="sellerDelayMs" type="number" min="250" step="50" value="2000">
+                  </label>
+                  <label class="config-label" for="probeRequestCount">
+                    <span>Probe runs per delay stage</span>
+                    <input id="probeRequestCount" type="number" min="1" max="8" step="1" value="3">
+                  </label>
+                </div>
+                <div class="config-row">
+                  <label class="config-label" for="probePageBudget">
+                    <span>Probe page budget per run</span>
+                    <input id="probePageBudget" type="number" min="1" max="3" step="1" value="2">
+                  </label>
+                </div>
+                <p class="subtle">Probe mode tests one item serially at staged delays, applies small random jitter, stops on first warning, and recommends conservative seller delay.</p>
+              </section>
+            </div>
+          </details>
+        </div>
+        <section id="sellerScrapeProgress" class="step-progress" aria-live="polite" hidden>
+          <div class="step-progress-head">
+            <span class="step-progress-spinner" aria-hidden="true"></span>
+            <h3 class="step-progress-title">Collecting seller data</h3>
+          </div>
+          <p id="sellerProgressLabel" class="step-progress-copy">Preparing scrape.</p>
+          <div class="progress-meter" aria-hidden="true">
+            <div id="sellerProgressBar" class="progress-fill"></div>
+          </div>
+          <div class="step-progress-meta">
+            <strong id="sellerProgressCurrent">0 / 0 items</strong>
+            <span id="sellerProgressPercent">0%</span>
+          </div>
+          <p id="sellerProgressDetail" class="step-progress-note">Filters locked for this run.</p>
+        </section>
       </section>
 
       <section class="panel config-grid step-panel" data-step-panel="optimize">
@@ -922,14 +1029,27 @@
           <h2 class="panel-title">Step 3: Optimize Order</h2>
           <span id="optimizeStepBadge" class="step-pill">Locked</span>
         </div>
-        <p class="panel-note">Once seller batch or fixture payload ready, send normalized request to optimizer API.</p>
-        <label class="config-label" for="optimizerApiUrl">
-          <span>Optimizer API URL</span>
-          <input id="optimizerApiUrl" type="text" value="http://127.0.0.1:8000/optimize" spellcheck="false" autocomplete="off">
-        </label>
-        <div class="actions">
-          <button id="optimizeOrder" class="secondary">Optimize order</button>
+        <div id="optimizerSettingsBody" class="config-block">
+          <p class="panel-note">Once seller batch or fixture payload ready, send normalized request to optimizer API.</p>
+          <label class="config-label" for="optimizerApiUrl">
+            <span>Optimizer API URL</span>
+            <input id="optimizerApiUrl" type="text" value="http://127.0.0.1:8000/optimize" spellcheck="false" autocomplete="off">
+          </label>
+          <div class="actions">
+            <button id="optimizeOrder" class="secondary">Optimize order</button>
+          </div>
         </div>
+        <section id="optimizerWaiting" class="step-progress" aria-live="polite" hidden>
+          <div class="step-progress-head">
+            <span class="step-progress-spinner" aria-hidden="true"></span>
+            <h3 class="step-progress-title">Waiting for optimizer</h3>
+          </div>
+          <p id="optimizerWaitingText" class="step-progress-copy">Request sent. Waiting for reply.</p>
+          <div class="progress-meter" aria-hidden="true">
+            <div class="progress-fill indeterminate"></div>
+          </div>
+          <p id="optimizerWaitingDetail" class="step-progress-note">Optimizer can take moment while it balances price against shipping.</p>
+        </section>
       </section>
 
       <section class="panel step-panel" data-step-panel="fill">
