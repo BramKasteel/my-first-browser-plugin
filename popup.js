@@ -24,6 +24,7 @@ const copyPayloadButton = document.getElementById('copyPayload');
 const copyFrontendPayloadButton = document.getElementById('copyFrontendPayload');
 const wantListPreviewEl = document.getElementById('wantListPreview');
 const wantListWarningEl = document.getElementById('wantListWarning');
+const wantListSelectEl = document.getElementById('wantListSelect');
 const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
 const cartItemsEl = document.getElementById('cartItems');
@@ -66,6 +67,8 @@ let latestExtractedItems = [];
 let isRunActive = false;
 let isUiBusy = false;
 let selectedSellerCountries = [];
+let availableWantLists = [];
+let selectedWantListId = '';
 let activeWorkflowStep = 'source';
 let workflowHistory = [];
 let activeStepActivity = null;
@@ -86,7 +89,7 @@ const WORKFLOW_STEPS = ['source', 'sellers', 'optimize', 'fill'];
 const WORKFLOW_META = {
   source: {
     title: 'Select Cards',
-    hint: 'Extract want list from active Cardmarket tab. Debug fixture path lives in debug tools.',
+    hint: 'Load selected want list from active Cardmarket tab. Debug fixture path lives in debug tools.',
   },
   sellers: {
     title: 'Get Seller Data',
@@ -171,6 +174,21 @@ function hasLoadedWantItems() {
   return latestExtractedItems.length > 0;
 }
 
+function hasSelectedWantList() {
+  return !!textOf(selectedWantListId);
+}
+
+function syncExtractButton(isBusy = false) {
+  const hasWantLists = availableWantLists.length > 0;
+  const hasSelection = hasSelectedWantList();
+  extractItemsButton.disabled = isBusy || !hasWantLists || !hasSelection;
+  extractItemsButton.classList.toggle('is-busy', isBusy);
+  extractItemsButton.classList.toggle('secondary', !hasWantLists || !hasSelection);
+  if (wantListSelectEl) {
+    wantListSelectEl.disabled = isBusy || !hasWantLists;
+  }
+}
+
 function syncSellerScrapeButton(isBusy = false) {
   const hasItems = hasLoadedWantItems();
   scrapeAllItemsButton.disabled = isBusy || !hasItems;
@@ -205,8 +223,6 @@ function syncFixtureButton(isBusy = false) {
 
 function setBusy(isBusy) {
   isUiBusy = isBusy;
-  extractItemsButton.disabled = isBusy;
-  extractItemsButton.classList.toggle('is-busy', isBusy);
   loadOptimizerFixtureButton.disabled = isBusy;
   loadOptimizerFixtureButton.classList.toggle('is-busy', isBusy);
   optimizeOrderButton.disabled = isBusy;
@@ -233,6 +249,7 @@ function setBusy(isBusy) {
   copyPayloadButton.classList.toggle('is-busy', isBusy);
   copyFrontendPayloadButton.disabled = isBusy;
   copyFrontendPayloadButton.classList.toggle('is-busy', isBusy);
+  syncExtractButton(isBusy);
   syncSellerScrapeButton(isBusy);
   syncFixtureButton(isBusy);
   syncOptimizeButton(isBusy);
@@ -369,6 +386,12 @@ function getWorkflowStepHint(stepName, state = getWorkflowState()) {
     if (state.hasExtractedWants) {
       return 'Want items loaded. Next step: scrape seller rows with current filters.';
     }
+    if (!availableWantLists.length) {
+      return 'Open any Cardmarket page. Popup auto-detects want lists from your logged-in session.';
+    }
+    if (!hasSelectedWantList()) {
+      return 'Choose want list in dropdown, then load cards into popup.';
+    }
   }
 
   if (stepName === 'sellers') {
@@ -461,6 +484,8 @@ function renderWorkflow() {
     setStepBadge(sourceStepBadgeEl, 'Fixture loaded', 'good');
   } else if (state.hasExtractedWants) {
     setStepBadge(sourceStepBadgeEl, `${latestExtractedItems.length} items ready`, 'good');
+  } else if (hasSelectedWantList()) {
+    setStepBadge(sourceStepBadgeEl, 'List selected', 'good');
   } else {
     setStepBadge(sourceStepBadgeEl, 'Waiting');
   }
@@ -578,6 +603,7 @@ async function loadSellerSettings() {
   sellerReputationFilterEl.value = normalizeSellerReputation(settings.sellerReputationFilter);
   sellerDeliveryTimeFilterEl.value = normalizeMaxShippingTime(settings.sellerDeliveryTimeFilter);
   sellerTypeFilterEl.value = normalizeSellerType(settings.sellerTypeFilter);
+  selectedWantListId = textOf(settings.selectedWantListId);
   const selectedCountries = getStoredSellerCountries(settings);
   setSelectedSellerCountries(selectedCountries.length ? selectedCountries : DEFAULT_SELLER_COUNTRIES);
 }
@@ -616,9 +642,79 @@ async function saveSellerSettings() {
       sellerReputationFilter: normalizeSellerReputation(sellerReputationFilterEl.value),
       sellerDeliveryTimeFilter: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
       sellerTypeFilter: normalizeSellerType(sellerTypeFilterEl.value),
+      selectedWantListId: textOf(selectedWantListId),
       sellerLocationFilter: getSelectedSellerCountries(),
     },
   });
+}
+
+function setAvailableWantLists(wantLists, preferredWantListId = '') {
+  availableWantLists = Array.isArray(wantLists)
+    ? wantLists
+      .map((entry) => ({
+        id: textOf(entry?.id),
+        name: textOf(entry?.name) || `Want list ${textOf(entry?.id)}`,
+      }))
+      .filter((entry) => entry.id)
+    : [];
+
+  const validIds = new Set(availableWantLists.map((entry) => entry.id));
+  const desiredId = textOf(preferredWantListId) || textOf(selectedWantListId);
+  if (desiredId && validIds.has(desiredId)) {
+    selectedWantListId = desiredId;
+  } else if (availableWantLists.length) {
+    selectedWantListId = availableWantLists[0].id;
+  } else {
+    selectedWantListId = '';
+  }
+
+  renderWantListOptions();
+  syncExtractButton(isUiBusy);
+  renderWorkflow();
+}
+
+function renderWantListOptions() {
+  if (!wantListSelectEl) return;
+
+  wantListSelectEl.replaceChildren();
+  if (!availableWantLists.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No want lists found';
+    wantListSelectEl.appendChild(option);
+    wantListSelectEl.value = '';
+    return;
+  }
+
+  availableWantLists.forEach((wantList) => {
+    const option = document.createElement('option');
+    option.value = wantList.id;
+    option.textContent = wantList.name;
+    wantListSelectEl.appendChild(option);
+  });
+  wantListSelectEl.value = selectedWantListId;
+}
+
+async function refreshWantLists({ quiet = false } = {}) {
+  try {
+    const tab = await ensureCardmarketTab();
+    const result = await executeInTab(tab.id, injectedFetchAvailableWantListsFromCardmarket);
+    setAvailableWantLists(result?.wantLists || [], textOf(result?.pageWantListId));
+    await saveSellerSettings();
+
+    if (!availableWantLists.length) {
+      renderWantListWarning('No Cardmarket want lists detected yet. Check login status and keep Cardmarket tab open.');
+      if (!quiet) appendStatus('No want lists found on Cardmarket account.', 'bad');
+      return;
+    }
+
+    renderWantListWarning('');
+    if (!quiet) appendStatus(`Loaded ${availableWantLists.length} want lists from Cardmarket.`, 'good');
+  } catch (error) {
+    setAvailableWantLists([], '');
+    renderWantListWarning(error.message);
+    if (!quiet) appendStatus(error.message, 'bad');
+  }
 }
 
 function getActiveSellerFilters(item) {
@@ -1888,52 +1984,58 @@ async function refreshWantListWarning() {
   try {
     const tab = await getTargetTab();
     if (!tab?.url) {
-      renderWantListWarning('Open Cardmarket want-list detail page like https://www.cardmarket.com/en/Magic/Wants/1234567 first.');
+      renderWantListWarning('Open any Cardmarket page first so plugin can load your want lists.');
       return;
     }
 
     if (!/https:\/\/www\.cardmarket\.com\//.test(tab.url)) {
-      renderWantListWarning('Current tab not Cardmarket. Open want-list detail page like https://www.cardmarket.com/en/Magic/Wants/1234567 first.');
+      renderWantListWarning('Current tab not Cardmarket. Open any Cardmarket page first.');
       return;
     }
 
-    const pageKind = wantsPageKind(new URL(tab.url).pathname || '');
-    if (pageKind !== 'wants-detail') {
-      if (hasLoadedWantItems()) {
-        renderWantListWarning('Want items already loaded. Seller scrape can keep running on any Cardmarket page. Return to want-list detail page only to extract again.');
-        return;
-      }
+    if (!availableWantLists.length) {
+      renderWantListWarning('Could not detect want lists yet. Keep Cardmarket tab open; popup retries automatically.');
+      return;
+    }
 
-      renderWantListWarning('This extension works on a specific Cardmarket want list page. Please open a URL like https://www.cardmarket.com/en/Magic/Wants/1234567 and then try again.');
+    if (!hasSelectedWantList() && !hasLoadedWantItems()) {
+      renderWantListWarning('Choose want list in dropdown, then load cards.');
       return;
     }
 
     renderWantListWarning('');
   } catch {
-    renderWantListWarning('Could not inspect current tab. Open Cardmarket want-list detail page and retry.');
+    renderWantListWarning('Could not inspect current tab. Open Cardmarket page and retry.');
   }
 }
 
 async function handleExtractItems() {
-  startRun('Extracting visible want items from current Cardmarket page...');
+  startRun('Loading selected Cardmarket want list...');
   setBusy(true);
   try {
     const tab = await ensureCardmarketTab();
-    const page = await executeInTab(tab.id, detectCurrentPage);
-    if (!page.supported) {
-      throw new Error('Open a Cardmarket want-list detail page before extracting items.');
+    if (!hasSelectedWantList()) {
+      throw new Error('Pick want list in dropdown before loading cards.');
     }
 
-    const result = await executeInTab(tab.id, extractVisibleWantItems, [{ previewLimit: 8 }]);
+    const selectedWantList = availableWantLists.find((entry) => entry.id === selectedWantListId) || null;
+
+    const result = await executeInTab(tab.id, injectedLoadWantListItemsById, [{
+      wantListId: selectedWantListId,
+      wantListName: selectedWantList?.name || '',
+      previewLimit: 8,
+    }]);
     renderSummary([
-      { label: 'Active page', value: page.pageKind, tone: 'good' },
-      { label: 'Want list id', value: result.wantListId || page.wantListId || '-' },
-      { label: 'Visible items', value: String(result.totalVisible), tone: result.totalVisible ? 'good' : 'bad' },
+      { label: 'Source', value: result.wantListName || 'Selected want list', tone: 'good' },
+      { label: 'Want list id', value: result.wantListId || '-' },
+      { label: 'Items loaded', value: String(result.totalVisible), tone: result.totalVisible ? 'good' : 'bad' },
+      { label: 'Pages loaded', value: String(result.pagesScanned || 0), tone: result.pagesScanned ? 'good' : 'bad' },
       { label: 'Preview returned', value: String(Math.min(result.items.length, 8)) },
       { label: 'Extractor source', value: result.debug.source || '-' },
-      { label: 'Desktop rows seen', value: String(result.debug.desktopRows || 0) },
+      { label: 'Rows parsed', value: String(result.debug.parsedItems || 0) },
     ]);
     latestExtractedItems = result.items;
+    syncExtractButton();
     syncSellerScrapeButton();
     renderItems(result.items.slice(0, 8), result.totalVisible);
     renderSellers([], 0, result.items[0]?.productName || 'the first item');
@@ -1941,10 +2043,11 @@ async function handleExtractItems() {
     renderPayload(null);
     setActiveWorkflowStep('sellers', { force: true });
     setActiveResultTab('overview');
-    appendStatus(`Extracted ${result.totalVisible} visible want items from the current page.`, result.totalVisible ? 'good' : 'bad');
-    finishRun(`Extracted ${result.totalVisible} visible want items.`, result.totalVisible ? 'good' : 'bad');
+    appendStatus(`Loaded ${result.totalVisible} want items from ${result.wantListName || `want list ${result.wantListId}`}.`, result.totalVisible ? 'good' : 'bad');
+    finishRun(`Loaded ${result.totalVisible} want items.`, result.totalVisible ? 'good' : 'bad');
   } catch (error) {
     latestExtractedItems = [];
+    syncExtractButton();
     syncSellerScrapeButton();
     renderWorkflow();
     appendStatus(error.message, 'bad');
@@ -2742,6 +2845,15 @@ probeRequestCountInput.addEventListener('change', saveSellerSettings);
 probePageBudgetInput.addEventListener('change', saveSellerSettings);
 optimizerFixtureSelectEl.addEventListener('change', saveSellerSettings);
 optimizerApiUrlInput.addEventListener('change', saveSellerSettings);
+wantListSelectEl?.addEventListener('change', () => {
+  selectedWantListId = textOf(wantListSelectEl.value);
+  saveSellerSettings();
+  syncExtractButton();
+  renderWorkflow();
+  refreshWantListWarning().catch(() => {
+    renderWantListWarning('Could not inspect current tab. Open Cardmarket page and retry.');
+  });
+});
 sellerReputationFilterEl.addEventListener('change', saveSellerSettings);
 sellerDeliveryTimeFilterEl.addEventListener('change', saveSellerSettings);
 sellerTypeFilterEl.addEventListener('change', saveSellerSettings);
@@ -2767,14 +2879,15 @@ selectedSellerCountriesEl.addEventListener('click', (event) => {
   saveSellerSettings();
 });
 window.addEventListener('focus', () => {
+  refreshWantLists({ quiet: true }).catch(() => {});
   refreshWantListWarning().catch(() => {
-    renderWantListWarning('Could not inspect current tab. Open Cardmarket want-list detail page and retry.');
+    renderWantListWarning('Could not inspect current tab. Open Cardmarket page and retry.');
   });
 });
 
 renderSummary([
-  { label: 'Status', value: 'Ready for page detection' },
-  { label: 'Current scope', value: 'Extract on want-list page, scrape on any Cardmarket page' },
+  { label: 'Status', value: 'Ready for want-list loading' },
+  { label: 'Current scope', value: 'Load selected want list, scrape on any Cardmarket page' },
 ]);
 finishRun('Idle. Start extract, scrape, or probe.');
 renderItems([], 0);
@@ -2783,6 +2896,8 @@ renderSellers([], 0);
 renderPayload(null);
 renderFrontendPayload(null);
 renderSellerCountryFilterList();
+renderWantListOptions();
+syncExtractButton();
 syncSellerScrapeButton();
 syncFixtureButton();
 syncOptimizeButton();
@@ -2794,14 +2909,18 @@ appendStatus(isDetached
   ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'
   : 'Popup loaded. Extension opens batch scrape workspace by default for long runs.');
 
-Promise.allSettled([
-  loadSellerSettings(),
-  refreshWantListWarning(),
-]).then((results) => {
-  if (results[0].status === 'rejected') {
+loadSellerSettings()
+  .then(() => refreshWantLists({ quiet: true }))
+  .then(() => refreshWantListWarning())
+  .catch((error) => {
+    const message = error?.message || '';
+    if (/want list|wants overview|cardmarket/i.test(message)) {
+      appendStatus('Could not load Cardmarket want lists. Open Cardmarket tab; popup retries automatically.', 'bad');
+      return;
+    }
     appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
-  }
-
+  })
+  .finally(() => {
   if (isDetached && autoStartMode === 'scrapeAll') {
     loadDetachedBatchState().then((items) => {
       latestExtractedItems = items;
@@ -2863,14 +2982,616 @@ function detectCurrentPage() {
   }
 }
 
-function extractVisibleWantItems({ previewLimit }) {
-  const textOf = (value) => String(value || '').trim().replace(/\s+/g, ' ');
-  const wantListId = extractWantListId(location.href);
-  const languagePattern = /^(Deutsch|Englisch|Französisch|Italienisch|Spanisch|Portugiesisch|Japanisch|Koreanisch|Chinesisch|Russisch|S-Chinesisch|T-Chinesisch|English|German|French|Italian|Spanish|Portuguese|Japanese|Korean|Chinese|Russian)$/;
-  const desktopRows = [...document.querySelectorAll('#WantsListTable table.d-lg-table tbody tr')];
-  const mobileRows = [...document.querySelectorAll('#MobileWantsList .accordion-item')];
-  const source = desktopRows.length ? 'desktop-table' : 'mobile-accordion';
+function fetchAvailableWantListsFromCardmarket() {
+  return fetchAvailableWantListsDocument();
+}
 
+function injectedFetchAvailableWantListsFromCardmarket() {
+  const textOf = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+  const extractWantListId = (href) => {
+    const patterns = [
+      /\/Wants\/(?:EditWantsList\/|Show\/)?(\d+)(?:[/?#]|$)/i,
+      /[?&]idWantsList=(\d+)/i,
+    ];
+    for (const pattern of patterns) {
+      const match = String(href || '').match(pattern);
+      if (match) return match[1];
+    }
+    return '';
+  };
+
+  const results = [];
+  const seenIds = new Set();
+  document.querySelectorAll('a[href*="/Wants/"]').forEach((link) => {
+    const href = link.getAttribute('href') || '';
+    const id = extractWantListId(href);
+    if (!id || seenIds.has(id)) return;
+    seenIds.add(id);
+
+    const card = link.closest('.card, .article-teaser-portrait, .d-flex');
+    const heading = card?.querySelector('.card-title, h3, h4');
+    const name = textOf(heading?.textContent) || textOf(link.textContent) || `Want list ${id}`;
+    results.push({ id, name });
+  });
+
+  const pageWantListId = extractWantListId(location.href);
+  return {
+    pageWantListId,
+    wantLists: results,
+  };
+}
+
+function extractVisibleWantItems({ previewLimit }) {
+  return parseWantItemsFromDocument(document, location.href, { previewLimit });
+}
+
+async function injectedLoadWantListItemsById({ wantListId, wantListName, previewLimit }) {
+  const textOf = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const extractWantListId = (href) => {
+    const patterns = [
+      /\/Wants\/(?:EditWantsList\/|Show\/)?(\d+)(?:[/?#]|$)/i,
+      /[?&]idWantsList=(\d+)/i,
+    ];
+    for (const pattern of patterns) {
+      const match = String(href || '').match(pattern);
+      if (match) return match[1];
+    }
+    return '';
+  };
+  const parseContext = (urlValue) => {
+    const parsed = new URL(urlValue, location.origin);
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+    return {
+      lang: pathParts[0] || 'en',
+      game: pathParts[1] || 'Magic',
+    };
+  };
+  const { lang, game } = parseContext(location.href);
+  const normalizedWantListId = textOf(wantListId);
+  if (!normalizedWantListId) {
+    throw new Error('Missing want list id. Wait for auto-detection, then choose one again.');
+  }
+
+  const aggregatedItems = [];
+  const seenKeys = new Set();
+  let pagesScanned = 0;
+  let parserSource = 'fetched-pages';
+  let previousPageSignature = '';
+
+  for (let page = 1; page <= 100; page += 1) {
+    const urlCandidates = [
+      `/${lang}/${game}/Wants/${normalizedWantListId}?site=${page}`,
+      `/${lang}/${game}/Wants/${normalizedWantListId}/${page}`,
+      `/${lang}/${game}/Wants/EditWantsList/${normalizedWantListId}?site=${page}`,
+      `/${lang}/${game}/Wants/Show/${normalizedWantListId}?site=${page}`,
+      `/${lang}/${game}/Wants?idWantsList=${normalizedWantListId}&site=${page}`,
+    ];
+
+    let html = '';
+    let responseUrl = '';
+    for (const candidate of urlCandidates) {
+      const response = await fetch(candidate, { credentials: 'include' });
+      if (response.status === 429) {
+        await sleep(10000);
+        continue;
+      }
+      if (!response.ok) continue;
+
+      const candidateHtml = await response.text();
+      if (!/checkWantsRow|data-id-want|MobileWantsList|WantsListTable|want-name|item-body-wrapper|article-row|productInfo/i.test(candidateHtml)) continue;
+      html = candidateHtml;
+      responseUrl = candidate;
+      break;
+    }
+
+    if (!html) break;
+
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const parsed = parseWantItemsFromDocumentLocal(doc, `${location.origin}${responseUrl}`);
+    const pageSignature = parsed.items.map((item) => buildWantListItemKeyLocal(item)).join('|');
+    parserSource = parsed.debug.source || parserSource;
+    if (!parsed.items.length || (page > 1 && pageSignature && pageSignature === previousPageSignature)) {
+      break;
+    }
+    previousPageSignature = pageSignature;
+    pagesScanned += 1;
+
+    parsed.items.forEach((item) => {
+      const key = buildWantListItemKeyLocal(item);
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
+      aggregatedItems.push(item);
+    });
+
+    const hasNextPage = !!doc.querySelector(`a[href*="site=${page + 1}"], a[href$="/${page + 1}"], .pagination a[rel="next"]`);
+    if (!hasNextPage) break;
+  }
+
+  return {
+    kind: 'selected-want-list',
+    wantListId: normalizedWantListId,
+    wantListName: textOf(wantListName) || `Want list ${normalizedWantListId}`,
+    totalVisible: aggregatedItems.length,
+    pagesScanned,
+    items: aggregatedItems,
+    debug: {
+      source: parserSource,
+      parsedItems: aggregatedItems.length,
+      previewLimit: previewLimit || 8,
+    },
+  };
+
+  function buildWantListItemKeyLocal(item) {
+    if (textOf(item?.idWant)) return `want-${textOf(item.idWant)}`;
+    if (textOf(item?.idProduct)) return `product-${textOf(item.idProduct)}-${textOf(item?.quantity)}`;
+    return `name-${textOf(item?.productName)}-${textOf(item?.quantity)}`;
+  }
+
+  function parseWantItemsFromDocumentLocal(doc, href) {
+    const wantListIdFromHref = extractWantListId(href);
+    const languagePattern = /^(Deutsch|Englisch|Französisch|Italienisch|Spanisch|Portugiesisch|Japanisch|Koreanisch|Chinesisch|Russisch|S-Chinesisch|T-Chinesisch|English|German|French|Italian|Spanish|Portuguese|Japanese|Korean|Chinese|Russian)$/;
+    const desktopRows = [...doc.querySelectorAll('#WantsListTable table.d-lg-table tbody tr')];
+    const mobileRows = [...doc.querySelectorAll('#MobileWantsList .accordion-item')];
+    const fallbackRows = collectCheckboxRows();
+    const source = desktopRows.length
+      ? 'desktop-table'
+      : mobileRows.length
+        ? 'mobile-accordion'
+        : 'checkbox-walkup';
+    const parsedItems = (
+      desktopRows.length
+        ? desktopRows.map(parseDesktopRow)
+        : mobileRows.length
+          ? mobileRows.map(parseMobileRow)
+          : fallbackRows.map(parseGenericRow)
+    )
+      .filter((item) => item && (item.idWant || item.productName));
+
+    return {
+      wantListId: wantListIdFromHref,
+      items: parsedItems,
+      debug: {
+        source,
+        desktopRows: desktopRows.length,
+        mobileRows: mobileRows.length,
+        fallbackRows: fallbackRows.length,
+        parsedItems: parsedItems.length,
+      },
+    };
+
+    function collectCheckboxRows() {
+      const checkboxes = [...doc.querySelectorAll('input[name="checkWantsRow[]"][data-id-want], input[name="mobileCheckWant"][data-id-want], input[data-id-want]')];
+      const rowSet = new Set();
+      const rows = [];
+
+      checkboxes.forEach((checkbox) => {
+        let container = checkbox.parentElement;
+        let depth = 0;
+        while (container && depth < 8) {
+          const productLink = container.querySelector('a[href*="/Products/Singles/"], a[href*="/Products/"]');
+          if (productLink) break;
+          container = container.parentElement;
+          depth += 1;
+        }
+        if (!container || rowSet.has(container)) return;
+        rowSet.add(container);
+        rows.push(container);
+      });
+
+      return rows;
+    }
+
+    function parseDesktopRow(row) {
+      const checkbox = row.querySelector('input[name="checkWantsRow[]"][data-id-want], input[data-id-want]');
+      const nameLink = row.querySelector('td.name a[href], a[href*="/Products/"]');
+      const preview = row.querySelector('td.preview [data-bs-title], td.preview [data-bs-original-title], td.preview [title], [data-bs-title], [title]');
+      const conditionBadge = row.querySelector('td.condition .article-condition .badge, td.condition .badge');
+      const priceCell = row.querySelector('td.buyPrice');
+      const quantityCell = row.querySelector('td.amount');
+      const previewTitle = preview?.getAttribute('data-bs-title') || preview?.getAttribute('data-bs-original-title') || preview?.getAttribute('title') || '';
+      const rowText = row.textContent || '';
+      const rawHref = nameLink?.getAttribute('href') || '';
+      const productUrl = normalizeProductUrl(rawHref);
+      const productName = textOf(nameLink?.textContent)
+        || decodeHtmlAttribute(previewTitle.match(/alt=&quot;([^&]+(?:&[^;]+;)*)&quot;/i)?.[1] || '')
+        || textOf(row.querySelector('td.name')?.textContent);
+      const productIdMatch = previewTitle.match(/product-images\.s3\.cardmarket\.com\/\d+\/[^/]+\/(\d+)\//i)
+        || rawHref.match(/\/(\d+)(?:[/?#]|$)/);
+      const priceMatch = textOf(priceCell?.textContent).match(/(\d{1,3}(?:[.,]\d{3})*[,.]\d{2})/);
+
+      return {
+        wantListId: wantListIdFromHref,
+        idWant: checkbox?.getAttribute('data-id-want') || '',
+        idProduct: productIdMatch?.[1] || '',
+        productName,
+        productUrl,
+        quantity: textOf(quantityCell?.getAttribute('data-amount')) || textOf(quantityCell?.textContent) || '1',
+        languages: extractSelectedLanguages(row),
+        minCondition: extractSelectedCondition(row) || textOf(conditionBadge?.textContent),
+        expansions: extractSelectedExpansions(row.querySelector('td.expansion')),
+        maxPrice: priceMatch?.[1] || '',
+        isFoil: extractDesktopTernaryPreference(row, 7, 'foil') ?? extractBooleanPreference(row, 'foil', /\bFoil\b/i, rowText),
+        isReverseHolo: extractBooleanPreference(row, 'reverse', /Reverse\s*Holo/i, rowText),
+      };
+    }
+
+    function parseMobileRow(row) {
+      const checkbox = row.querySelector('input[name="mobileCheckWant"][data-id-want], input[data-id-want]');
+      const nameNode = row.querySelector('.want-name');
+      const nameLink = row.querySelector('.item-body-wrapper a[href*="/Cards/"], a[href*="/Products/"]');
+      const preview = row.querySelector('[data-bs-title], [data-bs-original-title], [title]');
+      const previewTitle = preview?.getAttribute('data-bs-title') || preview?.getAttribute('data-bs-original-title') || preview?.getAttribute('title') || '';
+      const conditionBadge = row.querySelector('.article-condition .badge, .badge');
+      const rawHref = nameLink?.getAttribute('href') || '';
+      const productUrl = normalizeProductUrl(rawHref);
+      const productIdMatch = previewTitle.match(/product-images\.s3\.cardmarket\.com\/\d+\/[^/]+\/(\d+)\//i)
+        || rawHref.match(/\/(\d+)(?:[/?#]|$)/);
+      const rowText = row.textContent || '';
+
+      return {
+        wantListId: wantListIdFromHref,
+        idWant: checkbox?.getAttribute('data-id-want') || '',
+        idProduct: productIdMatch?.[1] || '',
+        productName: textOf(nameNode?.textContent) || textOf(nameLink?.textContent),
+        productUrl,
+        quantity: textOf(row.querySelector('.want-amount')?.textContent).replace(/\s+/g, '') || '1',
+        languages: extractSelectedLanguages(row),
+        minCondition: extractSelectedCondition(row) || textOf(conditionBadge?.textContent) || textOf(getMobileFieldValueNode(row, 'Min. Condition')?.textContent),
+        expansions: extractSelectedExpansions(getMobileFieldValueNode(row, 'Expansion')),
+        maxPrice: '',
+        isFoil: extractMobileTernaryPreference(row, 'Foil?') ?? extractBooleanPreference(row, 'foil', /\bFoil\b/i, rowText),
+        isReverseHolo: extractBooleanPreference(row, 'reverse', /Reverse\s*Holo/i, rowText),
+      };
+    }
+
+    function parseGenericRow(row) {
+      const checkbox = row.querySelector('input[data-id-want]');
+      const nameLink = row.querySelector('a[href*="/Products/Singles/"], a[href*="/Products/"]');
+      const preview = row.querySelector('[data-bs-title], [data-bs-original-title], [title]');
+      const previewTitle = preview?.getAttribute('data-bs-title') || preview?.getAttribute('data-bs-original-title') || preview?.getAttribute('title') || '';
+      const conditionBadge = row.querySelector('.article-condition .badge, .badge, [class*="condition"] .badge');
+      const rawHref = nameLink?.getAttribute('href') || '';
+      const productUrl = normalizeProductUrl(rawHref);
+      const productIdMatch = previewTitle.match(/product-images\.s3\.cardmarket\.com\/\d+\/[^/]+\/(\d+)\//i)
+        || rawHref.match(/\/(\d+)(?:[/?#]|$)/);
+      const rowText = row.textContent || '';
+      const productName = textOf(nameLink?.textContent)
+        || decodeHtmlAttribute(previewTitle.match(/alt=&quot;([^&]+(?:&[^;]+;)*)&quot;/i)?.[1] || '')
+        || textOf(row.querySelector('.want-name, .product-name, .name')?.textContent);
+      const priceInput = row.querySelector('input[name*="rice"], input[name*="Price"]');
+      const quantityInput = row.querySelector('input[name*="mount"], input[name*="uantity"], input[type="number"]');
+      const priceMatch = textOf(priceInput?.value || rowText).match(/(\d{1,3}(?:[.,]\d{3})*[,.]\d{2})/);
+
+      return {
+        wantListId: wantListIdFromHref,
+        idWant: checkbox?.getAttribute('data-id-want') || '',
+        idProduct: productIdMatch?.[1] || '',
+        productName,
+        productUrl,
+        quantity: textOf(quantityInput?.value || row.querySelector('.want-amount')?.textContent).replace(/\s+/g, '') || '1',
+        languages: extractSelectedLanguages(row),
+        minCondition: extractSelectedCondition(row) || textOf(conditionBadge?.textContent),
+        expansions: extractSelectedExpansions(row),
+        maxPrice: priceMatch?.[1] || '',
+        isFoil: extractBooleanPreference(row, 'foil', /\bFoil\b/i, rowText),
+        isReverseHolo: extractBooleanPreference(row, 'reverse', /Reverse\s*Holo/i, rowText),
+      };
+    }
+
+    function normalizeProductUrl(rawHref) {
+      if (!rawHref) return '';
+      const absolute = rawHref.startsWith('http') ? rawHref : `https://www.cardmarket.com${rawHref}`;
+      const url = new URL(absolute);
+      url.search = '';
+      url.hash = '';
+      return url.toString();
+    }
+
+    function extractSelectedLanguages(container) {
+      if (!container) return [];
+      const optionLabels = extractSelectedOptionLabels(container, /language/i);
+      const iconLabels = [...container.querySelectorAll('[aria-label], [data-bs-original-title], [data-original-title], [title]')]
+        .map((node) => textOf(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || ''))
+        .filter((label) => languagePattern.test(label));
+      const hiddenLabels = [...container.querySelectorAll('.visually-hidden')]
+        .map((node) => textOf(node.textContent))
+        .filter((label) => languagePattern.test(label));
+      return [...new Set([...optionLabels, ...iconLabels, ...hiddenLabels].filter(Boolean))];
+    }
+
+    function extractSelectedExpansions(container) {
+      if (!container) return [];
+      const labels = extractSelectedOptionLabels(container, /expansion|set/i);
+      const tooltipLabels = [...container.querySelectorAll('[aria-label], [data-bs-original-title], [data-original-title], [title]')]
+        .map((node) => textOf(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || ''));
+      const hiddenLabels = [...container.querySelectorAll('.visually-hidden')]
+        .map((node) => textOf(node.textContent));
+      return [...new Set([...labels, ...tooltipLabels, ...hiddenLabels].filter((label) => label && !/^any$/i.test(label)))];
+    }
+
+    function extractSelectedCondition(container) {
+      return extractSelectedOptionLabels(container, /condition/i)[0] || '';
+    }
+
+    function extractDesktopTernaryPreference(row, cellIndex, nameHint) {
+      const cell = row.children?.[cellIndex];
+      return extractRenderedTernaryPreference(cell, nameHint);
+    }
+
+    function extractMobileTernaryPreference(row, labelText) {
+      const cell = getMobileFieldValueNode(row, labelText);
+      return extractRenderedTernaryPreference(cell, labelText);
+    }
+
+    function extractRenderedTernaryPreference(container, nameHint) {
+      if (!container) return null;
+      const labeledNode = container.querySelector('[aria-label], [data-bs-original-title], [data-original-title], [title]');
+      const value = [
+        textOf(container.textContent),
+        textOf(labeledNode?.getAttribute('aria-label') || labeledNode?.getAttribute('data-bs-original-title') || labeledNode?.getAttribute('data-original-title') || labeledNode?.getAttribute('title')),
+      ].find((entry) => entry && !new RegExp(nameHint, 'i').test(entry)) || '';
+      if (/^(y|yes|true)$/i.test(value)) return true;
+      if (/^(n|no|false)$/i.test(value)) return false;
+      if (/^any$/i.test(value) || value === '') return false;
+      return null;
+    }
+
+    function getMobileFieldValueNode(row, labelText) {
+      const term = [...row.querySelectorAll('dt')].find((node) => textOf(node.textContent) === labelText);
+      return term?.nextElementSibling || null;
+    }
+
+    function extractSelectedOptionLabels(container, namePattern) {
+      const labels = [];
+      container.querySelectorAll('select').forEach((select) => {
+        const name = select.getAttribute('name') || select.getAttribute('id') || '';
+        if (!namePattern.test(name)) return;
+        [...select.selectedOptions].forEach((option) => {
+          const label = textOf(option.textContent);
+          if (label) labels.push(label);
+        });
+      });
+      container.querySelectorAll('input[type="checkbox"], input[type="radio"]').forEach((input) => {
+        const name = input.getAttribute('name') || '';
+        if (!namePattern.test(name) || !input.checked) return;
+        const label = findInputLabel(container, input);
+        if (label) labels.push(label);
+      });
+      return [...new Set(labels.filter(Boolean))];
+    }
+
+    function extractBooleanPreference(container, nameHint, textPattern, sourceText) {
+      const inputs = [...container.querySelectorAll('input[type="checkbox"], input[type="radio"]')]
+        .filter((input) => new RegExp(nameHint, 'i').test(input.getAttribute('name') || input.getAttribute('id') || ''));
+      if (inputs.length) {
+        const checked = inputs.find((input) => input.checked);
+        if (checked) {
+          const checkedValue = textOf(checked.value);
+          if (/^(1|y|yes|true|foil)$/i.test(checkedValue)) return true;
+          if (/^(0|n|no|false|any)$/i.test(checkedValue)) return false;
+        }
+      }
+      return textPattern.test(sourceText);
+    }
+
+    function findInputLabel(container, input) {
+      const id = input.getAttribute('id');
+      if (id) {
+        const label = container.querySelector(`label[for="${CSS.escape(id)}"]`);
+        if (label) return textOf(label.textContent);
+      }
+      return textOf(input.closest('label')?.textContent || input.parentElement?.querySelector('label')?.textContent);
+    }
+
+    function decodeHtmlAttribute(value) {
+      if (!value) return '';
+      const el = doc.createElement('textarea');
+      el.innerHTML = value;
+      return textOf(el.value);
+    }
+  }
+}
+
+async function loadWantListItemsById({ wantListId, previewLimit }) {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const runtimeContext = parseCardmarketRequestContext(location.href) || {
+    origin: 'https://www.cardmarket.com',
+    lang: 'en',
+    game: 'Magic',
+  };
+  const { lang, game } = runtimeContext;
+  const available = await fetchAvailableWantListsDocument();
+  const normalizedWantListId = textOf(wantListId);
+  if (!normalizedWantListId) {
+    throw new Error('Missing want list id. Wait for auto-detection, then choose one again.');
+  }
+
+  const selectedWantList = (available.wantLists || []).find((entry) => entry.id === normalizedWantListId);
+  if (!selectedWantList) {
+    throw new Error(`Want list ${normalizedWantListId} not found on Cardmarket overview. Wait for auto-detection and retry.`);
+  }
+
+  const aggregatedItems = [];
+  const seenKeys = new Set();
+  let pagesScanned = 0;
+  let parserSource = 'fetched-pages';
+  let previousPageSignature = '';
+
+  for (let page = 1; page <= 100; page += 1) {
+    const urlCandidates = [
+      `/${lang}/${game}/Wants/${normalizedWantListId}?site=${page}`,
+      `/${lang}/${game}/Wants/${normalizedWantListId}/${page}`,
+      `/${lang}/${game}/Wants/EditWantsList/${normalizedWantListId}?site=${page}`,
+      `/${lang}/${game}/Wants/Show/${normalizedWantListId}?site=${page}`,
+      `/${lang}/${game}/Wants?idWantsList=${normalizedWantListId}&site=${page}`,
+    ];
+
+    let html = '';
+    let responseUrl = '';
+
+    for (const candidate of urlCandidates) {
+      const response = await fetch(candidate, { credentials: 'include' });
+      if (response.status === 429) {
+        await sleep(10000);
+        continue;
+      }
+      if (!response.ok) continue;
+
+      const text = await response.text();
+      if (!/Wants|wantRow|checkWantsRow|MobileWantsList|WantsListTable/i.test(text)) {
+        continue;
+      }
+
+      html = text;
+      responseUrl = candidate;
+      break;
+    }
+
+    if (!html) break;
+
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const parsed = parseWantItemsFromDocument(doc, `${location.origin}${responseUrl}`, { previewLimit });
+    const pageSignature = parsed.items.map((item) => buildWantListItemKey(item)).join('|');
+    parserSource = parsed.debug.source || parserSource;
+    if (!parsed.items.length || (page > 1 && pageSignature && pageSignature === previousPageSignature)) {
+      break;
+    }
+    previousPageSignature = pageSignature;
+    pagesScanned += 1;
+
+    parsed.items.forEach((item) => {
+      const key = buildWantListItemKey(item);
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
+      aggregatedItems.push(item);
+    });
+
+    const hasNextPage = !!doc.querySelector(`a[href*="site=${page + 1}"], a[href$="/${page + 1}"], .pagination a[rel="next"]`);
+    if (!hasNextPage) break;
+  }
+
+  return {
+    kind: 'selected-want-list',
+    wantListId: normalizedWantListId,
+    wantListName: selectedWantList.name,
+    totalVisible: aggregatedItems.length,
+    pagesScanned,
+    items: aggregatedItems,
+    debug: {
+      source: parserSource,
+      parsedItems: aggregatedItems.length,
+      previewLimit: previewLimit || 8,
+    },
+  };
+}
+
+async function fetchAvailableWantListsDocument() {
+  const runtimeContext = parseCardmarketRequestContext(location.href) || {
+    origin: 'https://www.cardmarket.com',
+    lang: 'en',
+    game: 'Magic',
+  };
+  const { lang, game } = runtimeContext;
+  const overviewResponse = await fetch(`/${lang}/${game}/Wants`, { credentials: 'include' });
+  if (!overviewResponse.ok) {
+    throw new Error(`Could not load Cardmarket wants overview. HTTP ${overviewResponse.status}.`);
+  }
+
+  const overviewHtml = await overviewResponse.text();
+  const overviewDoc = new DOMParser().parseFromString(overviewHtml, 'text/html');
+  const wantLists = [];
+  const seenIds = new Set();
+  const pageWantListId = extractWantListIdFromHref(location.href);
+
+  overviewDoc.querySelectorAll('a[href], button[onclick], [data-url], [data-href], option[value], [data-id-wants-list], [data-wants-list-id]').forEach((node) => {
+    const candidates = [
+      node.getAttribute('href') || '',
+      node.getAttribute('onclick') || '',
+      node.getAttribute('data-url') || '',
+      node.getAttribute('data-href') || '',
+      node.getAttribute('value') || '',
+      node.getAttribute('data-id-wants-list') || '',
+      node.getAttribute('data-wants-list-id') || '',
+    ];
+    const id = candidates.map((value) => extractWantListIdFromHref(value)).find(Boolean);
+    if (!id || seenIds.has(id)) return;
+    seenIds.add(id);
+    wantLists.push({
+      id,
+      name: extractWantListName(node, id),
+    });
+  });
+
+  if (!wantLists.length) {
+    const regex = /(?:\/Wants\/(?:EditWantsList\/|Show\/)?|[?&]idWantsList=)(\d+)/gi;
+    let match;
+    while ((match = regex.exec(overviewHtml)) !== null) {
+      const id = match[1];
+      if (!id || seenIds.has(id)) continue;
+      seenIds.add(id);
+      wantLists.push({ id, name: `Want list ${id}` });
+    }
+  }
+
+  if (pageWantListId && !seenIds.has(pageWantListId)) {
+    seenIds.add(pageWantListId);
+    wantLists.unshift({
+      id: pageWantListId,
+      name: extractCurrentWantListName() || `Want list ${pageWantListId}`,
+    });
+  }
+
+  return {
+    pageWantListId,
+    wantLists,
+  };
+
+  function extractWantListName(node, id) {
+    const ownText = textOf(node.textContent);
+    if (ownText && !new RegExp(`^${id}$`).test(ownText)) return ownText;
+
+    const container = node.closest('tr, li, article, .row, .item, .accordion-item, .panel, .card, .list-group-item');
+    const containerText = textOf(container?.textContent || '');
+    if (containerText) {
+      const cleaned = containerText.split(id).join(' ').replace(/\s+/g, ' ').trim();
+      if (cleaned) return cleaned.slice(0, 120);
+    }
+
+    const labelled = textOf(
+      node.getAttribute('aria-label')
+      || node.getAttribute('title')
+      || node.getAttribute('data-bs-title')
+      || node.getAttribute('data-original-title')
+    );
+    return labelled || `Want list ${id}`;
+  }
+
+  function extractCurrentWantListName() {
+    const heading = document.querySelector('h1, h2, .page-title, .headline');
+    const text = textOf(heading?.textContent || '');
+    return text && !/^wants$/i.test(text) ? text : '';
+  }
+
+  function extractWantListIdFromHref(href) {
+    const patterns = [
+      /\/Wants\/(?:EditWantsList\/|Show\/)?(\d+)(?:[/?#]|$)/i,
+      /[?&]idWantsList=(\d+)/i,
+      /(?:data-id-wants-list|data-wants-list-id)[^\d]*(\d+)/i,
+    ];
+    for (const pattern of patterns) {
+      const match = String(href || '').match(pattern);
+      if (match) return match[1];
+    }
+    return '';
+  }
+}
+
+function parseWantItemsFromDocument(doc, href, { previewLimit } = {}) {
+  const wantListId = extractWantListId(href);
+  const desktopRows = [...doc.querySelectorAll('#WantsListTable table.d-lg-table tbody tr')];
+  const mobileRows = [...doc.querySelectorAll('#MobileWantsList .accordion-item')];
+  const source = desktopRows.length ? 'desktop-table' : 'mobile-accordion';
   const parsedItems = (desktopRows.length ? desktopRows.map(parseDesktopRow) : mobileRows.map(parseMobileRow))
     .filter((item) => item && (item.idWant || item.productName));
 
@@ -2896,13 +3617,11 @@ function extractVisibleWantItems({ previewLimit }) {
     const quantityCell = row.querySelector('td.amount');
     const previewTitle = preview?.getAttribute('data-bs-title') || preview?.getAttribute('data-bs-original-title') || preview?.getAttribute('title') || '';
     const text = row.textContent || '';
-    const href = nameLink?.getAttribute('href') || '';
-    const productUrl = normalizeProductUrl(href);
-
+    const rawHref = nameLink?.getAttribute('href') || '';
+    const productUrl = normalizeProductUrl(rawHref);
     const productName = textOf(nameLink?.textContent)
       || decodeHtmlAttribute(previewTitle.match(/alt=&quot;([^&]+(?:&[^;]+;)*)&quot;/i)?.[1] || '')
       || textOf(row.querySelector('td.name')?.textContent);
-
     const productIdMatch = previewTitle.match(/product-images\.s3\.cardmarket\.com\/\d+\/[^/]+\/(\d+)\//i);
     const priceMatch = textOf(priceCell?.textContent).match(/(\d{1,3}(?:[.,]\d{3})*[,.]\d{2})/);
     const selectedLanguages = extractSelectedLanguages(row);
@@ -2928,14 +3647,14 @@ function extractVisibleWantItems({ previewLimit }) {
   }
 
   function parseMobileRow(row) {
-    const checkbox = row.querySelector('input[name="mobileCheckWant"][data-id-want]');
+    const checkbox = row.querySelector('input[name="mobileCheckWant"][data-id-want], input[data-id-want]');
     const nameNode = row.querySelector('.want-name');
-    const nameLink = row.querySelector('.item-body-wrapper a[href*="/Cards/"]');
+    const nameLink = row.querySelector('.item-body-wrapper a[href*="/Cards/"], a[href*="/Products/"]');
     const preview = row.querySelector('[data-bs-title], [data-bs-original-title], [title]');
     const previewTitle = preview?.getAttribute('data-bs-title') || preview?.getAttribute('data-bs-original-title') || preview?.getAttribute('title') || '';
     const conditionBadge = row.querySelector('.article-condition .badge, .badge');
-    const href = nameLink?.getAttribute('href') || '';
-    const productUrl = normalizeProductUrl(href);
+    const rawHref = nameLink?.getAttribute('href') || '';
+    const productUrl = normalizeProductUrl(rawHref);
     const productIdMatch = previewTitle.match(/product-images\.s3\.cardmarket\.com\/\d+\/[^/]+\/(\d+)\//i);
     const text = row.textContent || '';
     const selectedLanguages = extractSelectedLanguages(row);
@@ -2960,9 +3679,9 @@ function extractVisibleWantItems({ previewLimit }) {
     };
   }
 
-  function normalizeProductUrl(href) {
-    if (!href) return '';
-    const absolute = href.startsWith('http') ? href : `https://www.cardmarket.com${href}`;
+  function normalizeProductUrl(rawHref) {
+    if (!rawHref) return '';
+    const absolute = rawHref.startsWith('http') ? rawHref : `https://www.cardmarket.com${rawHref}`;
     const url = new URL(absolute);
     url.search = '';
     url.hash = '';
@@ -3007,11 +3726,12 @@ function extractVisibleWantItems({ previewLimit }) {
 
   function extractRenderedTernaryPreference(container, nameHint) {
     if (!container) return null;
+    const labeledNode = container.querySelector('[aria-label], [data-bs-original-title], [data-original-title], [title]');
     const labelText = textOf(container.textContent);
-    const iconLabel = textOf(container.querySelector('[aria-label], [data-bs-original-title], [data-original-title], [title]')?.getAttribute('aria-label')
-      || container.querySelector('[aria-label], [data-bs-original-title], [data-original-title], [title]')?.getAttribute('data-bs-original-title')
-      || container.querySelector('[aria-label], [data-bs-original-title], [data-original-title], [title]')?.getAttribute('data-original-title')
-      || container.querySelector('[aria-label], [data-bs-original-title], [data-original-title], [title]')?.getAttribute('title'));
+    const iconLabel = textOf(labeledNode?.getAttribute('aria-label')
+      || labeledNode?.getAttribute('data-bs-original-title')
+      || labeledNode?.getAttribute('data-original-title')
+      || labeledNode?.getAttribute('title'));
     const value = [labelText, iconLabel]
       .find((entry) => entry && !new RegExp(nameHint, 'i').test(entry)) || '';
     if (/^(y|yes|true)$/i.test(value)) return true;
@@ -3077,22 +3797,28 @@ function extractVisibleWantItems({ previewLimit }) {
 
   function decodeHtmlAttribute(value) {
     if (!value) return '';
-    const el = document.createElement('textarea');
+    const el = doc.createElement('textarea');
     el.innerHTML = value;
     return textOf(el.value);
   }
 
-  function extractWantListId(href) {
+  function extractWantListId(rawHref) {
     const patterns = [
       /\/Wants\/(?:EditWantsList\/|Show\/)?(\d+)(?:[/?#]|$)/i,
       /[?&]idWantsList=(\d+)/i,
     ];
     for (const pattern of patterns) {
-      const match = href.match(pattern);
+      const match = String(rawHref || '').match(pattern);
       if (match) return match[1];
     }
     return '';
   }
+}
+
+function buildWantListItemKey(item) {
+  if (textOf(item?.idWant)) return `want-${textOf(item.idWant)}`;
+  if (textOf(item?.idProduct)) return `product-${textOf(item.idProduct)}-${textOf(item?.quantity)}`;
+  return `name-${textOf(item?.productName)}-${textOf(item?.quantity)}`;
 }
 
 async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {}, maxSellerPages = 20, maxFetchAttempts = 4, jitterRatio, requestContext }) {

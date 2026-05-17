@@ -908,9 +908,17 @@
         <div class="source-shell">
           <section class="source-card">
             <h3 class="source-title">From Cardmarket want list</h3>
-            <p class="panel-note">Open specific Cardmarket want list page, then extract visible rows from current tab.</p>
+            <p class="panel-note">Open any Cardmarket page, pick want list here, then load cards into popup.</p>
             <div class="step-card-actions">
-              <button id="extractItems" class="secondary">Extract Visible Want Items</button>
+              <div class="config-row">
+                <label class="config-label" for="wantListSelect">
+                  <span>Want list</span>
+                  <select id="wantListSelect">
+                    <option value="">Loading want lists...</option>
+                  </select>
+                </label>
+              </div>
+              <button id="extractItems" class="secondary">Load Want List</button>
               <p id="wantListWarning" class="inline-notice" hidden></p>
             </div>
           </section>
