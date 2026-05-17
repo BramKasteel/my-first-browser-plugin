@@ -25,6 +25,8 @@ const copyFrontendPayloadButton = document.getElementById('copyFrontendPayload')
 const wantListPreviewEl = document.getElementById('wantListPreview');
 const wantListWarningEl = document.getElementById('wantListWarning');
 const wantListSelectEl = document.getElementById('wantListSelect');
+const confirmWantListButton = document.getElementById('confirmWantList');
+const wantListConfirmHintEl = document.getElementById('wantListConfirmHint');
 const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
 const cartItemsEl = document.getElementById('cartItems');
@@ -181,11 +183,23 @@ function hasSelectedWantList() {
 function syncExtractButton(isBusy = false) {
   const hasWantLists = availableWantLists.length > 0;
   const hasSelection = hasSelectedWantList();
-  extractItemsButton.disabled = isBusy || !hasWantLists || !hasSelection;
-  extractItemsButton.classList.toggle('is-busy', isBusy);
-  extractItemsButton.classList.toggle('secondary', !hasWantLists || !hasSelection);
+  const hasLoadedItems = hasLoadedWantItems();
+  if (extractItemsButton) {
+    extractItemsButton.disabled = isBusy || !hasWantLists || !hasSelection;
+    extractItemsButton.classList.toggle('is-busy', isBusy);
+    extractItemsButton.classList.toggle('secondary', !hasWantLists || !hasSelection);
+  }
   if (wantListSelectEl) {
     wantListSelectEl.disabled = isBusy || !hasWantLists;
+  }
+  if (confirmWantListButton) {
+    confirmWantListButton.hidden = !hasLoadedItems;
+    confirmWantListButton.disabled = isBusy || !hasLoadedItems;
+    confirmWantListButton.classList.toggle('is-busy', false);
+    confirmWantListButton.classList.toggle('secondary', !hasLoadedItems);
+  }
+  if (wantListConfirmHintEl) {
+    wantListConfirmHintEl.hidden = !hasLoadedItems;
   }
 }
 
@@ -384,7 +398,7 @@ function getWorkflowStepHint(stepName, state = getWorkflowState()) {
       return 'Fixture payload loaded. Seller scrape skipped. Continue with optimization or reload want-list path.';
     }
     if (state.hasExtractedWants) {
-      return 'Want items loaded. Next step: scrape seller rows with current filters.';
+      return 'Want items loaded. Review preview, then continue to seller scrape when ready.';
     }
     if (!availableWantLists.length) {
       return 'Open any Cardmarket page. Popup auto-detects want lists from your logged-in session.';
@@ -1398,6 +1412,7 @@ function renderItems(items, totalVisible) {
     const hasItems = items.length > 0 && totalVisible > 0;
     wantListPreviewEl.classList.toggle('is-empty', !hasItems);
     wantListPreviewEl.classList.toggle('is-ready', hasItems);
+    wantListPreviewEl.open = hasItems;
   }
 
   itemsEl.replaceChildren();
@@ -2041,10 +2056,11 @@ async function handleExtractItems() {
     renderSellers([], 0, result.items[0]?.productName || 'the first item');
     renderFrontendPayload(result);
     renderPayload(null);
-    setActiveWorkflowStep('sellers', { force: true });
+    setActiveWorkflowStep('source', { force: true, recordHistory: false });
     setActiveResultTab('overview');
     appendStatus(`Loaded ${result.totalVisible} want items from ${result.wantListName || `want list ${result.wantListId}`}.`, result.totalVisible ? 'good' : 'bad');
     finishRun(`Loaded ${result.totalVisible} want items.`, result.totalVisible ? 'good' : 'bad');
+    confirmWantListButton?.focus();
   } catch (error) {
     latestExtractedItems = [];
     syncExtractButton();
@@ -2815,6 +2831,10 @@ async function handleCopyFrontendPayload() {
 }
 
 extractItemsButton.addEventListener('click', handleExtractItems);
+confirmWantListButton?.addEventListener('click', () => {
+  if (!hasLoadedWantItems()) return;
+  setActiveWorkflowStep('sellers', { force: true });
+});
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 loadOptimizerFixtureButton.addEventListener('click', handleLoadOptimizerFixture);
 optimizeOrderButton.addEventListener('click', handleOptimizeOrder);
@@ -2853,6 +2873,11 @@ wantListSelectEl?.addEventListener('change', () => {
   refreshWantListWarning().catch(() => {
     renderWantListWarning('Could not inspect current tab. Open Cardmarket page and retry.');
   });
+  if (selectedWantListId) {
+    handleExtractItems().catch((error) => {
+      appendStatus(error.message, 'bad');
+    });
+  }
 });
 sellerReputationFilterEl.addEventListener('change', saveSellerSettings);
 sellerDeliveryTimeFilterEl.addEventListener('change', saveSellerSettings);

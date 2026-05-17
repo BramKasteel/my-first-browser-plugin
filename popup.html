@@ -908,7 +908,7 @@
         <div class="source-shell">
           <section class="source-card">
             <h3 class="source-title">From Cardmarket want list</h3>
-            <p class="panel-note">Open any Cardmarket page, pick want list here, then load cards into popup.</p>
+            <p class="panel-note">Open any Cardmarket page, pick want list here, then review preview before seller scrape.</p>
             <div class="step-card-actions">
               <div class="config-row">
                 <label class="config-label" for="wantListSelect">
@@ -918,7 +918,9 @@
                   </select>
                 </label>
               </div>
-              <button id="extractItems" class="secondary">Load Want List</button>
+              <button id="extractItems" class="secondary" hidden>Load Want List</button>
+              <button id="confirmWantList" class="secondary" hidden>Continue to Seller Scrape</button>
+              <p id="wantListConfirmHint" class="panel-note" hidden>Review preview below before moving to seller scrape.</p>
               <p id="wantListWarning" class="inline-notice" hidden></p>
             </div>
           </section>
