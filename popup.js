@@ -1778,6 +1778,37 @@ async function ensureCardmarketTab() {
   return tab;
 }
 
+function parseCardmarketRequestContext(urlValue) {
+  if (!urlValue) return null;
+
+  try {
+    const url = new URL(urlValue);
+    if (!/^https:\/\/www\.cardmarket\.com\//.test(url.toString())) {
+      return null;
+    }
+
+    const pathParts = url.pathname.split('/').filter(Boolean);
+    return {
+      origin: url.origin,
+      lang: pathParts[0] || 'en',
+      game: pathParts[1] || 'Magic',
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function resolveSellerRequestContext(item) {
+  const fromItem = parseCardmarketRequestContext(item?.productUrl);
+  if (fromItem) return fromItem;
+
+  const tab = await getTargetTab();
+  const fromTab = parseCardmarketRequestContext(tab?.url || '');
+  if (fromTab) return fromTab;
+
+  throw new Error('Could not determine Cardmarket language and game for seller scrape. Re-extract want items from a Cardmarket want list first.');
+}
+
 async function refreshWantListWarning() {
   try {
     const tab = await getTargetTab();
@@ -1793,6 +1824,11 @@ async function refreshWantListWarning() {
 
     const pageKind = wantsPageKind(new URL(tab.url).pathname || '');
     if (pageKind !== 'wants-detail') {
+      if (hasLoadedWantItems()) {
+        renderWantListWarning('Want items already loaded. Seller scrape can keep running on any Cardmarket page. Return to want-list detail page only to extract again.');
+        return;
+      }
+
       renderWantListWarning('This extension works on a specific Cardmarket want list page. Please open a URL like https://www.cardmarket.com/en/Magic/Wants/1234567 and then try again.');
       return;
     }
@@ -1871,7 +1907,7 @@ async function handleScrapeAllItems() {
       throw new Error('Extract want items first so the popup has products to scrape.');
     }
 
-    const tab = await ensureCardmarketTab();
+    const requestContext = await resolveSellerRequestContext(latestExtractedItems.find((item) => item?.productUrl) || latestExtractedItems[0]);
     const delayMs = sanitizeSellerDelay(sellerDelayInput.value);
     await ensureSellerScrapeNotCoolingDown();
 
@@ -1905,7 +1941,7 @@ async function handleScrapeAllItems() {
       let scrapeOutcome = null;
       try {
         scrapeOutcome = await scrapeWantItemSellerData({
-          tab,
+          requestContext,
           item,
           delayMs,
           logPartitionRetry: false,
@@ -2064,7 +2100,7 @@ async function handleProbeRateLimits() {
       throw new Error('The first extracted item has no idProduct, so probing cannot start yet.');
     }
 
-    const tab = await ensureCardmarketTab();
+    const requestContext = await resolveSellerRequestContext(firstItem);
     const cooldownUntil = await getSellerCooldownUntil();
     if (cooldownUntil > Date.now()) {
       throw new Error(`Seller scraping is paused after rate limiting. Try again in ${formatRemaining(cooldownUntil - Date.now())}.`);
@@ -2099,7 +2135,7 @@ async function handleProbeRateLimits() {
       };
 
       for (let runIndex = 0; runIndex < probeRuns; runIndex += 1) {
-        const result = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+        const result = await scrapeSingleWantItemSellers({
           item: firstItem,
           delay: delayMs,
           previewLimit: 0,
@@ -2107,7 +2143,8 @@ async function handleProbeRateLimits() {
           maxSellerPages: probePages,
           maxFetchAttempts: 1,
           jitterRatio: REQUEST_JITTER_RATIO,
-        }]);
+          requestContext,
+        });
 
         if (!result) {
           stage.warnings.push('No result returned from the Cardmarket tab.');
@@ -2326,10 +2363,10 @@ function describeSellerScope({ sellerCountryIds, sellerTypeId }) {
 }
 
 async function executeSellerScopeScrape({
-  tabId,
   item,
   delayMs,
   previewLimit,
+  requestContext,
   requestLanguageId,
   sellerCountryIds,
   sellerReputationId,
@@ -2346,12 +2383,13 @@ async function executeSellerScopeScrape({
     sellerTypeId,
   };
   appendStatus(`Querying seller scope: ${describeSellerScope({ sellerCountryIds, sellerTypeId })}.`);
-  let scopeResult = await executeInTab(tabId, scrapeSingleWantItemSellers, [{
+  let scopeResult = await scrapeSingleWantItemSellers({
     item,
     delay: delayMs,
     previewLimit,
     requestFilters,
-  }]);
+    requestContext,
+  });
   if (!scopeResult) return null;
 
   const powerSellerTypeId = getCardmarketSellerTypeId('Power Seller');
@@ -2364,7 +2402,7 @@ async function executeSellerScopeScrape({
       appendStatus(`${partitionLabel} looks capped. Applying Power Seller subset.`, 'good');
     }
     appendStatus(`Querying seller scope: ${describeSellerScope({ sellerCountryIds, sellerTypeId: powerSellerTypeId })}.`);
-    const powerSellerResult = await executeInTab(tabId, scrapeSingleWantItemSellers, [{
+    const powerSellerResult = await scrapeSingleWantItemSellers({
       item,
       delay: delayMs,
       previewLimit,
@@ -2372,7 +2410,8 @@ async function executeSellerScopeScrape({
         ...requestFilters,
         sellerTypeId: powerSellerTypeId,
       },
-    }]);
+      requestContext,
+    });
     if (powerSellerResult) {
       powerSellerResult.powerSellerFallbackApplied = true;
       scopeResult = powerSellerResult;
@@ -2382,7 +2421,7 @@ async function executeSellerScopeScrape({
   return scopeResult;
 }
 
-async function scrapeWantItemSellerData({ tab, item, delayMs, logPartitionRetry }) {
+async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPartitionRetry }) {
   await ensureSellerScrapeNotCoolingDown();
 
   const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(item));
@@ -2412,10 +2451,10 @@ async function scrapeWantItemSellerData({ tab, item, delayMs, logPartitionRetry 
     for (const scope of explicitCountryScopes) {
       const scopeLabel = getCountryNameById(scope.countryId) || scope.label;
       const scopeResult = await executeSellerScopeScrape({
-        tabId: tab.id,
         item,
         delayMs,
         previewLimit: 12,
+        requestContext,
         requestLanguageId,
         sellerCountryIds: [scope.countryId],
         sellerReputationId,
@@ -2434,12 +2473,13 @@ async function scrapeWantItemSellerData({ tab, item, delayMs, logPartitionRetry 
     }
     result = mergeSellerScopeResults(null, partitionResults);
   } else {
-    const baseResult = await executeInTab(tab.id, scrapeSingleWantItemSellers, [{
+    const baseResult = await scrapeSingleWantItemSellers({
       item,
       delay: delayMs,
       previewLimit: 12,
       requestFilters: baseRequestFilters,
-    }]);
+      requestContext,
+    });
     if (!baseResult) {
       throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
     }
@@ -2459,10 +2499,10 @@ async function scrapeWantItemSellerData({ tab, item, delayMs, logPartitionRetry 
       for (const scope of countryScopes) {
         const scopeLabel = getCountryNameById(scope.countryId) || scope.label;
         const scopeResult = await executeSellerScopeScrape({
-          tabId: tab.id,
           item,
           delayMs,
           previewLimit: 12,
+          requestContext,
           requestLanguageId,
           sellerCountryIds: [scope.countryId],
           sellerReputationId,
@@ -2580,7 +2620,7 @@ window.addEventListener('focus', () => {
 
 renderSummary([
   { label: 'Status', value: 'Ready for page detection' },
-  { label: 'Current scope', value: 'Want-list detail page only' },
+  { label: 'Current scope', value: 'Extract on want-list page, scrape on any Cardmarket page' },
 ]);
 finishRun('Idle. Start extract, scrape, or probe.');
 renderItems([], 0);
@@ -2900,7 +2940,7 @@ function extractVisibleWantItems({ previewLimit }) {
   }
 }
 
-async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {}, maxSellerPages = 20, maxFetchAttempts = 4, jitterRatio }) {
+async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {}, maxSellerPages = 20, maxFetchAttempts = 4, jitterRatio, requestContext }) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const effectiveJitterRatio = Number.isFinite(Number(jitterRatio)) ? Number(jitterRatio) : 0.15;
   const applyLocalJitter = (baseMs) => {
@@ -2912,9 +2952,12 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
   };
   const SELLER_PAGE_SIZE_HINT = 50;
   const MAX_SELLER_PAGES = Math.max(1, Math.min(20, parseInt(maxSellerPages, 10) || 20));
-  const pathParts = location.pathname.split('/').filter(Boolean);
-  const lang = pathParts[0] || 'en';
-  const game = pathParts[1] || 'Magic';
+  const runtimeContext = requestContext || parseCardmarketRequestContext(item?.productUrl) || {
+    origin: 'https://www.cardmarket.com',
+    lang: 'en',
+    game: 'Magic',
+  };
+  const { origin, lang, game } = runtimeContext;
   const sellers = [];
   const seen = new Set();
   let page = 1;
@@ -3086,7 +3129,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
 
   function buildFallbackPagedRequest(currentUrl, pageNumber) {
     if (!pageNumber || pageNumber < 2) return null;
-    const url = new URL(currentUrl, location.origin);
+    const url = new URL(currentUrl, origin);
     if (url.searchParams.has('site')) {
       url.searchParams.set('site', String(pageNumber));
       return { url: url.toString(), method: 'GET' };
@@ -3123,7 +3166,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
   }
 
   function appendSellerRequestFilters(urlValue, activeFilters) {
-    const url = new URL(urlValue, location.origin);
+    const url = new URL(urlValue, origin);
     if (activeFilters.languageId) {
       url.searchParams.set('language', activeFilters.languageId);
     }
@@ -3190,7 +3233,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     return filters;
 
     function collectActiveQuery(urlValue) {
-      const url = new URL(urlValue, location.origin);
+      const url = new URL(urlValue, origin);
       const values = {};
       url.searchParams.forEach((value, key) => {
         if (!relevantFieldPattern.test(key)) return;
