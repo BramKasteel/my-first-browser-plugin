@@ -19,7 +19,6 @@ const sellerScrapeProgressEl = document.getElementById('sellerScrapeProgress');
 const sellerProgressLabelEl = document.getElementById('sellerProgressLabel');
 const sellerProgressCurrentEl = document.getElementById('sellerProgressCurrent');
 const sellerProgressPercentEl = document.getElementById('sellerProgressPercent');
-const sellerProgressDetailEl = document.getElementById('sellerProgressDetail');
 const sellerProgressBarEl = document.getElementById('sellerProgressBar');
 const copyPayloadButton = document.getElementById('copyPayload');
 const copyFrontendPayloadButton = document.getElementById('copyFrontendPayload');
@@ -283,9 +282,8 @@ function renderStepActivity() {
     const isIndeterminate = !!activeStepActivity.indeterminate || total === 0;
     const percent = total > 0 ? Math.round((current / total) * 100) : 0;
     sellerProgressLabelEl.textContent = activeStepActivity.label || 'Preparing seller scrape.';
-    sellerProgressCurrentEl.textContent = `${current} / ${total} items`;
+    sellerProgressCurrentEl.textContent = total > 0 ? `Card ${current} of ${total}` : 'Preparing cards';
     sellerProgressPercentEl.textContent = isIndeterminate ? 'Working...' : `${percent}%`;
-    sellerProgressDetailEl.textContent = activeStepActivity.detail || 'Filters locked for this run.';
     sellerProgressBarEl.classList.toggle('indeterminate', isIndeterminate);
     sellerProgressBarEl.style.width = isIndeterminate ? '35%' : `${percent}%`;
   } else {
@@ -2052,6 +2050,17 @@ async function handleScrapeAllItems() {
           item,
           delayMs,
           logPartitionRetry: false,
+          onScopeStart: ({ partitionLabel, sellerCountryIds }) => {
+            const scopeName = partitionLabel
+              || (sellerCountryIds?.length === 1 ? getCountryNameById(sellerCountryIds[0]) : '')
+              || 'All countries';
+            setStepActivity({
+              kind: 'seller-scrape',
+              label: `${itemLabel} (${scopeName})`,
+              current: index + 1,
+              total: latestExtractedItems.length,
+            });
+          },
         });
       } catch (error) {
         setStepActivity({
@@ -2511,6 +2520,7 @@ async function executeSellerScopeScrape({
   sellerTypeId,
   partitionLabel,
   logPowerSellerFallback,
+  onScopeStart,
 }) {
   const requestFilters = {
     languageId: requestLanguageId,
@@ -2519,6 +2529,11 @@ async function executeSellerScopeScrape({
     maxShippingTimeId,
     sellerTypeId,
   };
+  onScopeStart?.({
+    partitionLabel,
+    sellerCountryIds,
+    sellerTypeId,
+  });
   appendStatus(`Querying seller scope: ${describeSellerScope({ sellerCountryIds, sellerTypeId })}.`);
   let scopeResult = await scrapeSingleWantItemSellers({
     item,
@@ -2558,7 +2573,7 @@ async function executeSellerScopeScrape({
   return scopeResult;
 }
 
-async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPartitionRetry }) {
+async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPartitionRetry, onScopeStart }) {
   await ensureSellerScrapeNotCoolingDown();
 
   const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(item));
@@ -2599,6 +2614,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
         sellerTypeId,
         partitionLabel: scopeLabel,
         logPowerSellerFallback: logPartitionRetry,
+        onScopeStart,
       });
       if (scopeResult) {
         scopeResult.partitionLabel = scope.label;
@@ -2647,6 +2663,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
           sellerTypeId,
           partitionLabel: scopeLabel,
           logPowerSellerFallback: logPartitionRetry,
+          onScopeStart,
         });
         if (scopeResult) {
           scopeResult.partitionLabel = scope.label;
