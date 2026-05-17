@@ -81,6 +81,83 @@ uv run uvicorn app.main:app --reload
 
 Open `http://127.0.0.1:8000/docs` for Swagger UI.
 
+## AWS Lambda
+
+Recommended AWS shape:
+- API Gateway HTTP API
+- Lambda container image
+- AWS Lambda Web Adapter
+- same FastAPI app from `app.main:app`
+
+Why this path:
+- local dev stays normal `uvicorn`
+- no Lambda-specific Python adapter code in app
+- same container can run on Lambda, ECS, Fargate, or local Docker later
+
+### Files
+
+- `Dockerfile` builds Lambda-ready container image
+- `.dockerignore` keeps image context small
+
+### Local vs cloud
+
+Local dev loop stays:
+
+```bash
+cd optimizer-api
+uv sync --extra dev
+uv run uvicorn app.main:app --reload
+```
+
+Cloud runtime uses same FastAPI app, but Lambda Web Adapter forwards API Gateway requests to `uvicorn` inside container.
+
+No FastAPI code changes required for this setup.
+
+### Build container image
+
+Prerequisite: Docker installed locally. If Docker unavailable on dev machine, build in CI instead.
+
+```bash
+cd optimizer-api
+docker build -t cardmarket-optimizer-api .
+```
+
+### Run container locally
+
+This tests normal HTTP app inside container. It does not emulate full Lambda event flow, but it validates image boot and routes.
+
+```bash
+cd optimizer-api
+docker run --rm -p 8000:8000 cardmarket-optimizer-api
+```
+
+Then open `http://127.0.0.1:8000/health`.
+
+### Deploy checklist
+
+1. Create ECR repository for optimizer image.
+2. Build image from `optimizer-api/Dockerfile`.
+3. Push image to ECR.
+4. Create Lambda function from container image.
+5. Start with 1024-2048 MB memory and 15-30 second timeout.
+6. Add environment variables needed by app later, such as allowed CORS origins or solver timeout.
+7. Create API Gateway HTTP API and route all requests to Lambda.
+8. Test `GET /health` first.
+9. Test `POST /optimize` with fixture payload from `tests/fixtures/requests/`.
+
+### AWS settings to watch
+
+- OR-Tools adds native binary weight. Container image path is safer than zip deployment.
+- More Lambda memory also gives more CPU, which helps solver runtime.
+- Cold starts will be higher than small pure-Python handlers because image and solver deps are larger.
+- If solve times grow past practical Lambda limits, keep FastAPI layer and move solver execution to ECS/Fargate or async worker later.
+
+### Runtime changes
+
+Current repo needs no app-level dependency changes for Lambda Web Adapter because adapter ships as container extension.
+
+Current repo also needs no FastAPI architecture change. Keep `app.main:app` as primary entrypoint for local dev and tests.
+
 Run tests:
 
 ```bash

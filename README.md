@@ -16,3 +16,14 @@ Use it for:
 - stable API contract between extension and backend
 
 Do not use it for Cardmarket scraping itself. Keep scraping in extension where session and pacing logic already live.
+
+## AWS Infra
+
+Repository now also contains `infra/`, a standalone AWS CDK app for optimizer deployment.
+
+Use it for:
+- ECR repository creation
+- GitHub Actions OIDC deploy role
+- Lambda + API Gateway deployment from pushed optimizer image
+
+See `infra/README.md` for one-time bootstrap and CI setup steps.

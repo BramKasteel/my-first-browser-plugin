@@ -8,6 +8,7 @@ __pycache__/
 .vscode/
 .idea/
 node_modules/
+infra/cdk.out/
 *.zip
 *.crx
 *.pem

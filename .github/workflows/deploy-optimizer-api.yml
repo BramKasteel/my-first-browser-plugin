@@ -1,0 +1,82 @@
+name: Deploy Optimizer API
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - optimizer-api/**
+      - infra/**
+      - .github/workflows/deploy-optimizer-api.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-optimizer-api-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY_NAME: cardmarket-optimizer-api
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required variables
+        run: |
+          test -n "$AWS_REGION"
+          test -n "${{ vars.AWS_GITHUB_ACTIONS_ROLE_ARN }}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+
+      - name: Install infra dependencies
+        working-directory: infra
+        run: npm ci
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push optimizer image
+        uses: docker/build-push-action@v6
+        with:
+          context: optimizer-api
+          file: optimizer-api/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_NAME }}:${{ env.IMAGE_TAG }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_NAME }}:latest
+
+      - name: Deploy service stack
+        working-directory: infra
+        run: |
+          npx cdk deploy OptimizerServiceStack \
+            --require-approval never \
+            -c imageTag=${IMAGE_TAG} \
+            -c ecrRepositoryName=${ECR_REPOSITORY_NAME} \
+            -c allowedOrigins=* \
+            -c lambdaMemorySize=2048 \
+            -c lambdaTimeoutSeconds=30
