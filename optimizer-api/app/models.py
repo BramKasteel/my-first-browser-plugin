@@ -1,66 +1,131 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+BoundedId = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)
+]
+BoundedName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=256)
+]
+BoundedCountry = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)
+]
+BoundedDescriptor = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)
+]
+CurrencyCode = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        to_upper=True,
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Z]{3}$",
+    ),
+]
+
+MAX_ITEMS = 500
+MAX_SELLERS = 5_000
+MAX_OFFERS = 50_000
+MAX_LANGUAGE_PREFERENCES = 20
+MAX_ALLOWED_COUNTRIES = 100
+MAX_BLOCKED_SELLERS = 5_000
+
+
+def _find_duplicates(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+
+    for value in values:
+        if value in seen:
+            duplicates.add(value)
+            continue
+        seen.add(value)
+
+    return sorted(duplicates)
 
 
 class WantedItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    item_id: str = Field(min_length=1)
-    name: str = Field(min_length=1)
-    quantity: int = Field(ge=1)
-    min_condition: str | None = None
-    preferred_languages: list[str] = Field(default_factory=list)
+    item_id: BoundedId
+    name: BoundedName
+    quantity: int = Field(ge=1, le=1_000)
+    min_condition: BoundedDescriptor | None = None
+    preferred_languages: list[BoundedDescriptor] = Field(
+        default_factory=list, max_length=MAX_LANGUAGE_PREFERENCES
+    )
     cards_per_unit: int = Field(default=1, ge=0)
     unit_weight_grams: int | None = Field(default=None, ge=0)
     requires_parcel: bool = False
 
 
 class Seller(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    seller_id: str = Field(min_length=1)
-    name: str = Field(min_length=1)
-    country: str = Field(min_length=1)
+    seller_id: BoundedId
+    name: BoundedName
+    country: BoundedCountry
 
 
 class Offer(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    offer_id: str = Field(min_length=1)
-    item_id: str = Field(min_length=1)
-    seller_id: str = Field(min_length=1)
+    offer_id: BoundedId
+    item_id: BoundedId
+    seller_id: BoundedId
     unit_price: float = Field(ge=0)
-    available_quantity: int = Field(ge=1)
-    condition: str | None = None
-    language: str | None = None
+    available_quantity: int = Field(ge=1, le=10_000)
+    condition: BoundedDescriptor | None = None
+    language: BoundedDescriptor | None = None
 
 
 class OptimizationPreferences(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     max_sellers: int | None = Field(default=None, ge=1)
-    allowed_countries: list[str] = Field(default_factory=list)
-    blocked_seller_ids: list[str] = Field(default_factory=list)
+    allowed_countries: list[BoundedCountry] = Field(
+        default_factory=list, max_length=MAX_ALLOWED_COUNTRIES
+    )
+    blocked_seller_ids: list[BoundedId] = Field(
+        default_factory=list, max_length=MAX_BLOCKED_SELLERS
+    )
     return_alternatives: int = Field(default=0, ge=0, le=0)
 
 
 class OptimizationRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    buyer_country: str = Field(min_length=1)
-    currency: str = Field(default="EUR", min_length=3, max_length=3)
-    items: list[WantedItem] = Field(min_length=1)
-    sellers: list[Seller] = Field(min_length=1)
-    offers: list[Offer] = Field(min_length=1)
+    buyer_country: BoundedCountry
+    currency: CurrencyCode = "EUR"
+    items: list[WantedItem] = Field(min_length=1, max_length=MAX_ITEMS)
+    sellers: list[Seller] = Field(min_length=1, max_length=MAX_SELLERS)
+    offers: list[Offer] = Field(min_length=1, max_length=MAX_OFFERS)
     preferences: OptimizationPreferences = Field(
         default_factory=OptimizationPreferences
     )
 
     @model_validator(mode="after")
     def validate_references(self) -> "OptimizationRequest":
+        duplicate_item_ids = _find_duplicates([item.item_id for item in self.items])
+        if duplicate_item_ids:
+            raise ValueError(f"Duplicate item IDs: {', '.join(duplicate_item_ids)}")
+
+        duplicate_seller_ids = _find_duplicates(
+            [seller.seller_id for seller in self.sellers]
+        )
+        if duplicate_seller_ids:
+            raise ValueError(f"Duplicate seller IDs: {', '.join(duplicate_seller_ids)}")
+
+        duplicate_offer_ids = _find_duplicates(
+            [offer.offer_id for offer in self.offers]
+        )
+        if duplicate_offer_ids:
+            raise ValueError(f"Duplicate offer IDs: {', '.join(duplicate_offer_ids)}")
+
         item_ids = {item.item_id for item in self.items}
         seller_ids = {seller.seller_id for seller in self.sellers}
 
@@ -98,27 +163,27 @@ class OptimizationRequest(BaseModel):
 
 
 class AllocationResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    offer_id: str
-    item_id: str
-    seller_id: str
+    offer_id: BoundedId
+    item_id: BoundedId
+    seller_id: BoundedId
     quantity: int = Field(ge=1)
     unit_price: float = Field(ge=0)
     line_total: float = Field(ge=0)
 
 
 class SellerResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    seller_id: str
+    seller_id: BoundedId
     item_subtotal: float = Field(ge=0)
     shipping_cost: float = Field(ge=0)
     total_units: int = Field(ge=0)
 
 
 class OptimizationTotals(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     item_subtotal: float = Field(ge=0)
     shipping_total: float = Field(ge=0)
@@ -126,24 +191,24 @@ class OptimizationTotals(BaseModel):
 
 
 class CartItemResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    offer_id: str
-    item_id: str
-    item_name: str = Field(min_length=1)
+    offer_id: BoundedId
+    item_id: BoundedId
+    item_name: BoundedName
     quantity: int = Field(ge=1)
     unit_price: float = Field(ge=0)
     line_total: float = Field(ge=0)
-    condition: str | None = None
-    language: str | None = None
+    condition: BoundedDescriptor | None = None
+    language: BoundedDescriptor | None = None
 
 
 class CartSellerResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    seller_id: str
-    seller_name: str = Field(min_length=1)
-    country: str = Field(min_length=1)
+    seller_id: BoundedId
+    seller_name: BoundedName
+    country: BoundedCountry
     item_subtotal: float = Field(ge=0)
     shipping_cost: float = Field(ge=0)
     grand_total: float = Field(ge=0)
@@ -152,7 +217,7 @@ class CartSellerResult(BaseModel):
 
 
 class OptimizationCart(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     sellers: list[CartSellerResult] = Field(default_factory=list)
     total_sellers: int = Field(ge=0)
@@ -160,10 +225,10 @@ class OptimizationCart(BaseModel):
 
 
 class OptimizationResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     status: Literal["optimal", "infeasible"]
-    currency: str = Field(min_length=3, max_length=3)
+    currency: CurrencyCode
     totals: OptimizationTotals
     chosen_sellers: list[SellerResult] = Field(default_factory=list)
     allocations: list[AllocationResult] = Field(default_factory=list)

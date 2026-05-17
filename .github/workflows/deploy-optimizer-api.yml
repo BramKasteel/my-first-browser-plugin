@@ -22,6 +22,8 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY_NAME: cardmarket-optimizer-api
   IMAGE_TAG: ${{ github.sha }}
+  API_THROTTLE_BURST_LIMIT: 20
+  API_THROTTLE_RATE_LIMIT: 5
 
 jobs:
   deploy:
@@ -81,5 +83,7 @@ jobs:
             -c imageTag=${IMAGE_TAG} \
             -c ecrRepositoryName=${ECR_REPOSITORY_NAME} \
             -c allowedOrigins=* \
+            -c apiThrottleBurstLimit=${API_THROTTLE_BURST_LIMIT} \
+            -c apiThrottleRateLimit=${API_THROTTLE_RATE_LIMIT} \
             -c lambdaMemorySize=2048 \
             -c lambdaTimeoutSeconds=30

@@ -140,3 +140,60 @@ def test_real_request_fixtures_acceptance(
 
 def test_real_request_fixture_directory_exists() -> None:
     assert FIXTURE_REQUESTS_DIR.is_dir()
+
+
+def test_optimize_rejects_duplicate_ids(client: TestClient) -> None:
+    payload = {
+        "buyer_country": "Netherlands",
+        "currency": "EUR",
+        "items": [
+            {"item_id": "want-1", "name": "Card A", "quantity": 1},
+            {"item_id": "want-1", "name": "Card B", "quantity": 1},
+        ],
+        "sellers": [
+            {"seller_id": "seller-1", "name": "Seller 1", "country": "Germany"},
+        ],
+        "offers": [
+            {
+                "offer_id": "offer-1",
+                "item_id": "want-1",
+                "seller_id": "seller-1",
+                "unit_price": 1.0,
+                "available_quantity": 1,
+            },
+        ],
+    }
+
+    response = client.post("/optimize", json=payload)
+
+    assert response.status_code == 422
+    assert "Duplicate item IDs" in response.text
+
+
+def test_optimize_rejects_too_many_items(client: TestClient) -> None:
+    items = [
+        {"item_id": f"want-{index}", "name": f"Card {index}", "quantity": 1}
+        for index in range(501)
+    ]
+    payload = {
+        "buyer_country": "Netherlands",
+        "currency": "EUR",
+        "items": items,
+        "sellers": [
+            {"seller_id": "seller-1", "name": "Seller 1", "country": "Germany"},
+        ],
+        "offers": [
+            {
+                "offer_id": "offer-1",
+                "item_id": "want-0",
+                "seller_id": "seller-1",
+                "unit_price": 1.0,
+                "available_quantity": 1,
+            },
+        ],
+    }
+
+    response = client.post("/optimize", json=payload)
+
+    assert response.status_code == 422
+    assert "items" in response.text

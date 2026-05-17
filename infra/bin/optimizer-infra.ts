@@ -32,6 +32,8 @@ const githubRepo = String(app.node.tryGetContext('githubRepo') ?? defaultGithubR
 const githubBranch = String(app.node.tryGetContext('githubBranch') ?? 'main');
 const ecrRepositoryName = String(app.node.tryGetContext('ecrRepositoryName') ?? 'cardmarket-optimizer-api');
 const imageTag = String(app.node.tryGetContext('imageTag') ?? 'latest');
+const apiThrottleBurstLimit = Number(app.node.tryGetContext('apiThrottleBurstLimit') ?? 20);
+const apiThrottleRateLimit = Number(app.node.tryGetContext('apiThrottleRateLimit') ?? 5);
 const lambdaMemorySize = Number(app.node.tryGetContext('lambdaMemorySize') ?? 2048);
 const lambdaTimeoutSeconds = Number(app.node.tryGetContext('lambdaTimeoutSeconds') ?? 30);
 const allowedOrigins = String(app.node.tryGetContext('allowedOrigins') ?? '*')
@@ -52,6 +54,8 @@ new OptimizerServiceStack(app, 'OptimizerServiceStack', {
   ecrRepositoryName,
   imageTag,
   allowedOrigins,
+  apiThrottleBurstLimit,
+  apiThrottleRateLimit,
   lambdaMemorySize,
   lambdaTimeoutSeconds,
 });
