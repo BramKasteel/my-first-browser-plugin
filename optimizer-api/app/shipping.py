@@ -34,6 +34,17 @@ def _is_card_order_excluded_method(name: str) -> bool:
     )
 
 
+def _dominates_card_order_method(
+    existing: "ShippingMethod", candidate: "ShippingMethod"
+) -> bool:
+    return (
+        existing.is_letter == candidate.is_letter
+        and existing.total_price_cents <= candidate.total_price_cents
+        and existing.max_value_cents >= candidate.max_value_cents
+        and existing.max_weight_grams >= candidate.max_weight_grams
+    )
+
+
 def _normalize_card_order_methods(
     raw_methods: list[dict[str, object]],
 ) -> tuple[ShippingMethod, ...]:
@@ -68,14 +79,7 @@ def _normalize_card_order_methods(
 
     kept: list[ShippingMethod] = []
     for method in methods:
-        if any(
-            existing.is_letter == method.is_letter
-            and existing.is_tracked == method.is_tracked
-            and existing.total_price_cents <= method.total_price_cents
-            and existing.max_value_cents >= method.max_value_cents
-            and existing.max_weight_grams >= method.max_weight_grams
-            for existing in kept
-        ):
+        if any(_dominates_card_order_method(existing, method) for existing in kept):
             continue
         kept.append(method)
 

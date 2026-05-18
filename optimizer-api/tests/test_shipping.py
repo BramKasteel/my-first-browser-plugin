@@ -275,3 +275,55 @@ def test_load_shipping_route_book_keeps_letters_and_one_cheapest_parcel(
         ("Letter 50g", 50),
         ("Parcel Cheap", 1000),
     ]
+
+
+def test_load_shipping_route_book_prunes_tracked_letter_duplicate_when_no_better(
+    tmp_path,
+) -> None:
+    fixture_path = tmp_path / "shipping_costs.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "countries": [
+                    {"name": "Germany", "externalId": 7},
+                    {"name": "Netherlands", "externalId": 23},
+                ],
+                "routes": [
+                    {
+                        "from_country": "Germany",
+                        "to_country": "Netherlands",
+                        "methods": [
+                            {
+                                "name": "Letter Untracked",
+                                "isTracked": False,
+                                "maxValue": "25,00 €",
+                                "maxWeight": 50,
+                                "stampPrice": "1,95 €",
+                                "price": "2,25 €",
+                                "isLetter": True,
+                                "isVirtual": False,
+                            },
+                            {
+                                "name": "Letter Tracked Cheaper",
+                                "isTracked": True,
+                                "maxValue": "25,00 €",
+                                "maxWeight": 50,
+                                "stampPrice": "1,70 €",
+                                "price": "2,00 €",
+                                "isLetter": True,
+                                "isVirtual": False,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    route_book = _load_shipping_route_book(fixture_path)
+
+    methods = route_book.lookup_methods(
+        seller_country="Germany", buyer_country="Netherlands"
+    )
+    assert [method.name for method in methods] == ["Letter Tracked Cheaper"]
