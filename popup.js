@@ -59,8 +59,11 @@ const optimizerWaitingDetailEl = document.getElementById('optimizerWaitingDetail
 const urlParams = new URLSearchParams(window.location.search);
 const isDetached = urlParams.get('detached') === '1';
 const autoStartMode = urlParams.get('autoStart') || '';
-const keepPopupMode = urlParams.get('popup') === '1';
 const forcedTabId = urlParams.get('tabId') ? parseInt(urlParams.get('tabId'), 10) : null;
+
+if (isDetached) {
+  document.body.classList.add('detached');
+}
 
 let latestExtractPayload = null;
 let latestFrontendPayload = null;
@@ -668,6 +671,7 @@ function setAvailableWantLists(wantLists, preferredWantListId = '') {
       .map((entry) => ({
         id: textOf(entry?.id),
         name: textOf(entry?.name) || `Want list ${textOf(entry?.id)}`,
+        path: textOf(entry?.path),
       }))
       .filter((entry) => entry.id)
     : [];
@@ -1926,10 +1930,9 @@ async function openDetachedPopup({ autoStart = '' } = {}) {
 }
 
 async function autoDetachDefaultPopup() {
-  if (isDetached || keepPopupMode) return;
+  if (isDetached) return;
 
   try {
-    appendStatus('Opening dedicated plugin window by default so long scrapes keep running.', 'good');
     await openDetachedPopup();
     window.close();
   } catch (error) {
@@ -2038,6 +2041,7 @@ async function handleExtractItems() {
     const result = await executeInTab(tab.id, injectedLoadWantListItemsById, [{
       wantListId: selectedWantListId,
       wantListName: selectedWantList?.name || '',
+      wantListPath: selectedWantList?.path || '',
       previewLimit: 8,
     }]);
     renderSummary([
@@ -2932,45 +2936,45 @@ renderWorkflow();
 scrapeAllItemsButton.textContent = 'Scrape sellers';
 appendStatus(isDetached
   ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'
-  : 'Popup loaded. Extension opens batch scrape workspace by default for long runs.');
+  : 'Popup loaded. Opening dedicated plugin window so long scrapes keep running.');
 
-loadSellerSettings()
-  .then(() => refreshWantLists({ quiet: true }))
-  .then(() => refreshWantListWarning())
-  .catch((error) => {
-    const message = error?.message || '';
-    if (/want list|wants overview|cardmarket/i.test(message)) {
-      appendStatus('Could not load Cardmarket want lists. Open Cardmarket tab; popup retries automatically.', 'bad');
-      return;
-    }
-    appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
-  })
-  .finally(() => {
-  if (isDetached && autoStartMode === 'scrapeAll') {
-    loadDetachedBatchState().then((items) => {
-      latestExtractedItems = items;
-      syncSellerScrapeButton();
-      renderWorkflow();
-      if (!latestExtractedItems.length) {
-        appendStatus('Batch scrape workspace could not auto-start because no extracted items were passed from popup.', 'bad');
+if (!isDetached) {
+  autoDetachDefaultPopup();
+} else {
+  loadSellerSettings()
+    .then(() => refreshWantLists({ quiet: true }))
+    .then(() => refreshWantListWarning())
+    .catch((error) => {
+      const message = error?.message || '';
+      if (/want list|wants overview|cardmarket/i.test(message)) {
+        appendStatus('Could not load Cardmarket want lists. Open Cardmarket tab; popup retries automatically.', 'bad');
         return;
       }
+      appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
+    })
+    .finally(() => {
+      if (isDetached && autoStartMode === 'scrapeAll') {
+        loadDetachedBatchState().then((items) => {
+          latestExtractedItems = items;
+          syncSellerScrapeButton();
+          renderWorkflow();
+          if (!latestExtractedItems.length) {
+            appendStatus('Batch scrape workspace could not auto-start because no extracted items were passed from popup.', 'bad');
+            return;
+          }
 
-      renderItems(latestExtractedItems.slice(0, 8), latestExtractedItems.length);
-      renderSellers([], 0, latestExtractedItems[0]?.productName || 'the first item');
-      setActiveWorkflowStep('sellers', { force: true });
-      handleScrapeAllItems().catch((error) => {
-        appendStatus(error.message, 'bad');
-      });
-    }).catch(() => {
-      appendStatus('Batch scrape workspace could not load extracted items for auto-start.', 'bad');
+          renderItems(latestExtractedItems.slice(0, 8), latestExtractedItems.length);
+          renderSellers([], 0, latestExtractedItems[0]?.productName || 'the first item');
+          setActiveWorkflowStep('sellers', { force: true });
+          handleScrapeAllItems().catch((error) => {
+            appendStatus(error.message, 'bad');
+          });
+        }).catch(() => {
+          appendStatus('Batch scrape workspace could not load extracted items for auto-start.', 'bad');
+        });
+      }
     });
-  }
-
-  if (!isDetached && !keepPopupMode) {
-    autoDetachDefaultPopup();
-  }
-});
+}
 
 function detectCurrentPage() {
   const pathname = location.pathname || '';
@@ -3055,9 +3059,11 @@ function injectedFetchAvailableWantListsFromCardmarket() {
         if (!id || seenIds.has(id)) return;
 
         seenIds.add(id);
+        const rawPath = candidates.find((value) => extractWantListId(value) === id) || '';
         results.push({
           id,
           name: extractWantListName(node, id),
+          path: normalizeWantListPath(rawPath),
         });
       });
 
@@ -3068,7 +3074,11 @@ function injectedFetchAvailableWantListsFromCardmarket() {
           const id = match[1];
           if (!id || seenIds.has(id)) continue;
           seenIds.add(id);
-          results.push({ id, name: `Want list ${id}` });
+          results.push({
+            id,
+            name: `Want list ${id}`,
+            path: `/${lang}/${game}/Wants/${id}`,
+          });
         }
       }
 
@@ -3076,6 +3086,7 @@ function injectedFetchAvailableWantListsFromCardmarket() {
         results.unshift({
           id: pageWantListId,
           name: extractCurrentWantListName() || `Want list ${pageWantListId}`,
+          path: normalizeWantListPath(location.href) || `/${lang}/${game}/Wants/${pageWantListId}`,
         });
       }
 
@@ -3142,13 +3153,28 @@ function injectedFetchAvailableWantListsFromCardmarket() {
     const name = candidates.map((node) => textOf(node?.textContent || node?.getAttribute?.('data-wants-list-name') || '')).find(Boolean);
     return name || '';
   }
+
+  function normalizeWantListPath(value) {
+    if (!value) return '';
+
+    try {
+      const parsed = new URL(value, location.origin);
+      if (parsed.origin !== location.origin) return '';
+      if (!extractWantListId(parsed.href)) return '';
+      parsed.hash = '';
+      parsed.searchParams.delete('site');
+      return `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return '';
+    }
+  }
 }
 
 function extractVisibleWantItems({ previewLimit }) {
   return parseWantItemsFromDocument(document, location.href, { previewLimit });
 }
 
-async function injectedLoadWantListItemsById({ wantListId, wantListName, previewLimit }) {
+async function injectedLoadWantListItemsById({ wantListId, wantListName, wantListPath, previewLimit }) {
   const textOf = (value) => String(value || '').trim().replace(/\s+/g, ' ');
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const extractWantListId = (href) => {
@@ -3181,15 +3207,16 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, preview
   let pagesScanned = 0;
   let parserSource = 'fetched-pages';
   let previousPageSignature = '';
+  const normalizedWantListPath = normalizeWantListPathLocal(wantListPath);
 
   for (let page = 1; page <= 100; page += 1) {
-    const urlCandidates = [
-      `/${lang}/${game}/Wants/${normalizedWantListId}?site=${page}`,
-      `/${lang}/${game}/Wants/${normalizedWantListId}/${page}`,
-      `/${lang}/${game}/Wants/EditWantsList/${normalizedWantListId}?site=${page}`,
-      `/${lang}/${game}/Wants/Show/${normalizedWantListId}?site=${page}`,
-      `/${lang}/${game}/Wants?idWantsList=${normalizedWantListId}&site=${page}`,
-    ];
+    const urlCandidates = buildWantListPageCandidatesLocal({
+      lang,
+      game,
+      normalizedWantListId,
+      wantListPath: normalizedWantListPath,
+      page,
+    });
 
     let html = '';
     let responseUrl = '';
@@ -3249,6 +3276,56 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, preview
     if (textOf(item?.idWant)) return `want-${textOf(item.idWant)}`;
     if (textOf(item?.idProduct)) return `product-${textOf(item.idProduct)}-${textOf(item?.quantity)}`;
     return `name-${textOf(item?.productName)}-${textOf(item?.quantity)}`;
+  }
+
+  function normalizeWantListPathLocal(value) {
+    if (!value) return '';
+
+    try {
+      const parsed = new URL(value, location.origin);
+      if (parsed.origin !== location.origin) return '';
+      if (extractWantListId(parsed.href) !== normalizedWantListId) return '';
+      parsed.hash = '';
+      parsed.searchParams.delete('site');
+      return `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return '';
+    }
+  }
+
+  function buildWantListPageCandidatesLocal({ lang, game, normalizedWantListId, wantListPath, page }) {
+    const candidates = [];
+    const seen = new Set();
+
+    const addCandidate = (value) => {
+      const normalized = textOf(value);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      candidates.push(normalized);
+    };
+
+    if (wantListPath) {
+      try {
+        const parsed = new URL(wantListPath, location.origin);
+        parsed.hash = '';
+        if (page <= 1) {
+          parsed.searchParams.delete('site');
+        } else {
+          parsed.searchParams.set('site', String(page));
+        }
+        addCandidate(`${parsed.pathname}${parsed.search}`);
+      } catch {
+        addCandidate(wantListPath);
+      }
+    }
+
+    addCandidate(`/${lang}/${game}/Wants/${normalizedWantListId}${page > 1 ? `?site=${page}` : ''}`);
+    addCandidate(`/${lang}/${game}/Wants/${normalizedWantListId}/${page}`);
+    addCandidate(`/${lang}/${game}/Wants/EditWantsList/${normalizedWantListId}${page > 1 ? `?site=${page}` : ''}`);
+    addCandidate(`/${lang}/${game}/Wants/Show/${normalizedWantListId}${page > 1 ? `?site=${page}` : ''}`);
+    addCandidate(`/${lang}/${game}/Wants?idWantsList=${normalizedWantListId}${page > 1 ? `&site=${page}` : ''}`);
+
+    return candidates;
   }
 
   function parseWantItemsFromDocumentLocal(doc, href) {
@@ -3540,15 +3617,16 @@ async function loadWantListItemsById({ wantListId, previewLimit }) {
   let pagesScanned = 0;
   let parserSource = 'fetched-pages';
   let previousPageSignature = '';
+  const normalizedWantListPath = textOf(selectedWantList.path);
 
   for (let page = 1; page <= 100; page += 1) {
-    const urlCandidates = [
-      `/${lang}/${game}/Wants/${normalizedWantListId}?site=${page}`,
-      `/${lang}/${game}/Wants/${normalizedWantListId}/${page}`,
-      `/${lang}/${game}/Wants/EditWantsList/${normalizedWantListId}?site=${page}`,
-      `/${lang}/${game}/Wants/Show/${normalizedWantListId}?site=${page}`,
-      `/${lang}/${game}/Wants?idWantsList=${normalizedWantListId}&site=${page}`,
-    ];
+    const urlCandidates = buildWantListPageCandidates({
+      lang,
+      game,
+      normalizedWantListId,
+      wantListPath: normalizedWantListPath,
+      page,
+    });
 
     let html = '';
     let responseUrl = '';
@@ -3607,6 +3685,41 @@ async function loadWantListItemsById({ wantListId, previewLimit }) {
       previewLimit: previewLimit || 8,
     },
   };
+
+  function buildWantListPageCandidates({ lang, game, normalizedWantListId, wantListPath, page }) {
+    const candidates = [];
+    const seen = new Set();
+
+    const addCandidate = (value) => {
+      const normalized = textOf(value);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      candidates.push(normalized);
+    };
+
+    if (wantListPath) {
+      try {
+        const parsed = new URL(wantListPath, location.origin);
+        parsed.hash = '';
+        if (page <= 1) {
+          parsed.searchParams.delete('site');
+        } else {
+          parsed.searchParams.set('site', String(page));
+        }
+        addCandidate(`${parsed.pathname}${parsed.search}`);
+      } catch {
+        addCandidate(wantListPath);
+      }
+    }
+
+    addCandidate(`/${lang}/${game}/Wants/${normalizedWantListId}${page > 1 ? `?site=${page}` : ''}`);
+    addCandidate(`/${lang}/${game}/Wants/${normalizedWantListId}/${page}`);
+    addCandidate(`/${lang}/${game}/Wants/EditWantsList/${normalizedWantListId}${page > 1 ? `?site=${page}` : ''}`);
+    addCandidate(`/${lang}/${game}/Wants/Show/${normalizedWantListId}${page > 1 ? `?site=${page}` : ''}`);
+    addCandidate(`/${lang}/${game}/Wants?idWantsList=${normalizedWantListId}${page > 1 ? `&site=${page}` : ''}`);
+
+    return candidates;
+  }
 }
 
 async function fetchAvailableWantListsDocument() {
@@ -3640,9 +3753,11 @@ async function fetchAvailableWantListsDocument() {
     const id = candidates.map((value) => extractWantListIdFromHref(value)).find(Boolean);
     if (!id || seenIds.has(id)) return;
     seenIds.add(id);
+    const rawPath = candidates.find((value) => extractWantListIdFromHref(value) === id) || '';
     wantLists.push({
       id,
       name: extractWantListName(node, id),
+      path: normalizeWantListPath(rawPath),
     });
   });
 
@@ -3653,7 +3768,11 @@ async function fetchAvailableWantListsDocument() {
       const id = match[1];
       if (!id || seenIds.has(id)) continue;
       seenIds.add(id);
-      wantLists.push({ id, name: `Want list ${id}` });
+      wantLists.push({
+        id,
+        name: `Want list ${id}`,
+        path: `/${lang}/${game}/Wants/${id}`,
+      });
     }
   }
 
@@ -3662,6 +3781,7 @@ async function fetchAvailableWantListsDocument() {
     wantLists.unshift({
       id: pageWantListId,
       name: extractCurrentWantListName() || `Want list ${pageWantListId}`,
+      path: normalizeWantListPath(location.href) || `/${lang}/${game}/Wants/${pageWantListId}`,
     });
   }
 
@@ -3730,6 +3850,21 @@ async function fetchAvailableWantListsDocument() {
       if (match) return match[1];
     }
     return '';
+  }
+
+  function normalizeWantListPath(value) {
+    if (!value) return '';
+
+    try {
+      const parsed = new URL(value, location.origin);
+      if (parsed.origin !== location.origin) return '';
+      if (!extractWantListIdFromHref(parsed.href)) return '';
+      parsed.hash = '';
+      parsed.searchParams.delete('site');
+      return `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return '';
+    }
   }
 }
 
