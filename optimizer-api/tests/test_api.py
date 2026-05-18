@@ -112,7 +112,7 @@ def test_real_request_fixtures_acceptance(
     assert response.status_code == 200, response.text
 
     body = response.json()
-    assert body["status"] in {"optimal", "infeasible"}
+    assert body["status"] in {"optimal", "feasible", "infeasible"}
     assert set(body.keys()) == {
         "status",
         "currency",

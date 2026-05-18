@@ -7,11 +7,13 @@ from .models import (
     AllocationResult,
     CartItemResult,
     CartSellerResult,
+    Offer,
     OptimizationCart,
     OptimizationRequest,
     OptimizationResponse,
     OptimizationTotals,
     SellerResult,
+    WantedItem,
 )
 
 LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
@@ -35,6 +37,34 @@ def _method_card_capacity(max_weight_grams: int) -> int:
 
 def _has_explicit_item_weights(request: OptimizationRequest) -> bool:
     return all(item.unit_weight_grams is not None for item in request.items)
+
+
+def _capped_offer_quantity(offer: Offer, item_map: dict[str, WantedItem]) -> int:
+    return min(offer.available_quantity, item_map[offer.item_id].quantity)
+
+
+def _prune_dominated_offers(
+    offers: list[Offer], item_map: dict[str, WantedItem]
+) -> list[Offer]:
+    offers_by_bucket: dict[tuple[str, str], list[Offer]] = defaultdict(list)
+    for offer in offers:
+        offers_by_bucket[(offer.seller_id, offer.item_id)].append(offer)
+
+    chosen_offer_ids: set[str] = set()
+    for (seller_id, item_id), bucket_offers in offers_by_bucket.items():
+        del seller_id
+        keep_count = item_map[item_id].quantity
+        ranked_offers = sorted(
+            bucket_offers,
+            key=lambda offer: (
+                offer.unit_price,
+                -offer.available_quantity,
+                offer.offer_id,
+            ),
+        )
+        chosen_offer_ids.update(offer.offer_id for offer in ranked_offers[:keep_count])
+
+    return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
 
 
 def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
@@ -68,6 +98,8 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             continue
         usable_offers.append(offer)
 
+    usable_offers = _prune_dominated_offers(usable_offers, item_map)
+
     coverage = defaultdict(int)
     for offer in usable_offers:
         coverage[offer.item_id] += offer.available_quantity
@@ -98,8 +130,9 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     seller_offers = defaultdict(list)
     for offer in usable_offers:
         seller_offers[offer.seller_id].append(offer)
+        capped_quantity = _capped_offer_quantity(offer, item_map)
         offer_vars[offer.offer_id] = model.NewIntVar(
-            0, offer.available_quantity, f"qty_{offer.offer_id}"
+            0, capped_quantity, f"qty_{offer.offer_id}"
         )
 
     for seller_id in seller_offers:
@@ -118,7 +151,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     for seller_id, offers in seller_offers.items():
         active = seller_active_vars[seller_id]
         total_units = sum(offer_vars[offer.offer_id] for offer in offers)
-        max_units = sum(offer.available_quantity for offer in offers)
+        max_units = sum(_capped_offer_quantity(offer, item_map) for offer in offers)
         model.Add(total_units <= max_units * active)
         model.Add(total_units >= active)
 
@@ -141,18 +174,21 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
 
     for seller_id, offers in seller_offers.items():
         seller_value_upper_bounds[seller_id] = sum(
-            _to_cents(offer.unit_price) * offer.available_quantity for offer in offers
+            _to_cents(offer.unit_price) * _capped_offer_quantity(offer, item_map)
+            for offer in offers
         )
         seller_weight_upper_bounds[seller_id] = sum(
-            (item_map[offer.item_id].unit_weight_grams or 0) * offer.available_quantity
+            (item_map[offer.item_id].unit_weight_grams or 0)
+            * _capped_offer_quantity(offer, item_map)
             for offer in offers
         )
         seller_card_upper_bounds[seller_id] = sum(
-            item_map[offer.item_id].cards_per_unit * offer.available_quantity
+            item_map[offer.item_id].cards_per_unit
+            * _capped_offer_quantity(offer, item_map)
             for offer in offers
         )
         seller_unit_upper_bounds[seller_id] = sum(
-            offer.available_quantity for offer in offers
+            _capped_offer_quantity(offer, item_map) for offer in offers
         )
 
     for seller_id, active in seller_active_vars.items():
@@ -191,11 +227,6 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             for method_index, method in enumerate(route_methods):
                 method_var = model.NewBoolVar(f"ship_{seller_id}_{method_index}")
                 seller_shipping_method_vars[seller_id].append((method, method_var))
-                model.Add(
-                    total_value_expr
-                    <= method.max_value_cents
-                    + seller_value_upper_bounds[seller_id] * (1 - method_var)
-                )
                 model.Add(
                     total_value_expr
                     <= method.max_value_cents
@@ -257,35 +288,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             notes=["Solver found no feasible solution."],
         )
 
-    best_total_cost = int(round(solver.ObjectiveValue()))
-    seller_rank = {
-        seller_id: index
-        for index, seller_id in enumerate(sorted(seller_active_vars), start=1)
-    }
-    offer_rank = {
-        offer.offer_id: index
-        for index, offer in enumerate(
-            sorted(usable_offers, key=lambda offer: offer.offer_id), start=1
-        )
-    }
-    tie_break_terms = [
-        seller_rank[seller_id] * active
-        for seller_id, active in seller_active_vars.items()
-    ]
-    tie_break_terms.extend(
-        offer_rank[offer.offer_id] * offer_vars[offer.offer_id]
-        for offer in usable_offers
-    )
-    if tie_break_terms:
-        model.Add(objective_expr == best_total_cost)
-        model.Minimize(sum(tie_break_terms))
-
-        tie_break_solver = cp_model.CpSolver()
-        tie_break_solver.parameters.max_time_in_seconds = 5
-        tie_break_solver.parameters.num_search_workers = 1
-        tie_break_status = tie_break_solver.Solve(model)
-        if tie_break_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            solver = tie_break_solver
+    solution_status = "optimal" if status == cp_model.OPTIMAL else "feasible"
 
     allocations = []
     cart_items_by_seller = defaultdict(list)
@@ -402,9 +405,13 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         notes.append(
             f"Filtered sellers excluded before solve: {', '.join(sorted(filtered_sellers))}"
         )
+    if solution_status == "feasible":
+        notes.append(
+            "Solver hit time limit before proving optimality. Returning best known feasible order."
+        )
 
     return OptimizationResponse(
-        status="optimal",
+        status=solution_status,
         currency=request.currency,
         totals=OptimizationTotals(
             item_subtotal=_from_cents(item_subtotal),

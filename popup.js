@@ -114,6 +114,10 @@ const OPTIMIZER_FIXTURE_OPTIONS = [
     path: 'optimizer-api/tests/fixtures/requests/small_wantslist.json',
   },
   {
+    value: 'big_list',
+    path: 'optimizer-api/tests/fixtures/requests/big_list.json',
+  },
+  {
     value: 'ob_nixilis_improvements',
     path: 'optimizer-api/tests/fixtures/requests/ob_nixilis_improvements.json',
   },
@@ -223,7 +227,7 @@ function syncOptimizeButton(isBusy = false) {
 }
 
 function hasOptimizedCart() {
-  return latestOptimizationResult?.status === 'optimal'
+  return ['optimal', 'feasible'].includes(latestOptimizationResult?.status)
     && Array.isArray(latestOptimizationResult?.cart?.sellers)
     && latestOptimizationResult.cart.sellers.length > 0;
 }
@@ -1815,22 +1819,30 @@ async function submitOptimizationRequest(endpoint) {
     }
 
     const result = responseBody || {};
+    if (result.status !== 'optimal' && result.status !== 'infeasible') {
+      throw new Error('Optimizer API returned invalid response payload. Missing result status.');
+    }
+
     renderOptimizationResult(result);
+    const isUsableCart = result.status === 'optimal' || result.status === 'feasible';
     renderSummary([
-      { label: 'Optimizer status', value: result.status || 'unknown', tone: result.status === 'optimal' ? 'good' : 'bad' },
-      { label: 'Grand total', value: formatCurrencyAmount(result?.totals?.grand_total || 0, result.currency || 'EUR'), tone: result.status === 'optimal' ? 'good' : '' },
+      { label: 'Optimizer status', value: result.status || 'unknown', tone: isUsableCart ? 'good' : 'bad' },
+      { label: 'Grand total', value: formatCurrencyAmount(result?.totals?.grand_total || 0, result.currency || 'EUR'), tone: isUsableCart ? 'good' : '' },
       { label: 'Item subtotal', value: formatCurrencyAmount(result?.totals?.item_subtotal || 0, result.currency || 'EUR') },
       { label: 'Shipping total', value: formatCurrencyAmount(result?.totals?.shipping_total || 0, result.currency || 'EUR') },
       { label: 'Chosen sellers', value: String(result?.cart?.total_sellers || 0) },
       { label: 'Total units', value: String(result?.cart?.total_units || 0) },
       { label: 'Notes', value: Array.isArray(result?.notes) && result.notes.length ? result.notes.join(' | ') : '-' },
     ]);
-    setActiveWorkflowStep(result.status === 'optimal' ? 'fill' : 'optimize', { force: true });
+    setActiveWorkflowStep(isUsableCart ? 'fill' : 'optimize', { force: true });
     setActiveResultTab('cart');
 
     if (result.status === 'optimal') {
       appendStatus(`Optimizer returned cart with ${result.cart?.total_sellers || 0} sellers and ${result.cart?.total_units || 0} units.`, 'good');
       finishRun(`Optimizer finished. Total ${formatCurrencyAmount(result?.totals?.grand_total || 0, result.currency || 'EUR')}.`, 'good');
+    } else if (result.status === 'feasible') {
+      appendStatus(`Optimizer returned best known cart with ${result.cart?.total_sellers || 0} sellers and ${result.cart?.total_units || 0} units.`, 'good');
+      finishRun(`Optimizer hit time limit. Best known total ${formatCurrencyAmount(result?.totals?.grand_total || 0, result.currency || 'EUR')}.`, 'good');
     } else {
       appendStatus(`Optimizer returned infeasible result. ${Array.isArray(result.notes) && result.notes.length ? result.notes[0] : ''}`.trim(), 'bad');
       finishRun('Optimizer finished with no feasible order.', 'bad');

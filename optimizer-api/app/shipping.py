@@ -12,6 +12,78 @@ LEGACY_ROUTE_SHIPPING_EUR = {
     ("netherlands", "netherlands"): 1.70,
 }
 SHIPPING_DATA_PATH = Path(__file__).with_name("data") / "shipping_costs.json"
+CARD_ORDER_MAX_WEIGHT_GRAMS = 1_000
+
+
+def _is_estimation_method(name: str) -> bool:
+    return "SHIPPING COST ESTIMATION" in name.upper()
+
+
+def _is_card_order_excluded_method(name: str) -> bool:
+    normalized = name.upper()
+    return any(
+        token in normalized
+        for token in (
+            "SHIPPING COST ESTIMATION",
+            "INSURANCE",
+            "INSURED",
+            "WERTPAKET",
+            "VERZEKER",
+            "EXPRESS",
+        )
+    )
+
+
+def _normalize_card_order_methods(
+    raw_methods: list[dict[str, object]],
+) -> tuple[ShippingMethod, ...]:
+    methods = []
+    for method in raw_methods:
+        name = str(method.get("name", ""))
+        if _is_card_order_excluded_method(name):
+            continue
+        methods.append(
+            ShippingMethod(
+                name=name,
+                is_tracked=bool(method["isTracked"]),
+                max_value_cents=parse_eur_to_cents(method["maxValue"]),
+                max_weight_grams=min(
+                    int(method["maxWeight"]), CARD_ORDER_MAX_WEIGHT_GRAMS
+                ),
+                stamp_price_cents=parse_eur_to_cents(method["stampPrice"]),
+                total_price_cents=parse_eur_to_cents(method["price"]),
+                is_letter=bool(method["isLetter"]),
+                is_virtual=bool(method["isVirtual"]),
+            )
+        )
+
+    methods.sort(
+        key=lambda method: (
+            method.total_price_cents,
+            -method.max_value_cents,
+            -method.max_weight_grams,
+            method.name,
+        )
+    )
+
+    kept: list[ShippingMethod] = []
+    for method in methods:
+        if any(
+            existing.is_letter == method.is_letter
+            and existing.is_tracked == method.is_tracked
+            and existing.total_price_cents <= method.total_price_cents
+            and existing.max_value_cents >= method.max_value_cents
+            and existing.max_weight_grams >= method.max_weight_grams
+            for existing in kept
+        ):
+            continue
+        kept.append(method)
+
+    letters = [method for method in kept if method.is_letter]
+    parcels = [method for method in kept if not method.is_letter]
+    cheapest_parcel = parcels[:1]
+
+    return tuple([*letters, *cheapest_parcel])
 
 
 def normalize_country_name(country: str) -> str:
@@ -102,19 +174,7 @@ def _load_shipping_route_book(path: Path) -> ShippingRouteBook:
     for route in payload.get("routes", []):
         from_country = route["from_country"]
         to_country = route["to_country"]
-        methods = tuple(
-            ShippingMethod(
-                name=method["name"],
-                is_tracked=bool(method["isTracked"]),
-                max_value_cents=parse_eur_to_cents(method["maxValue"]),
-                max_weight_grams=int(method["maxWeight"]),
-                stamp_price_cents=parse_eur_to_cents(method["stampPrice"]),
-                total_price_cents=parse_eur_to_cents(method["price"]),
-                is_letter=bool(method["isLetter"]),
-                is_virtual=bool(method["isVirtual"]),
-            )
-            for method in route.get("methods", [])
-        )
+        methods = _normalize_card_order_methods(route.get("methods", []))
         methods_by_route[_route_key(from_country, to_country)] = methods
 
     return ShippingRouteBook(country_ids=country_ids, methods_by_route=methods_by_route)

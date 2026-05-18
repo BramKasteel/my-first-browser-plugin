@@ -220,14 +220,14 @@ class OptimizationCart(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     sellers: list[CartSellerResult] = Field(default_factory=list)
-    total_sellers: int = Field(ge=0)
-    total_units: int = Field(ge=0)
+    total_sellers: int = Field(default=0, ge=0)
+    total_units: int = Field(default=0, ge=0)
 
 
 class OptimizationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    status: Literal["optimal", "infeasible"]
+    status: Literal["optimal", "feasible", "infeasible"]
     currency: CurrencyCode
     totals: OptimizationTotals
     chosen_sellers: list[SellerResult] = Field(default_factory=list)

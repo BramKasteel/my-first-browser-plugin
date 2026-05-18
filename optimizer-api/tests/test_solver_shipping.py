@@ -8,7 +8,7 @@ from app.models import (
     WantedItem,
 )
 from app.shipping import ShippingMethod, ShippingRouteBook
-from app.solver import optimize_order
+from app.solver import _prune_dominated_offers, optimize_order
 
 
 def _request(
@@ -188,3 +188,147 @@ def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
 
     assert response.status == "optimal"
     assert response.totals.shipping_total == 2.0
+
+
+def test_optimize_returns_empty_cart_summary_for_infeasible_request() -> None:
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[WantedItem(item_id="item-1", name="Card", quantity=2)],
+        sellers=[Seller(seller_id="seller-1", name="Seller", country="Germany")],
+        offers=[
+            Offer(
+                offer_id="offer-1",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=1.0,
+                available_quantity=1,
+            )
+        ],
+        preferences=OptimizationPreferences(),
+    )
+
+    response = optimize_order(request)
+
+    assert response.status == "infeasible"
+    assert response.cart.sellers == []
+    assert response.cart.total_sellers == 0
+    assert response.cart.total_units == 0
+
+
+def test_prune_dominated_offers_drops_more_expensive_duplicate() -> None:
+    offers = [
+        Offer(
+            offer_id="offer-1",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=1.0,
+            available_quantity=2,
+            condition="Near Mint",
+            language="English",
+        ),
+        Offer(
+            offer_id="offer-2",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=1.5,
+            available_quantity=1,
+            condition="Near Mint",
+            language="English",
+        ),
+    ]
+
+    item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=1)}
+
+    pruned = _prune_dominated_offers(offers, item_map)
+
+    assert [offer.offer_id for offer in pruned] == ["offer-1"]
+
+
+def test_prune_dominated_offers_keeps_cheapest_n_per_seller_item() -> None:
+    offers = [
+        Offer(
+            offer_id="offer-1",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=1.0,
+            available_quantity=2,
+            condition="Near Mint",
+            language="English",
+        ),
+        Offer(
+            offer_id="offer-2",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=0.9,
+            available_quantity=2,
+            condition="Excellent",
+            language="English",
+        ),
+        Offer(
+            offer_id="offer-3",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=0.8,
+            available_quantity=2,
+            condition="Near Mint",
+            language="German",
+        ),
+    ]
+
+    item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=2)}
+
+    pruned = _prune_dominated_offers(offers, item_map)
+
+    assert [offer.offer_id for offer in pruned] == ["offer-2", "offer-3"]
+
+
+def test_prune_dominated_offers_prefers_higher_quantity_on_price_tie() -> None:
+    offers = [
+        Offer(
+            offer_id="offer-1",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=1.0,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-2",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=1.0,
+            available_quantity=3,
+        ),
+    ]
+
+    item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=1)}
+
+    pruned = _prune_dominated_offers(offers, item_map)
+
+    assert [offer.offer_id for offer in pruned] == ["offer-2"]
+
+
+def test_prune_dominated_offers_keeps_all_options_when_wanted_quantity_exceeds_bucket() -> (
+    None
+):
+    offers = [
+        Offer(
+            offer_id="offer-1",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=1.0,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-2",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=1.2,
+            available_quantity=1,
+        ),
+    ]
+
+    item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=3)}
+
+    pruned = _prune_dominated_offers(offers, item_map)
+
+    assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2"]
