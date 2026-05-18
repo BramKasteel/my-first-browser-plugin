@@ -1042,7 +1042,7 @@
           <p class="panel-note">Once seller batch or fixture payload ready, send normalized request to optimizer API.</p>
           <label class="config-label" for="optimizerApiUrl">
             <span>Optimizer API URL</span>
-            <input id="optimizerApiUrl" type="text" value="http://127.0.0.1:8000/optimize" spellcheck="false" autocomplete="off">
+              <input id="optimizerApiUrl" type="text" value="" spellcheck="false" autocomplete="off" readonly>
           </label>
           <div class="actions">
             <button id="optimizeOrder" class="secondary">Optimize order</button>
@@ -1092,6 +1092,7 @@
                   </select>
                 </label>
                 <button id="loadOptimizerFixture" class="secondary">Load fixture</button>
+                <button id="optimizeOrderLocalDebug" class="secondary">Optimize via localhost</button>
               </section>
 
               <div id="runStatus" class="run-status" aria-live="polite">

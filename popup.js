@@ -2,6 +2,7 @@ const extractItemsButton = document.getElementById('extractItems');
 const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
 const loadOptimizerFixtureButton = document.getElementById('loadOptimizerFixture');
 const optimizeOrderButton = document.getElementById('optimizeOrder');
+const optimizeOrderLocalDebugButton = document.getElementById('optimizeOrderLocalDebug');
 const fillCartButton = document.getElementById('fillCart');
 const probeRateLimitsButton = document.getElementById('probeRateLimits');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
@@ -85,10 +86,8 @@ const MIN_SELLER_DELAY_MS = 250;
 const REQUEST_JITTER_RATIO = 0.15;
 const RATE_PROBE_DELAYS_MS = [1500, 1000, 750, 500, 350, 300, 250, 200];
 const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
-const DEFAULT_OPTIMIZER_API_URL = window.APP_CONFIG?.optimizerApiUrl || 'http://127.0.0.1:8000/optimize';
-const LEGACY_OPTIMIZER_API_URLS = new Set([
-  'https://3lgtnkh9xd.execute-api.eu-central-1.amazonaws.com/optimize',
-]);
+const DEFAULT_OPTIMIZER_API_URL = textOf(window.APP_CONFIG?.optimizerApiUrl);
+const LOCALHOST_OPTIMIZER_API_URL = 'http://127.0.0.1:8000/optimize';
 const DEFAULT_OPTIMIZER_FIXTURE = 'small_wantslist';
 const WORKFLOW_STEPS = ['source', 'sellers', 'optimize', 'fill'];
 const WORKFLOW_META = {
@@ -218,6 +217,9 @@ function syncOptimizeButton(isBusy = false) {
   optimizeOrderButton.disabled = isBusy || !hasPayload;
   optimizeOrderButton.classList.toggle('is-busy', isBusy);
   optimizeOrderButton.classList.toggle('secondary', !hasPayload);
+  optimizeOrderLocalDebugButton.disabled = isBusy || !hasPayload;
+  optimizeOrderLocalDebugButton.classList.toggle('is-busy', isBusy);
+  optimizeOrderLocalDebugButton.classList.toggle('secondary', !hasPayload);
 }
 
 function hasOptimizedCart() {
@@ -244,6 +246,8 @@ function setBusy(isBusy) {
   loadOptimizerFixtureButton.classList.toggle('is-busy', isBusy);
   optimizeOrderButton.disabled = isBusy;
   optimizeOrderButton.classList.toggle('is-busy', isBusy);
+  optimizeOrderLocalDebugButton.disabled = isBusy;
+  optimizeOrderLocalDebugButton.classList.toggle('is-busy', isBusy);
   fillCartButton.disabled = isBusy;
   fillCartButton.classList.toggle('is-busy', isBusy);
   probeRateLimitsButton.disabled = isBusy;
@@ -252,7 +256,6 @@ function setBusy(isBusy) {
   probeRequestCountInput.disabled = isBusy;
   probePageBudgetInput.disabled = isBusy;
   optimizerFixtureSelectEl.disabled = isBusy;
-  optimizerApiUrlInput.disabled = isBusy;
   sellerReputationFilterEl.disabled = isBusy;
   sellerDeliveryTimeFilterEl.disabled = isBusy;
   sellerTypeFilterEl.disabled = isBusy;
@@ -564,12 +567,8 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function sanitizeOptimizerApiUrl(value) {
-  const normalized = textOf(value);
-  if (LEGACY_OPTIMIZER_API_URLS.has(normalized)) {
-    return DEFAULT_OPTIMIZER_API_URL;
-  }
-  return normalized || DEFAULT_OPTIMIZER_API_URL;
+function syncOptimizerApiUrlInput() {
+  optimizerApiUrlInput.value = DEFAULT_OPTIMIZER_API_URL;
 }
 
 function sanitizeOptimizerFixture(value) {
@@ -616,7 +615,7 @@ async function loadSellerSettings() {
   probeRequestCountInput.value = String(clampProbeRuns(settings.probeRuns));
   probePageBudgetInput.value = String(clampProbePageBudget(settings.probePages));
   optimizerFixtureSelectEl.value = sanitizeOptimizerFixture(settings.optimizerFixture);
-  optimizerApiUrlInput.value = sanitizeOptimizerApiUrl(settings.optimizerApiUrl);
+  syncOptimizerApiUrlInput();
   sellerReputationFilterEl.value = normalizeSellerReputation(settings.sellerReputationFilter);
   sellerDeliveryTimeFilterEl.value = normalizeMaxShippingTime(settings.sellerDeliveryTimeFilter);
   sellerTypeFilterEl.value = normalizeSellerType(settings.sellerTypeFilter);
@@ -655,7 +654,6 @@ async function saveSellerSettings() {
       probeRuns: clampProbeRuns(probeRequestCountInput.value),
       probePages: clampProbePageBudget(probePageBudgetInput.value),
       optimizerFixture: sanitizeOptimizerFixture(optimizerFixtureSelectEl.value),
-      optimizerApiUrl: sanitizeOptimizerApiUrl(optimizerApiUrlInput.value),
       sellerReputationFilter: normalizeSellerReputation(sellerReputationFilterEl.value),
       sellerDeliveryTimeFilter: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
       sellerTypeFilter: normalizeSellerType(sellerTypeFilterEl.value),
@@ -1765,14 +1763,18 @@ async function handleLoadOptimizerFixture() {
   }
 }
 
-async function handleOptimizeOrder() {
+async function submitOptimizationRequest(endpoint) {
   if (!latestExtractPayload) {
     appendStatus('No optimizer payload ready yet. Scrape sellers first.', 'bad');
     return;
   }
 
-  const endpoint = sanitizeOptimizerApiUrl(optimizerApiUrlInput.value);
-  optimizerApiUrlInput.value = endpoint;
+  if (!textOf(endpoint)) {
+    appendStatus('Optimizer API URL missing in config.js.', 'bad');
+    return;
+  }
+
+  syncOptimizerApiUrlInput();
   await saveSellerSettings();
 
   startRun('Waiting for optimizer reply...');
@@ -1840,6 +1842,14 @@ async function handleOptimizeOrder() {
     setStepActivity(null);
     setBusy(false);
   }
+}
+
+async function handleOptimizeOrder() {
+  return submitOptimizationRequest(DEFAULT_OPTIMIZER_API_URL);
+}
+
+async function handleOptimizeOrderLocalDebug() {
+  return submitOptimizationRequest(LOCALHOST_OPTIMIZER_API_URL);
 }
 
 async function getTargetTab() {
@@ -2842,6 +2852,7 @@ confirmWantListButton?.addEventListener('click', () => {
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 loadOptimizerFixtureButton.addEventListener('click', handleLoadOptimizerFixture);
 optimizeOrderButton.addEventListener('click', handleOptimizeOrder);
+optimizeOrderLocalDebugButton.addEventListener('click', handleOptimizeOrderLocalDebug);
 fillCartButton.addEventListener('click', handleFillCart);
 probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
 copyPayloadButton.addEventListener('click', handleCopyPayload);
@@ -2868,7 +2879,6 @@ sellerDelayInput.addEventListener('change', saveSellerSettings);
 probeRequestCountInput.addEventListener('change', saveSellerSettings);
 probePageBudgetInput.addEventListener('change', saveSellerSettings);
 optimizerFixtureSelectEl.addEventListener('change', saveSellerSettings);
-optimizerApiUrlInput.addEventListener('change', saveSellerSettings);
 wantListSelectEl?.addEventListener('change', () => {
   selectedWantListId = textOf(wantListSelectEl.value);
   saveSellerSettings();
