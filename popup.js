@@ -3025,25 +3025,123 @@ function injectedFetchAvailableWantListsFromCardmarket() {
     return '';
   };
 
-  const results = [];
-  const seenIds = new Set();
-  document.querySelectorAll('a[href*="/Wants/"]').forEach((link) => {
-    const href = link.getAttribute('href') || '';
-    const id = extractWantListId(href);
-    if (!id || seenIds.has(id)) return;
-    seenIds.add(id);
-
-    const card = link.closest('.card, .article-teaser-portrait, .d-flex');
-    const heading = card?.querySelector('.card-title, h3, h4');
-    const name = textOf(heading?.textContent) || textOf(link.textContent) || `Want list ${id}`;
-    results.push({ id, name });
-  });
-
+  const pathParts = location.pathname.split('/').filter(Boolean);
+  const lang = pathParts[0] || 'en';
+  const game = pathParts[1] || 'Magic';
   const pageWantListId = extractWantListId(location.href);
-  return {
-    pageWantListId,
-    wantLists: results,
-  };
+
+  return fetch(`/${lang}/${game}/Wants`, { credentials: 'include' })
+    .then(async (overviewResponse) => {
+      if (!overviewResponse.ok) {
+        throw new Error(`Could not load Cardmarket wants overview. HTTP ${overviewResponse.status}.`);
+      }
+
+      const overviewHtml = await overviewResponse.text();
+      const overviewDoc = new DOMParser().parseFromString(overviewHtml, 'text/html');
+      const results = [];
+      const seenIds = new Set();
+
+      overviewDoc.querySelectorAll('a[href], button[onclick], [data-url], [data-href], option[value], [data-id-wants-list], [data-wants-list-id]').forEach((node) => {
+        const candidates = [
+          node.getAttribute('href') || '',
+          node.getAttribute('onclick') || '',
+          node.getAttribute('data-url') || '',
+          node.getAttribute('data-href') || '',
+          node.getAttribute('value') || '',
+          node.getAttribute('data-id-wants-list') || '',
+          node.getAttribute('data-wants-list-id') || '',
+        ];
+        const id = candidates.map((value) => extractWantListId(value)).find(Boolean);
+        if (!id || seenIds.has(id)) return;
+
+        seenIds.add(id);
+        results.push({
+          id,
+          name: extractWantListName(node, id),
+        });
+      });
+
+      if (!results.length) {
+        const regex = /(?:\/Wants\/(?:EditWantsList\/|Show\/)?|[?&]idWantsList=)(\d+)/gi;
+        let match;
+        while ((match = regex.exec(overviewHtml)) !== null) {
+          const id = match[1];
+          if (!id || seenIds.has(id)) continue;
+          seenIds.add(id);
+          results.push({ id, name: `Want list ${id}` });
+        }
+      }
+
+      if (pageWantListId && !seenIds.has(pageWantListId)) {
+        results.unshift({
+          id: pageWantListId,
+          name: extractCurrentWantListName() || `Want list ${pageWantListId}`,
+        });
+      }
+
+      if (!results.length) {
+        console.warn('[Cardmarket Wants Optimizer] No want lists found in overview HTML sample:', overviewHtml.slice(0, 2000));
+      }
+
+      return {
+        pageWantListId,
+        wantLists: results,
+      };
+    });
+
+  function extractWantListName(node, id) {
+    const ownText = sanitizeWantListName(node.textContent, id);
+    if (ownText && !new RegExp(`^${id}$`).test(ownText)) return ownText;
+
+    const heading = node.closest('tr, li, article, .row, .item, .accordion-item, .panel, .card, .list-group-item')
+      ?.querySelector('.card-title, h1, h2, h3, h4, strong, .fw-bold, .font-weight-bold');
+    const headingText = sanitizeWantListName(heading?.textContent || '', id);
+    if (headingText) return headingText;
+
+    const container = node.closest('tr, li, article, .row, .item, .accordion-item, .panel, .card, .list-group-item');
+    const containerText = sanitizeWantListName(container?.textContent || '', id);
+    if (containerText) {
+      const cleaned = containerText.split(id).join(' ').replace(/\s+/g, ' ').trim();
+      if (cleaned) return cleaned.slice(0, 120);
+    }
+
+    const labelled = sanitizeWantListName(
+      node.getAttribute('aria-label')
+      || node.getAttribute('title')
+      || node.getAttribute('data-bs-title')
+      || node.getAttribute('data-original-title'),
+      id
+    );
+    return labelled || `Want list ${id}`;
+  }
+
+  function sanitizeWantListName(value, id) {
+    const normalizedId = String(id || '').trim();
+    let cleaned = textOf(value);
+    if (!cleaned) return '';
+    cleaned = cleaned
+      .replace(/\bView\s*\/??\s*Edit\s*List\b.*$/i, '')
+      .replace(/\bView\b.*$/i, '')
+      .replace(/\bEdit\s*List\b.*$/i, '')
+      .replace(/\s+Wants\s*\(\d+\s*cards?\)\s*$/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (normalizedId) {
+      cleaned = cleaned.replace(new RegExp(`\\b${normalizedId}\\b`, 'g'), '').replace(/\s+/g, ' ').trim();
+    }
+    return cleaned;
+  }
+
+  function extractCurrentWantListName() {
+    const candidates = [
+      document.querySelector('h1'),
+      document.querySelector('.page-title'),
+      document.querySelector('.title-container h1, .title-container h2'),
+      document.querySelector('[data-wants-list-name]'),
+    ];
+    const name = candidates.map((node) => textOf(node?.textContent || node?.getAttribute?.('data-wants-list-name') || '')).find(Boolean);
+    return name || '';
+  }
 }
 
 function extractVisibleWantItems({ previewLimit }) {
@@ -3573,23 +3671,46 @@ async function fetchAvailableWantListsDocument() {
   };
 
   function extractWantListName(node, id) {
-    const ownText = textOf(node.textContent);
+    const ownText = sanitizeWantListName(node.textContent, id);
     if (ownText && !new RegExp(`^${id}$`).test(ownText)) return ownText;
 
+    const heading = node.closest('tr, li, article, .row, .item, .accordion-item, .panel, .card, .list-group-item')
+      ?.querySelector('.card-title, h1, h2, h3, h4, strong, .fw-bold, .font-weight-bold');
+    const headingText = sanitizeWantListName(heading?.textContent || '', id);
+    if (headingText) return headingText;
+
     const container = node.closest('tr, li, article, .row, .item, .accordion-item, .panel, .card, .list-group-item');
-    const containerText = textOf(container?.textContent || '');
+    const containerText = sanitizeWantListName(container?.textContent || '', id);
     if (containerText) {
       const cleaned = containerText.split(id).join(' ').replace(/\s+/g, ' ').trim();
       if (cleaned) return cleaned.slice(0, 120);
     }
 
-    const labelled = textOf(
+    const labelled = sanitizeWantListName(
       node.getAttribute('aria-label')
       || node.getAttribute('title')
       || node.getAttribute('data-bs-title')
-      || node.getAttribute('data-original-title')
+      || node.getAttribute('data-original-title'),
+      id
     );
     return labelled || `Want list ${id}`;
+  }
+
+  function sanitizeWantListName(value, id) {
+    const normalizedId = String(id || '').trim();
+    let cleaned = textOf(value);
+    if (!cleaned) return '';
+    cleaned = cleaned
+      .replace(/\bView\s*\/??\s*Edit\s*List\b.*$/i, '')
+      .replace(/\bView\b.*$/i, '')
+      .replace(/\bEdit\s*List\b.*$/i, '')
+      .replace(/\s+Wants\s*\(\d+\s*cards?\)\s*$/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (normalizedId) {
+      cleaned = cleaned.replace(new RegExp(`\\b${normalizedId}\\b`, 'g'), '').replace(/\s+/g, ' ').trim();
+    }
+    return cleaned;
   }
 
   function extractCurrentWantListName() {
