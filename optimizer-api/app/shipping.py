@@ -258,3 +258,27 @@ def legacy_shipping_cost_cents(*, seller_country: str, buyer_country: str) -> in
         DEFAULT_ORDER_SHIPPING_EUR,
     )
     return int(round(route_amount * 100))
+
+
+def minimum_shipping_cost_cents(
+    *,
+    seller_country: str,
+    buyer_country: str,
+    route_book: ShippingRouteBook | None,
+    missing_route_cost_cents: int,
+) -> int:
+    if route_book is not None:
+        route_tiers = route_book.lookup_tiers(
+            seller_country=seller_country,
+            buyer_country=buyer_country,
+        )
+        tier_costs = [
+            *(tier.total_price_cents for tier in route_tiers.letter_tiers),
+            *(tier.total_price_cents for tier in route_tiers.parcel_tiers),
+        ]
+        return min(tier_costs) if tier_costs else missing_route_cost_cents
+
+    return legacy_shipping_cost_cents(
+        seller_country=seller_country,
+        buyer_country=buyer_country,
+    )

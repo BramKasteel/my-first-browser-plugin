@@ -1,3 +1,9 @@
+Create a bipartite graph of sellers and items. Decompose it and solve the sub problems.
+You can also remove leaf nodes if they are more expensive then others:
+price(item, leaf) + shipping(leaf) >= max(price(item, other nodes))
+
+---------------
+
 Shipping costs might actually differ: in Germany there is a 'large letter' which is absent from the tables
 Asked a seller, should ask more
 ---------
