@@ -46,12 +46,84 @@ def _capped_offer_quantity(offer: Offer, item_map: dict[str, WantedItem]) -> int
     return min(offer.available_quantity, item_map[offer.item_id].quantity)
 
 
+def _new_quantity_var(cp_model_instance, *, upper_bound: int, name: str):
+    if upper_bound == 1:
+        return cp_model_instance.NewBoolVar(name)
+    return cp_model_instance.NewIntVar(0, upper_bound, name)
+
+
 def _offer_prune_rank(offer: Offer) -> tuple[float, int, str]:
     return (
         offer.unit_price,
         -offer.available_quantity,
         offer.offer_id,
     )
+
+
+def _shipping_tier_capacity(
+    tier: shipping.ShippingTier, *, use_explicit_weights: bool
+) -> int:
+    if use_explicit_weights:
+        return tier.max_weight_grams
+    return _method_card_capacity(tier.max_weight_grams)
+
+
+def _shipping_tier_dominates(
+    existing: tuple[bool, shipping.ShippingTier],
+    candidate: tuple[bool, shipping.ShippingTier],
+    *,
+    use_explicit_weights: bool,
+) -> bool:
+    existing_is_letter, existing_tier = existing
+    candidate_is_letter, candidate_tier = candidate
+
+    if existing_tier.total_price_cents > candidate_tier.total_price_cents:
+        return False
+    if existing_tier.max_value_cents < candidate_tier.max_value_cents:
+        return False
+    if _shipping_tier_capacity(
+        existing_tier, use_explicit_weights=use_explicit_weights
+    ) < _shipping_tier_capacity(
+        candidate_tier, use_explicit_weights=use_explicit_weights
+    ):
+        return False
+    if existing_is_letter and not candidate_is_letter:
+        return False
+
+    return True
+
+
+def _prune_dominated_shipping_tiers(
+    tier_candidates: list[tuple[bool, shipping.ShippingTier]],
+    *,
+    use_explicit_weights: bool,
+) -> list[tuple[bool, shipping.ShippingTier]]:
+    sorted_candidates = sorted(
+        tier_candidates,
+        key=lambda candidate: (
+            candidate[1].total_price_cents,
+            -candidate[1].max_value_cents,
+            -_shipping_tier_capacity(
+                candidate[1], use_explicit_weights=use_explicit_weights
+            ),
+            candidate[0],
+        ),
+    )
+
+    kept: list[tuple[bool, shipping.ShippingTier]] = []
+    for candidate in sorted_candidates:
+        if any(
+            _shipping_tier_dominates(
+                existing,
+                candidate,
+                use_explicit_weights=use_explicit_weights,
+            )
+            for existing in kept
+        ):
+            continue
+        kept.append(candidate)
+
+    return kept
 
 
 def _prune_dominated_offers(
@@ -90,6 +162,10 @@ def _selection_shipping_cost_cents(
         tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
             (False, tier) for tier in route_tiers.parcel_tiers
         ]
+        tier_candidates = _prune_dominated_shipping_tiers(
+            tier_candidates,
+            use_explicit_weights=use_explicit_weights,
+        )
         if tier_candidates:
             total_value_cents = sum(
                 _to_cents(offer.unit_price) * quantity for offer, quantity in selections
@@ -224,10 +300,10 @@ def _build_route_min_shipping_warm_start(
     for offer in usable_offers:
         seller_offers[offer.seller_id].append(offer)
         capped_quantity = _capped_offer_quantity(offer, item_map)
-        hint_offer_vars[offer.offer_id] = hint_model.NewIntVar(
-            0,
-            capped_quantity,
-            f"warm_qty_{offer.offer_id}",
+        hint_offer_vars[offer.offer_id] = _new_quantity_var(
+            hint_model,
+            upper_bound=capped_quantity,
+            name=f"warm_qty_{offer.offer_id}",
         )
 
     for seller_id in seller_offers:
@@ -400,17 +476,42 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
 
     offer_vars = {}
     seller_active_vars = {}
+    seller_active_exprs = {}
+    seller_tier_candidates = {}
 
     seller_offers = defaultdict(list)
     for offer in usable_offers:
         seller_offers[offer.seller_id].append(offer)
         capped_quantity = _capped_offer_quantity(offer, item_map)
-        offer_vars[offer.offer_id] = model.NewIntVar(
-            0, capped_quantity, f"qty_{offer.offer_id}"
+        offer_vars[offer.offer_id] = _new_quantity_var(
+            model,
+            upper_bound=capped_quantity,
+            name=f"qty_{offer.offer_id}",
         )
 
+    use_rich_shipping = route_book is not None
     for seller_id in seller_offers:
-        seller_active_vars[seller_id] = model.NewBoolVar(f"seller_active_{seller_id}")
+        route_tiers = shipping.ShippingRouteTiers(letter_tiers=(), parcel_tiers=())
+        if use_rich_shipping and route_book is not None:
+            route_tiers = route_book.lookup_tiers(
+                seller_country=seller_map[seller_id].country,
+                buyer_country=request.buyer_country,
+            )
+
+        tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
+            (False, tier) for tier in route_tiers.parcel_tiers
+        ]
+        tier_candidates = _prune_dominated_shipping_tiers(
+            tier_candidates,
+            use_explicit_weights=use_explicit_weights,
+        )
+        seller_tier_candidates[seller_id] = tier_candidates
+
+        if len(tier_candidates) <= 1:
+            seller_active_vars[seller_id] = model.NewBoolVar(
+                f"seller_active_{seller_id}"
+            )
+            seller_active_exprs[seller_id] = seller_active_vars[seller_id]
 
     for item in request.items:
         model.Add(
@@ -422,21 +523,10 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             == item.quantity
         )
 
-    for seller_id, offers in seller_offers.items():
-        active = seller_active_vars[seller_id]
-        total_units = sum(offer_vars[offer.offer_id] for offer in offers)
-        max_units = sum(_capped_offer_quantity(offer, item_map) for offer in offers)
-        model.Add(total_units <= max_units * active)  # todo: what does this do
-        model.Add(total_units >= active)  # todo: what does this do
-
-    if request.preferences.max_sellers is not None:
-        model.Add(sum(seller_active_vars.values()) <= request.preferences.max_sellers)
-
     objective_terms = []
     for offer in usable_offers:
         objective_terms.append(_to_cents(offer.unit_price) * offer_vars[offer.offer_id])
 
-    use_rich_shipping = route_book is not None
     seller_shipping_tier_choice_vars = {}
     seller_forced_shipping_tier_costs = {}
     seller_shipping_fallback_costs = {}
@@ -464,37 +554,29 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             _capped_offer_quantity(offer, item_map) for offer in offers
         )
 
-    for seller_id, active in seller_active_vars.items():
-        route_tiers = shipping.ShippingRouteTiers(letter_tiers=(), parcel_tiers=())
-        if use_rich_shipping and route_book is not None:
-            route_tiers = route_book.lookup_tiers(
-                seller_country=seller_map[seller_id].country,
-                buyer_country=request.buyer_country,
-            )
-
-        tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
-            (False, tier) for tier in route_tiers.parcel_tiers
-        ]
+    for seller_id, offers in seller_offers.items():
+        active = seller_active_exprs.get(seller_id)
+        tier_candidates = seller_tier_candidates[seller_id]
 
         if tier_candidates:
             total_value_expr = sum(
                 _to_cents(offer.unit_price) * offer_vars[offer.offer_id]
-                for offer in seller_offers[seller_id]
+                for offer in offers
             )
             total_weight_expr = sum(
                 (
                     item_map[offer.item_id].unit_weight_grams or 0
                 )  # TODO: is this not always zero for our wants list?
                 * offer_vars[offer.offer_id]
-                for offer in seller_offers[seller_id]
+                for offer in offers
             )
             total_card_expr = sum(
                 item_map[offer.item_id].cards_per_unit * offer_vars[offer.offer_id]
-                for offer in seller_offers[seller_id]
+                for offer in offers
             )
             parcel_only_units_expr = sum(
                 offer_vars[offer.offer_id]
-                for offer in seller_offers[seller_id]
+                for offer in offers
                 if item_map[offer.item_id].requires_parcel
             )
 
@@ -555,13 +637,10 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
                         <= seller_unit_upper_bounds[seller_id] * (1 - tier_var)
                     )
 
-            model.Add(
-                sum(
-                    tier_var
-                    for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
-                )
-                == active
+            active = sum(
+                tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
             )
+            seller_active_exprs[seller_id] = active
             objective_terms.append(
                 sum(
                     tier.total_price_cents * tier_var
@@ -580,6 +659,16 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
                 )
             )
         objective_terms.append(seller_shipping_fallback_costs[seller_id] * active)
+
+    for seller_id, offers in seller_offers.items():
+        active = seller_active_exprs[seller_id]
+        total_units = sum(offer_vars[offer.offer_id] for offer in offers)
+        max_units = sum(_capped_offer_quantity(offer, item_map) for offer in offers)
+        model.Add(total_units <= max_units * active)
+        model.Add(total_units >= active)
+
+    if request.preferences.max_sellers is not None:
+        model.Add(sum(seller_active_exprs.values()) <= request.preferences.max_sellers)
 
     warm_start_offer_values, warm_start_seller_values = (
         _build_route_min_shipping_warm_start(
@@ -605,6 +694,44 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         model.AddHint(offer_vars[offer_id], value)
     for seller_id, value in warm_start_seller_values.items():
         model.AddHint(seller_active_vars[seller_id], value)
+    for seller_id, tier_choices in seller_shipping_tier_choice_vars.items():
+        warm_selected_offer_quantities = {
+            offer.offer_id: warm_start_offer_values.get(offer.offer_id, 0)
+            for offer in seller_offers[seller_id]
+            if warm_start_offer_values.get(offer.offer_id, 0) > 0
+        }
+        if not warm_selected_offer_quantities:
+            for _, tier_var in tier_choices:
+                model.AddHint(tier_var, 0)
+            continue
+
+        warm_total_cost_cents = _assignment_total_cost_cents(
+            offer_quantities=warm_selected_offer_quantities,
+            offer_by_id={offer.offer_id: offer for offer in seller_offers[seller_id]},
+            item_map=item_map,
+            seller_map=seller_map,
+            buyer_country=request.buyer_country,
+            route_book=route_book,
+            use_explicit_weights=use_explicit_weights,
+        )
+        warm_item_cost_cents = sum(
+            _to_cents(offer.unit_price) * quantity
+            for offer in seller_offers[seller_id]
+            if (quantity := warm_selected_offer_quantities.get(offer.offer_id, 0)) > 0
+        )
+        warm_shipping_cost_cents = None
+        if warm_total_cost_cents is not None:
+            warm_shipping_cost_cents = warm_total_cost_cents - warm_item_cost_cents
+
+        matched_tier = False
+        for tier, tier_var in tier_choices:
+            tier_selected = int(warm_shipping_cost_cents == tier.total_price_cents)
+            model.AddHint(tier_var, tier_selected)
+            matched_tier = matched_tier or bool(tier_selected)
+
+        if not matched_tier:
+            for _, tier_var in tier_choices:
+                model.AddHint(tier_var, 0)
 
     objective_expr = sum(objective_terms)
     model.Minimize(objective_expr)
@@ -663,8 +790,18 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
 
     chosen_sellers = []
     cart_sellers = []
-    for seller_id, active_var in seller_active_vars.items():
-        if solver.Value(active_var) <= 0:
+    for seller_id in seller_offers:
+        active_var = seller_active_vars.get(seller_id)
+        is_active = False
+        if active_var is not None:
+            is_active = solver.Value(active_var) > 0
+        else:
+            is_active = any(
+                solver.Value(tier_var) > 0
+                for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
+            )
+
+        if not is_active:
             continue
 
         shipping_total = seller_shipping_fallback_costs.get(seller_id)
