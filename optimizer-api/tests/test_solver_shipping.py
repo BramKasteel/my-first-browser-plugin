@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import math
-
 from app.models import (
     Offer,
     OptimizationPreferences,
@@ -18,6 +16,7 @@ from app.shipping import (
 from app.solver import (
     IMPROVEMENT_MAX_TIME_SECONDS,
     MISSING_ROUTE_DATA_PENALTY_CENTS,
+    WARM_START_MAX_TIME_SECONDS,
     _build_route_min_shipping_warm_start,
     _prune_dominated_offers,
     _prune_dominated_single_item_sellers,
@@ -250,7 +249,7 @@ def test_optimize_uses_two_second_improvement_budget(monkeypatch) -> None:
 
     assert response.status == "optimal"
     assert len(seen_time_limits) >= 2
-    assert math.isinf(seen_time_limits[0])
+    assert seen_time_limits[0] == WARM_START_MAX_TIME_SECONDS
     assert seen_time_limits[1] == IMPROVEMENT_MAX_TIME_SECONDS
 
 

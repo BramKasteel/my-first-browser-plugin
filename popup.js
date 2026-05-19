@@ -1616,7 +1616,7 @@ function buildCartFillPayload(result) {
 
 async function submitOptimizedCartInTab(payload) {
   const tab = await ensureCardmarketTab();
-  return executeInTab(tab.id, async (cartPayload) => {
+  const result = await executeInTab(tab.id, async (cartPayload) => {
     const pathParts = location.pathname.split('/').filter(Boolean);
     const lang = pathParts[0] || 'en';
     const game = pathParts[1] || 'Magic';
@@ -1663,6 +1663,16 @@ async function submitOptimizedCartInTab(payload) {
       responsePreview: responseText.slice(0, 240),
     };
   }, [payload]);
+
+  if (!result || typeof result !== 'object') {
+    throw new Error('Cardmarket cart add returned no result. Keep Cardmarket tab open on Cardmarket and retry.');
+  }
+
+  if (!Number.isFinite(result.articleCount) || !Number.isFinite(result.unitCount)) {
+    throw new Error('Cardmarket cart add returned invalid cart summary.');
+  }
+
+  return result;
 }
 
 async function handleFillCart() {
@@ -1819,7 +1829,7 @@ async function submitOptimizationRequest(endpoint) {
     }
 
     const result = responseBody || {};
-    if (result.status !== 'optimal' && result.status !== 'infeasible') {
+    if (!['optimal', 'feasible', 'infeasible'].includes(result.status)) {
       throw new Error('Optimizer API returned invalid response payload. Missing result status.');
     }
 

@@ -107,8 +107,8 @@ npx cdk deploy OptimizerServiceStack \
   -c imageTag=YOUR_IMAGE_TAG \
   -c ecrRepositoryName=cardmarket-optimizer-api \
   -c allowedOrigins=* \
-  -c lambdaMemorySize=2048 \
-  -c lambdaTimeoutSeconds=30
+  -c lambdaMemorySize=3072 \
+  -c lambdaTimeoutSeconds=45
 ```
 
 ## Tighten CORS later

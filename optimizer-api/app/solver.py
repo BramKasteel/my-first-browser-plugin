@@ -20,6 +20,7 @@ from .models import (
 LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
 APPROX_GRAMS_PER_CARD = 2.5
 MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
+WARM_START_MAX_TIME_SECONDS = 2
 IMPROVEMENT_MAX_TIME_SECONDS = 2
 SOLVER_NUM_SEARCH_WORKERS = 8
 SELLER_DOMINANCE_MAX_DISTINCT_ITEMS = 2
@@ -467,7 +468,7 @@ def _build_route_min_shipping_warm_start(
         )
     )
 
-    hint_solver = _new_solver(cp_model, max_time_seconds=None)
+    hint_solver = _new_solver(cp_model, max_time_seconds=WARM_START_MAX_TIME_SECONDS)
     status = hint_solver.Solve(hint_model)
     if status != cp_model.OPTIMAL:
         return {}, {}

@@ -34,8 +34,8 @@ const ecrRepositoryName = String(app.node.tryGetContext('ecrRepositoryName') ?? 
 const imageTag = String(app.node.tryGetContext('imageTag') ?? 'latest');
 const apiThrottleBurstLimit = Number(app.node.tryGetContext('apiThrottleBurstLimit') ?? 20);
 const apiThrottleRateLimit = Number(app.node.tryGetContext('apiThrottleRateLimit') ?? 5);
-const lambdaMemorySize = Number(app.node.tryGetContext('lambdaMemorySize') ?? 2048);
-const lambdaTimeoutSeconds = Number(app.node.tryGetContext('lambdaTimeoutSeconds') ?? 30);
+const lambdaMemorySize = Number(app.node.tryGetContext('lambdaMemorySize') ?? 3072);
+const lambdaTimeoutSeconds = Number(app.node.tryGetContext('lambdaTimeoutSeconds') ?? 45);
 const allowedOrigins = String(app.node.tryGetContext('allowedOrigins') ?? '*')
   .split(',')
   .map((origin) => origin.trim())
