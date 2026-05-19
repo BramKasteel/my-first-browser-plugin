@@ -107,7 +107,7 @@ npx cdk deploy OptimizerServiceStack \
   -c imageTag=YOUR_IMAGE_TAG \
   -c ecrRepositoryName=cardmarket-optimizer-api \
   -c allowedOrigins=* \
-  -c lambdaMemorySize=3072 \
+  -c lambdaMemorySize=3008 \
   -c lambdaTimeoutSeconds=45
 ```
 
