@@ -16,6 +16,7 @@ from app.shipping import (
 from app.solver import (
     MISSING_ROUTE_DATA_PENALTY_CENTS,
     _prune_dominated_offers,
+    _prune_dominated_single_item_sellers,
     optimize_order,
 )
 
@@ -480,3 +481,180 @@ def test_prune_dominated_offers_keeps_all_options_when_wanted_quantity_exceeds_b
     pruned = _prune_dominated_offers(offers, item_map)
 
     assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2"]
+
+
+def test_prune_single_item_sellers_drops_when_alternative_standalone_total_is_no_worse(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("app.solver.shipping.load_shipping_route_book", lambda: None)
+
+    sellers = {
+        "seller-1": Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
+        "seller-2": Seller(seller_id="seller-2", name="Seller 2", country="Germany"),
+    }
+    item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=1)}
+    offers = [
+        Offer(
+            offer_id="offer-1",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=0.5,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-2",
+            item_id="item-1",
+            seller_id="seller-2",
+            unit_price=0.5,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-3",
+            item_id="item-2",
+            seller_id="seller-2",
+            unit_price=0.2,
+            available_quantity=1,
+        ),
+    ]
+
+    pruned = _prune_dominated_single_item_sellers(
+        offers=offers,
+        item_map=item_map
+        | {"item-2": WantedItem(item_id="item-2", name="Other", quantity=1)},
+        seller_map=sellers,
+        buyer_country="Netherlands",
+        route_book=None,
+        use_explicit_weights=False,
+    )
+
+    assert [offer.offer_id for offer in pruned] == ["offer-2", "offer-3"]
+
+
+def test_prune_single_item_sellers_keeps_when_higher_shipping_would_outweigh_item_replacement(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        methods_by_route={},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(letter=[(155, 2500, 20)], parcel=[]),
+            ("netherlands", "netherlands"): _tiers(letter=[(170, 2500, 20)], parcel=[]),
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    sellers = {
+        "seller-1": Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
+        "seller-2": Seller(
+            seller_id="seller-2", name="Seller 2", country="Netherlands"
+        ),
+    }
+    item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=1)}
+    offers = [
+        Offer(
+            offer_id="offer-1",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=0.1,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-2",
+            item_id="item-1",
+            seller_id="seller-2",
+            unit_price=0.0,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-3",
+            item_id="item-2",
+            seller_id="seller-2",
+            unit_price=0.2,
+            available_quantity=1,
+        ),
+    ]
+
+    pruned = _prune_dominated_single_item_sellers(
+        offers=offers,
+        item_map=item_map
+        | {"item-2": WantedItem(item_id="item-2", name="Other", quantity=1)},
+        seller_map=sellers,
+        buyer_country="Netherlands",
+        route_book=route_book,
+        use_explicit_weights=False,
+    )
+
+    assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2", "offer-3"]
+
+
+def test_prune_single_item_sellers_keeps_when_no_single_alternative_covers_quantity(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("app.solver.shipping.load_shipping_route_book", lambda: None)
+
+    sellers = {
+        "seller-1": Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
+        "seller-2": Seller(seller_id="seller-2", name="Seller 2", country="Germany"),
+        "seller-3": Seller(seller_id="seller-3", name="Seller 3", country="Germany"),
+    }
+    item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=2)}
+    offers = [
+        Offer(
+            offer_id="offer-1",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=0.5,
+            available_quantity=2,
+        ),
+        Offer(
+            offer_id="offer-2",
+            item_id="item-1",
+            seller_id="seller-2",
+            unit_price=0.4,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-3",
+            item_id="item-2",
+            seller_id="seller-2",
+            unit_price=0.2,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-4",
+            item_id="item-1",
+            seller_id="seller-3",
+            unit_price=0.4,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-5",
+            item_id="item-3",
+            seller_id="seller-3",
+            unit_price=0.2,
+            available_quantity=1,
+        ),
+    ]
+
+    pruned = _prune_dominated_single_item_sellers(
+        offers=offers,
+        item_map=item_map
+        | {
+            "item-2": WantedItem(item_id="item-2", name="Other 2", quantity=1),
+            "item-3": WantedItem(item_id="item-3", name="Other 3", quantity=1),
+        },
+        seller_map=sellers,
+        buyer_country="Netherlands",
+        route_book=None,
+        use_explicit_weights=False,
+    )
+
+    assert [offer.offer_id for offer in pruned] == [
+        "offer-1",
+        "offer-2",
+        "offer-3",
+        "offer-4",
+        "offer-5",
+    ]

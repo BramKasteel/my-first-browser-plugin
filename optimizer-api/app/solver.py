@@ -72,6 +72,137 @@ def _prune_dominated_offers(
     return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
 
 
+def _selection_shipping_cost_cents(
+    *,
+    seller_country: str,
+    buyer_country: str,
+    selections: list[tuple[Offer, int]],
+    item_map: dict[str, WantedItem],
+    route_book: shipping.ShippingRouteBook | None,
+    use_explicit_weights: bool,
+) -> int | None:
+    if route_book is not None:
+        route_tiers = route_book.lookup_tiers(
+            seller_country=seller_country,
+            buyer_country=buyer_country,
+        )
+        tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
+            (False, tier) for tier in route_tiers.parcel_tiers
+        ]
+        if tier_candidates:
+            total_value_cents = sum(
+                _to_cents(offer.unit_price) * quantity for offer, quantity in selections
+            )
+            total_weight_grams = sum(
+                (item_map[offer.item_id].unit_weight_grams or 0) * quantity
+                for offer, quantity in selections
+            )
+            total_cards = sum(
+                item_map[offer.item_id].cards_per_unit * quantity
+                for offer, quantity in selections
+            )
+            has_parcel_only_item = any(
+                item_map[offer.item_id].requires_parcel and quantity > 0
+                for offer, quantity in selections
+            )
+
+            valid_tier_costs = []
+            for is_letter_tier, tier in tier_candidates:
+                if total_value_cents > tier.max_value_cents:
+                    continue
+                if use_explicit_weights:
+                    if total_weight_grams > tier.max_weight_grams:
+                        continue
+                elif total_cards > _method_card_capacity(tier.max_weight_grams):
+                    continue
+                if is_letter_tier and has_parcel_only_item:
+                    continue
+                valid_tier_costs.append(tier.total_price_cents)
+
+            return min(valid_tier_costs) if valid_tier_costs else None
+
+        return MISSING_ROUTE_DATA_PENALTY_CENTS
+
+    return shipping.legacy_shipping_cost_cents(
+        seller_country=seller_country,
+        buyer_country=buyer_country,
+    )
+
+
+def _prune_dominated_single_item_sellers(
+    *,
+    offers: list[Offer],
+    item_map: dict[str, WantedItem],
+    seller_map: dict[str, object],
+    buyer_country: str,
+    route_book: shipping.ShippingRouteBook | None,
+    use_explicit_weights: bool,
+) -> list[Offer]:
+    seller_offers: dict[str, list[Offer]] = defaultdict(list)
+    item_offers: dict[str, list[Offer]] = defaultdict(list)
+    for offer in offers:
+        seller_offers[offer.seller_id].append(offer)
+        item_offers[offer.item_id].append(offer)
+
+    dropped_seller_ids: set[str] = set()
+    for seller_id, seller_bucket in seller_offers.items():
+        if len(seller_bucket) != 1:
+            continue
+
+        offer = seller_bucket[0]
+        quantity = _capped_offer_quantity(offer, item_map)
+        if quantity <= 0:
+            continue
+
+        seller = seller_map[seller_id]
+        subject_shipping_cost = _selection_shipping_cost_cents(
+            seller_country=seller.country,
+            buyer_country=buyer_country,
+            selections=[(offer, quantity)],
+            item_map=item_map,
+            route_book=route_book,
+            use_explicit_weights=use_explicit_weights,
+        )
+        if subject_shipping_cost is None:
+            dropped_seller_ids.add(seller_id)
+            continue
+
+        subject_total_cents = (
+            _to_cents(offer.unit_price) * quantity + subject_shipping_cost
+        )
+
+        for alternative in item_offers[offer.item_id]:
+            if alternative.seller_id == seller_id:
+                continue
+            if len(seller_offers[alternative.seller_id]) <= 1:
+                continue
+
+            alternative_quantity = _capped_offer_quantity(alternative, item_map)
+            if alternative_quantity < quantity:
+                continue
+
+            alternative_seller = seller_map[alternative.seller_id]
+            alternative_shipping_cost = _selection_shipping_cost_cents(
+                seller_country=alternative_seller.country,
+                buyer_country=buyer_country,
+                selections=[(alternative, quantity)],
+                item_map=item_map,
+                route_book=route_book,
+                use_explicit_weights=use_explicit_weights,
+            )
+            if alternative_shipping_cost is None:
+                continue
+
+            alternative_total_cents = (
+                _to_cents(alternative.unit_price) * quantity + alternative_shipping_cost
+            )
+            if alternative_total_cents <= subject_total_cents:
+                dropped_seller_ids.add(seller_id)
+                break
+
+    return [offer for offer in offers if offer.seller_id not in dropped_seller_ids]
+
+
 def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     try:
         from ortools.sat.python import cp_model
@@ -104,6 +235,17 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         usable_offers.append(offer)
 
     usable_offers = _prune_dominated_offers(usable_offers, item_map)
+
+    route_book = shipping.load_shipping_route_book()
+    use_explicit_weights = _has_explicit_item_weights(request)
+    usable_offers = _prune_dominated_single_item_sellers(
+        offers=usable_offers,
+        item_map=item_map,
+        seller_map=seller_map,
+        buyer_country=request.buyer_country,
+        route_book=route_book,
+        use_explicit_weights=use_explicit_weights,
+    )
 
     coverage = defaultdict(int)
     for offer in usable_offers:
@@ -167,9 +309,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     for offer in usable_offers:
         objective_terms.append(_to_cents(offer.unit_price) * offer_vars[offer.offer_id])
 
-    route_book = shipping.load_shipping_route_book()
     use_rich_shipping = route_book is not None
-    use_explicit_weights = _has_explicit_item_weights(request)
     seller_shipping_tier_choice_vars = {}
     seller_shipping_fallback_costs = {}
     seller_value_upper_bounds = {}
