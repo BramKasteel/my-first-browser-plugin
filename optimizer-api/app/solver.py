@@ -426,8 +426,8 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         active = seller_active_vars[seller_id]
         total_units = sum(offer_vars[offer.offer_id] for offer in offers)
         max_units = sum(_capped_offer_quantity(offer, item_map) for offer in offers)
-        model.Add(total_units <= max_units * active)
-        model.Add(total_units >= active)
+        model.Add(total_units <= max_units * active)  # todo: what does this do
+        model.Add(total_units >= active)  # todo: what does this do
 
     if request.preferences.max_sellers is not None:
         model.Add(sum(seller_active_vars.values()) <= request.preferences.max_sellers)
@@ -482,7 +482,9 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
                 for offer in seller_offers[seller_id]
             )
             total_weight_expr = sum(
-                (item_map[offer.item_id].unit_weight_grams or 0)
+                (
+                    item_map[offer.item_id].unit_weight_grams or 0
+                )  # TODO: is this not always zero for our wants list?
                 * offer_vars[offer.offer_id]
                 for offer in seller_offers[seller_id]
             )
