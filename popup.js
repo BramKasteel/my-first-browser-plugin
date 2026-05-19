@@ -78,12 +78,14 @@ let selectedWantListId = '';
 let activeWorkflowStep = 'source';
 let workflowHistory = [];
 let activeStepActivity = null;
+let lastOptimizerWarmupAt = 0;
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
 const MIN_SELLER_DELAY_MS = 250;
 const REQUEST_JITTER_RATIO = 0.15;
+const OPTIMIZER_WARMUP_THROTTLE_MS = 90 * 1000;
 const RATE_PROBE_DELAYS_MS = [1500, 1000, 750, 500, 350, 300, 250, 200];
 const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
 const DEFAULT_OPTIMIZER_API_URL = textOf(window.APP_CONFIG?.optimizerApiUrl);
@@ -1717,6 +1719,52 @@ function parseOptimizerErrorBody(body) {
   return '';
 }
 
+function deriveOptimizerHealthUrl(endpoint) {
+  const rawEndpoint = textOf(endpoint);
+  if (!rawEndpoint) return '';
+
+  try {
+    const url = new URL(rawEndpoint);
+    url.pathname = url.pathname.replace(/\/optimize\/?$/, '/health');
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
+async function warmOptimizerApi(endpoint, { reason = '', force = false } = {}) {
+  const healthUrl = deriveOptimizerHealthUrl(endpoint);
+  if (!healthUrl) return;
+
+  const now = Date.now();
+  if (!force && now - lastOptimizerWarmupAt < OPTIMIZER_WARMUP_THROTTLE_MS) {
+    return;
+  }
+  lastOptimizerWarmupAt = now;
+
+  const reasonSuffix = reason ? ` (${reason})` : '';
+  appendStatus(`Warming optimizer API via ${healthUrl}${reasonSuffix}.`);
+
+  try {
+    const response = await fetch(healthUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      appendStatus(`Optimizer warmup returned ${response.status}.`, 'bad');
+      return;
+    }
+
+    appendStatus('Optimizer warmup request finished.', 'good');
+  } catch (error) {
+    appendStatus(`Optimizer warmup failed: ${error.message}`, 'bad');
+  }
+}
+
 async function loadOptimizerFixturePayload(fixtureName) {
   const fixture = OPTIMIZER_FIXTURE_OPTIONS.find((entry) => entry.value === fixtureName);
   if (!fixture) {
@@ -1795,6 +1843,7 @@ async function submitOptimizationRequest(endpoint) {
   startRun('Waiting for optimizer reply...');
   setBusy(true);
   try {
+    await warmOptimizerApi(endpoint, { reason: 'before optimize', force: true });
     const requestBody = JSON.stringify(latestExtractPayload);
     setStepActivity({
       kind: 'optimizer-request',
@@ -2139,6 +2188,7 @@ async function handleScrapeAllItems() {
   startRun('Scraping seller rows for all extracted want items...');
   setBusy(true);
   try {
+    void warmOptimizerApi(DEFAULT_OPTIMIZER_API_URL, { reason: 'seller scrape start' });
     appendStatus('Starting serial seller scrape for all extracted want items...', 'good');
     if (!latestExtractedItems.length) {
       throw new Error('Extract want items first so the popup has products to scrape.');
@@ -2358,6 +2408,9 @@ async function handleScrapeAllItems() {
     const optimizerPayload = buildOptimizerPayload(batchPayload);
     renderFrontendPayload(batchPayload);
     renderPayload(optimizerPayload);
+    if (optimizerPayload) {
+      void warmOptimizerApi(DEFAULT_OPTIMIZER_API_URL, { reason: 'seller scrape finished', force: true });
+    }
     setActiveWorkflowStep(optimizerPayload ? 'optimize' : 'sellers', { force: true });
     setActiveResultTab('sellers');
 
