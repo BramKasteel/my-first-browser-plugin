@@ -276,6 +276,23 @@ def test_load_shipping_route_book_keeps_letters_and_one_cheapest_parcel(
         ("Parcel Cheap", 1000),
     ]
 
+    tiers = route_book.lookup_tiers(
+        seller_country="Germany", buyer_country="Netherlands"
+    )
+    assert [
+        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
+        for tier in tiers.letter_tiers
+    ] == [
+        (155, 2500, 20),
+        (200, 2500, 50),
+    ]
+    assert [
+        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
+        for tier in tiers.parcel_tiers
+    ] == [
+        (799, 2500, 1000),
+    ]
+
 
 def test_load_shipping_route_book_prunes_tracked_letter_duplicate_when_no_better(
     tmp_path,
@@ -327,3 +344,76 @@ def test_load_shipping_route_book_prunes_tracked_letter_duplicate_when_no_better
         seller_country="Germany", buyer_country="Netherlands"
     )
     assert [method.name for method in methods] == ["Letter Tracked Cheaper"]
+
+
+def test_load_shipping_route_book_builds_tiers_for_mixed_letter_and_parcel_route(
+    tmp_path,
+) -> None:
+    fixture_path = tmp_path / "shipping_costs.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "countries": [
+                    {"name": "Netherlands", "externalId": 23},
+                ],
+                "routes": [
+                    {
+                        "from_country": "Netherlands",
+                        "to_country": "Netherlands",
+                        "methods": [
+                            {
+                                "name": "Brief 20g",
+                                "isTracked": False,
+                                "maxValue": "25,00 €",
+                                "maxWeight": 20,
+                                "stampPrice": "1,40 €",
+                                "price": "1,70 €",
+                                "isLetter": True,
+                                "isVirtual": False,
+                            },
+                            {
+                                "name": "Brief 50g",
+                                "isTracked": False,
+                                "maxValue": "25,00 €",
+                                "maxWeight": 50,
+                                "stampPrice": "2,80 €",
+                                "price": "3,10 €",
+                                "isLetter": True,
+                                "isVirtual": False,
+                            },
+                            {
+                                "name": "Parcel",
+                                "isTracked": False,
+                                "maxValue": "100,00 €",
+                                "maxWeight": 1000,
+                                "stampPrice": "9,45 €",
+                                "price": "9,75 €",
+                                "isLetter": False,
+                                "isVirtual": False,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    route_book = _load_shipping_route_book(fixture_path)
+
+    tiers = route_book.lookup_tiers(
+        seller_country="Netherlands", buyer_country="Netherlands"
+    )
+    assert [
+        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
+        for tier in tiers.letter_tiers
+    ] == [
+        (170, 2500, 20),
+        (310, 2500, 50),
+    ]
+    assert [
+        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
+        for tier in tiers.parcel_tiers
+    ] == [
+        (975, 10000, 1000),
+    ]

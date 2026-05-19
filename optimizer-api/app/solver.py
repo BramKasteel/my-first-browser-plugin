@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from heapq import nsmallest
 
 from . import shipping
 from .models import (
@@ -18,6 +19,7 @@ from .models import (
 
 LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
 APPROX_GRAMS_PER_CARD = 2.5
+MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
 
 
 def _to_cents(amount: float) -> int:
@@ -43,6 +45,14 @@ def _capped_offer_quantity(offer: Offer, item_map: dict[str, WantedItem]) -> int
     return min(offer.available_quantity, item_map[offer.item_id].quantity)
 
 
+def _offer_prune_rank(offer: Offer) -> tuple[float, int, str]:
+    return (
+        offer.unit_price,
+        -offer.available_quantity,
+        offer.offer_id,
+    )
+
+
 def _prune_dominated_offers(
     offers: list[Offer], item_map: dict[str, WantedItem]
 ) -> list[Offer]:
@@ -54,15 +64,10 @@ def _prune_dominated_offers(
     for (seller_id, item_id), bucket_offers in offers_by_bucket.items():
         del seller_id
         keep_count = item_map[item_id].quantity
-        ranked_offers = sorted(
-            bucket_offers,
-            key=lambda offer: (
-                offer.unit_price,
-                -offer.available_quantity,
-                offer.offer_id,
-            ),
+        chosen_offer_ids.update(
+            offer.offer_id
+            for offer in nsmallest(keep_count, bucket_offers, key=_offer_prune_rank)
         )
-        chosen_offer_ids.update(offer.offer_id for offer in ranked_offers[:keep_count])
 
     return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
 
@@ -165,8 +170,8 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     route_book = shipping.load_shipping_route_book()
     use_rich_shipping = route_book is not None
     use_explicit_weights = _has_explicit_item_weights(request)
-    seller_shipping_method_vars = {}
-    fallback_shipping_costs = {}
+    seller_shipping_tier_choice_vars = {}
+    seller_shipping_fallback_costs = {}
     seller_value_upper_bounds = {}
     seller_weight_upper_bounds = {}
     seller_card_upper_bounds = {}
@@ -192,18 +197,18 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         )
 
     for seller_id, active in seller_active_vars.items():
-        route_methods = ()
+        route_tiers = shipping.ShippingRouteTiers(letter_tiers=(), parcel_tiers=())
         if use_rich_shipping and route_book is not None:
-            route_methods = tuple(
-                method
-                for method in route_book.lookup_methods(
-                    seller_country=seller_map[seller_id].country,
-                    buyer_country=request.buyer_country,
-                )
-                if not method.is_virtual
+            route_tiers = route_book.lookup_tiers(
+                seller_country=seller_map[seller_id].country,
+                buyer_country=request.buyer_country,
             )
 
-        if route_methods:
+        tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
+            (False, tier) for tier in route_tiers.parcel_tiers
+        ]
+
+        if tier_candidates:
             total_value_expr = sum(
                 _to_cents(offer.unit_price) * offer_vars[offer.offer_id]
                 for offer in seller_offers[seller_id]
@@ -223,53 +228,59 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
                 if item_map[offer.item_id].requires_parcel
             )
 
-            seller_shipping_method_vars[seller_id] = []
-            for method_index, method in enumerate(route_methods):
-                method_var = model.NewBoolVar(f"ship_{seller_id}_{method_index}")
-                seller_shipping_method_vars[seller_id].append((method, method_var))
+            seller_shipping_tier_choice_vars[seller_id] = []
+
+            for tier_index, (is_letter_tier, tier) in enumerate(tier_candidates):
+                tier_var = model.NewBoolVar(f"ship_{seller_id}_{tier_index}")
+                seller_shipping_tier_choice_vars[seller_id].append((tier, tier_var))
                 model.Add(
                     total_value_expr
-                    <= method.max_value_cents
-                    + seller_value_upper_bounds[seller_id] * (1 - method_var)
+                    <= tier.max_value_cents
+                    + seller_value_upper_bounds[seller_id] * (1 - tier_var)
                 )
                 if use_explicit_weights:
                     model.Add(
                         total_weight_expr
-                        <= method.max_weight_grams
-                        + seller_weight_upper_bounds[seller_id] * (1 - method_var)
+                        <= tier.max_weight_grams
+                        + seller_weight_upper_bounds[seller_id] * (1 - tier_var)
                     )
                 else:
                     model.Add(
                         total_card_expr
-                        <= _method_card_capacity(method.max_weight_grams)
-                        + seller_card_upper_bounds[seller_id] * (1 - method_var)
+                        <= _method_card_capacity(tier.max_weight_grams)
+                        + seller_card_upper_bounds[seller_id] * (1 - tier_var)
                     )
-                if method.is_letter:
+                if is_letter_tier:
                     model.Add(
                         parcel_only_units_expr
-                        <= seller_unit_upper_bounds[seller_id] * (1 - method_var)
+                        <= seller_unit_upper_bounds[seller_id] * (1 - tier_var)
                     )
 
             model.Add(
                 sum(
-                    method_var
-                    for _, method_var in seller_shipping_method_vars[seller_id]
+                    tier_var
+                    for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
                 )
                 == active
             )
             objective_terms.append(
                 sum(
-                    method.total_price_cents * method_var
-                    for method, method_var in seller_shipping_method_vars[seller_id]
+                    tier.total_price_cents * tier_var
+                    for tier, tier_var in seller_shipping_tier_choice_vars[seller_id]
                 )
             )
             continue
 
-        fallback_shipping_costs[seller_id] = shipping.legacy_shipping_cost_cents(
-            seller_country=seller_map[seller_id].country,
-            buyer_country=request.buyer_country,
-        )
-        objective_terms.append(fallback_shipping_costs[seller_id] * active)
+        if use_rich_shipping:
+            seller_shipping_fallback_costs[seller_id] = MISSING_ROUTE_DATA_PENALTY_CENTS
+        else:
+            seller_shipping_fallback_costs[seller_id] = (
+                shipping.legacy_shipping_cost_cents(
+                    seller_country=seller_map[seller_id].country,
+                    buyer_country=request.buyer_country,
+                )
+            )
+        objective_terms.append(seller_shipping_fallback_costs[seller_id] * active)
 
     objective_expr = sum(objective_terms)
     model.Minimize(objective_expr)
@@ -332,12 +343,12 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         if solver.Value(active_var) <= 0:
             continue
 
-        shipping_total = fallback_shipping_costs.get(seller_id)
+        shipping_total = seller_shipping_fallback_costs.get(seller_id)
         if shipping_total is None:
             shipping_total = next(
-                method.total_price_cents
-                for method, method_var in seller_shipping_method_vars[seller_id]
-                if solver.Value(method_var) > 0
+                tier.total_price_cents
+                for tier, tier_var in seller_shipping_tier_choice_vars[seller_id]
+                if solver.Value(tier_var) > 0
             )
 
         seller_shipping_totals[seller_id] = shipping_total
@@ -386,9 +397,9 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             notes.append(
                 "Shipment constraints use selected item value, card-count letter thresholds (4/17/40 cards), and parcel-only item flags."
             )
-        if fallback_shipping_costs:
+        if seller_shipping_fallback_costs:
             notes.append(
-                "Missing imported route data falls back to legacy route proxy per seller."
+                f"Missing imported route data gets penalty shipping cost of {_from_cents(MISSING_ROUTE_DATA_PENALTY_CENTS):.2f} {request.currency} per seller."
             )
     else:
         notes.extend(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -142,9 +142,25 @@ class ShippingMethod:
 
 
 @dataclass(frozen=True)
+class ShippingTier:
+    max_value_cents: int
+    max_weight_grams: int
+    total_price_cents: int
+
+
+@dataclass(frozen=True)
+class ShippingRouteTiers:
+    letter_tiers: tuple[ShippingTier, ...]
+    parcel_tiers: tuple[ShippingTier, ...]
+
+
+@dataclass(frozen=True)
 class ShippingRouteBook:
     country_ids: dict[str, int]
     methods_by_route: dict[tuple[str, str], tuple[ShippingMethod, ...]]
+    tiers_by_route: dict[tuple[str, str], ShippingRouteTiers] = field(
+        default_factory=dict
+    )
 
     def lookup_country_id(self, country: str) -> int | None:
         return self.country_ids.get(normalize_country_name(country))
@@ -159,6 +175,44 @@ class ShippingRouteBook:
             ),
             (),
         )
+
+    def lookup_tiers(
+        self, *, seller_country: str, buyer_country: str
+    ) -> ShippingRouteTiers:
+        return self.tiers_by_route.get(
+            (
+                normalize_country_name(seller_country),
+                normalize_country_name(buyer_country),
+            ),
+            ShippingRouteTiers(letter_tiers=(), parcel_tiers=()),
+        )
+
+
+def _canonicalize_route_tiers(
+    methods: tuple[ShippingMethod, ...],
+) -> ShippingRouteTiers:
+    letter_tiers = tuple(
+        ShippingTier(
+            max_value_cents=method.max_value_cents,
+            max_weight_grams=method.max_weight_grams,
+            total_price_cents=method.total_price_cents,
+        )
+        for method in methods
+        if not method.is_virtual and method.is_letter
+    )
+    parcel_tiers = tuple(
+        ShippingTier(
+            max_value_cents=method.max_value_cents,
+            max_weight_grams=method.max_weight_grams,
+            total_price_cents=method.total_price_cents,
+        )
+        for method in methods
+        if not method.is_virtual and not method.is_letter
+    )
+    return ShippingRouteTiers(
+        letter_tiers=letter_tiers,
+        parcel_tiers=parcel_tiers,
+    )
 
 
 def _route_key(from_country: str, to_country: str) -> tuple[str, str]:
@@ -175,13 +229,20 @@ def _load_shipping_route_book(path: Path) -> ShippingRouteBook:
     }
 
     methods_by_route: dict[tuple[str, str], tuple[ShippingMethod, ...]] = {}
+    tiers_by_route: dict[tuple[str, str], ShippingRouteTiers] = {}
     for route in payload.get("routes", []):
         from_country = route["from_country"]
         to_country = route["to_country"]
         methods = _normalize_card_order_methods(route.get("methods", []))
-        methods_by_route[_route_key(from_country, to_country)] = methods
+        route_key = _route_key(from_country, to_country)
+        methods_by_route[route_key] = methods
+        tiers_by_route[route_key] = _canonicalize_route_tiers(methods)
 
-    return ShippingRouteBook(country_ids=country_ids, methods_by_route=methods_by_route)
+    return ShippingRouteBook(
+        country_ids=country_ids,
+        methods_by_route=methods_by_route,
+        tiers_by_route=tiers_by_route,
+    )
 
 
 @lru_cache(maxsize=1)
