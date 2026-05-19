@@ -1350,8 +1350,6 @@ function buildOptimizerPayload(batchResult) {
         seller_id: sellerId,
         unit_price: unitPrice,
         available_quantity: parseIntegerOrFallback(sellerRow?.amount, 1),
-        condition: normalizeCardCondition(sellerRow?.condition) || textOf(sellerRow?.condition) || null,
-        language: textOf(sellerRow?.language) || null,
       });
     });
   });
@@ -1698,8 +1696,11 @@ async function handleFillCart() {
 }
 
 function parseOptimizerErrorBody(body) {
+  if (typeof body === 'string') return textOf(body);
   if (!body || typeof body !== 'object') return '';
   if (typeof body.detail === 'string') return body.detail;
+  if (typeof body.message === 'string') return body.message;
+  if (typeof body.error === 'string') return body.error;
   if (Array.isArray(body.detail)) {
     return body.detail
       .map((entry) => {
@@ -1794,6 +1795,7 @@ async function submitOptimizationRequest(endpoint) {
   startRun('Waiting for optimizer reply...');
   setBusy(true);
   try {
+    const requestBody = JSON.stringify(latestExtractPayload);
     setStepActivity({
       kind: 'optimizer-request',
       label: 'Posting payload to optimizer API.',
@@ -1806,7 +1808,7 @@ async function submitOptimizationRequest(endpoint) {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(latestExtractPayload),
+      body: requestBody,
     });
 
     setStepActivity({
@@ -1816,15 +1818,20 @@ async function submitOptimizationRequest(endpoint) {
       indeterminate: true,
     });
 
+    let responseText = '';
     let responseBody = null;
     try {
-      responseBody = await response.json();
+      responseText = await response.text();
+      responseBody = responseText ? JSON.parse(responseText) : null;
     } catch {
       responseBody = null;
     }
 
     if (!response.ok) {
-      const detail = parseOptimizerErrorBody(responseBody) || response.statusText || 'Unknown optimizer error.';
+      const detail = parseOptimizerErrorBody(responseBody)
+        || textOf(responseText)
+        || response.statusText
+        || 'Unknown optimizer error.';
       throw new Error(`Optimizer API failed (${response.status}): ${detail}`);
     }
 

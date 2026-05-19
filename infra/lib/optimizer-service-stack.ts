@@ -89,8 +89,6 @@ export class OptimizerServiceStack extends cdk.Stack {
               seller_id: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 128 },
               unit_price: { type: apigateway.JsonSchemaType.NUMBER, minimum: 0 },
               available_quantity: { type: apigateway.JsonSchemaType.INTEGER, minimum: 1, maximum: 10000 },
-              condition: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 64 },
-              language: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 64 },
             },
           },
         },
