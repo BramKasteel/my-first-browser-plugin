@@ -20,8 +20,8 @@ from .models import (
 LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
 APPROX_GRAMS_PER_CARD = 2.5
 MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
-WARM_START_MAX_TIME_SECONDS = 2
-IMPROVEMENT_MAX_TIME_SECONDS = 2
+WARM_START_MAX_TIME_SECONDS = 4
+IMPROVEMENT_MAX_TIME_SECONDS = 4
 SOLVER_NUM_SEARCH_WORKERS = 8
 SELLER_DOMINANCE_MAX_DISTINCT_ITEMS = 2
 
@@ -897,92 +897,16 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             notes=notes,
         )
 
-    model = cp_model.CpModel()
-
-    offer_vars = {}
-    seller_active_vars = {}
-
-    seller_offers = defaultdict(list)
-    for offer in usable_offers:
-        seller_offers[offer.seller_id].append(offer)
-        capped_quantity = _capped_offer_quantity(offer, item_map)
-        offer_vars[offer.offer_id] = _new_quantity_var(
-            model,
-            upper_bound=capped_quantity,
-            name=f"qty_{offer.offer_id}",
-        )
-
-    for seller_id in seller_offers:
-        seller_active_vars[seller_id] = model.NewBoolVar(f"seller_active_{seller_id}")
-
-    for item in request.items:
-        model.Add(
-            sum(
-                offer_vars[offer.offer_id]
-                for offer in usable_offers
-                if offer.item_id == item.item_id
-            )
-            == item.quantity
-        )
-
-    objective_terms = []
-    for offer in usable_offers:
-        objective_terms.append(_to_cents(offer.unit_price) * offer_vars[offer.offer_id])
-
-    use_rich_shipping = route_book is not None
-    for seller_id in seller_offers:
-        objective_terms.append(
-            shipping.minimum_shipping_cost_cents(
-                seller_country=seller_map[seller_id].country,
-                buyer_country=request.buyer_country,
-                route_book=route_book,
-                missing_route_cost_cents=MISSING_ROUTE_DATA_PENALTY_CENTS,
-            )
-            * seller_active_vars[seller_id]
-        )
-
-    for seller_id, offers in seller_offers.items():
-        active = seller_active_vars[seller_id]
-        total_units = sum(offer_vars[offer.offer_id] for offer in offers)
-        max_units = sum(_capped_offer_quantity(offer, item_map) for offer in offers)
-        model.Add(total_units <= max_units * active)
-        model.Add(total_units >= active)
-
-    if request.preferences.max_sellers is not None:
-        model.Add(sum(seller_active_vars.values()) <= request.preferences.max_sellers)
-
-    warm_start_offer_values, warm_start_seller_values = (
-        _build_route_min_shipping_warm_start(
-            cp_model=cp_model,
-            request=request,
-            usable_offers=usable_offers,
-            item_map=item_map,
-            seller_map=seller_map,
-            route_book=route_book,
-        )
+    solution = _solve_exact_shipping_order(
+        cp_model=cp_model,
+        request=request,
+        usable_offers=usable_offers,
+        item_map=item_map,
+        seller_map=seller_map,
+        route_book=route_book,
+        use_explicit_weights=use_explicit_weights,
     )
-    warm_start_seller_values = {
-        seller_id: int(
-            any(
-                offer.seller_id == seller_id
-                and warm_start_offer_values.get(offer.offer_id, 0) > 0
-                for offer in usable_offers
-            )
-        )
-        for seller_id in seller_active_vars
-    }
-    for offer_id, value in warm_start_offer_values.items():
-        model.AddHint(offer_vars[offer_id], value)
-    for seller_id, value in warm_start_seller_values.items():
-        model.AddHint(seller_active_vars[seller_id], value)
-
-    objective_expr = sum(objective_terms)
-    model.Minimize(objective_expr)
-
-    solver = _new_solver(cp_model, max_time_seconds=IMPROVEMENT_MAX_TIME_SECONDS)
-    status = solver.Solve(model)
-
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+    if solution is None:
         return OptimizationResponse(
             status="infeasible",
             currency=request.currency,
@@ -991,18 +915,15 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             notes=["Solver found no feasible solution."],
         )
 
-    solution_status = "optimal" if status == cp_model.OPTIMAL else "feasible"
-    used_exact_fallback = False
+    solution_status, selected_offer_quantities = solution
 
     allocations = []
     cart_items_by_seller = defaultdict(list)
     seller_item_subtotals = defaultdict(int)
     seller_unit_totals = defaultdict(int)
-    selected_offer_quantities = {
-        offer.offer_id: solver.Value(offer_vars[offer.offer_id])
-        for offer in usable_offers
-        if solver.Value(offer_vars[offer.offer_id]) > 0
-    }
+    seller_offers = defaultdict(list)
+    for offer in usable_offers:
+        seller_offers[offer.seller_id].append(offer)
 
     seller_shipping_totals = _selected_seller_shipping_costs_cents(
         offer_quantities=selected_offer_quantities,
@@ -1014,40 +935,9 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         use_explicit_weights=use_explicit_weights,
     )
     if seller_shipping_totals is None:
-        fallback_solution = _solve_exact_shipping_order(
-            cp_model=cp_model,
-            request=request,
-            usable_offers=usable_offers,
-            item_map=item_map,
-            seller_map=seller_map,
-            route_book=route_book,
-            use_explicit_weights=use_explicit_weights,
+        raise RuntimeError(
+            "Exact shipping solve returned allocation without priced shipping route."
         )
-        if fallback_solution is None:
-            return OptimizationResponse(
-                status="infeasible",
-                currency=request.currency,
-                totals=OptimizationTotals(
-                    item_subtotal=0, shipping_total=0, grand_total=0
-                ),
-                cart=OptimizationCart(),
-                notes=[
-                    "Approximate solver selected an allocation without any valid exact shipping tier.",
-                    "Exact-shipping fallback also found no feasible solution.",
-                ],
-            )
-
-        solution_status, selected_offer_quantities = fallback_solution
-        seller_shipping_totals = _selected_seller_shipping_costs_cents(
-            offer_quantities=selected_offer_quantities,
-            offer_by_id={offer.offer_id: offer for offer in usable_offers},
-            item_map=item_map,
-            seller_map=seller_map,
-            buyer_country=request.buyer_country,
-            route_book=route_book,
-            use_explicit_weights=use_explicit_weights,
-        )
-        used_exact_fallback = True
 
     for offer in usable_offers:
         quantity = selected_offer_quantities.get(offer.offer_id, 0)
@@ -1121,22 +1011,18 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     total_units = sum(seller_unit_totals.values())
 
     notes = []
+    use_rich_shipping = route_book is not None
     if use_rich_shipping:
-        if used_exact_fallback:
-            notes.append(
-                "Approximate shipping solve produced invalid exact route fit; solver reran with exact shipping constraints for final allocation."
-            )
-        else:
-            notes.append(
-                "Solve objective uses cheapest per-route shipping lower bound; returned totals recompute exact imported shipping tiers for chosen allocations."
-            )
+        notes.append(
+            "Solve uses two phases: warm start with cheapest per-seller route floor, then main solve with exact imported shipping tiers."
+        )
         if use_explicit_weights:
             notes.append(
-                "Exact returned shipping costs use selected item value, summed item weight, and parcel-only item flags."
+                "Exact shipping costs use selected item value, summed item weight, and parcel-only item flags."
             )
         else:
             notes.append(
-                "Exact returned shipping costs use selected item value, card-count letter thresholds (4/17/40 cards), and parcel-only item flags."
+                "Exact shipping costs use selected item value, card-count letter thresholds (4/17/40 cards), and parcel-only item flags."
             )
         if any(
             not route_book.lookup_tiers(

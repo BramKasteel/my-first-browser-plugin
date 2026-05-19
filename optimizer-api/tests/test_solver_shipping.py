@@ -233,7 +233,7 @@ def test_warm_start_requires_optimal_status(monkeypatch) -> None:
     assert seller_values == {}
 
 
-def test_optimize_uses_two_second_improvement_budget(monkeypatch) -> None:
+def test_optimize_uses_configured_improvement_budget(monkeypatch) -> None:
     monkeypatch.setattr("app.solver.shipping.load_shipping_route_book", lambda: None)
 
     original_solve = cp_model.CpSolver.Solve
@@ -344,7 +344,7 @@ def test_optimize_uses_parcel_tier_for_parcel_only_items(monkeypatch) -> None:
     assert response.totals.shipping_total == 7.99
 
 
-def test_optimize_uses_approximate_shipping_objective_but_returns_exact_totals(
+def test_optimize_uses_exact_shipping_objective_for_final_choice(
     monkeypatch,
 ) -> None:
     route_book = ShippingRouteBook(
@@ -398,10 +398,10 @@ def test_optimize_uses_approximate_shipping_objective_but_returns_exact_totals(
     response = optimize_order(request)
 
     assert response.status == "optimal"
-    assert [seller.seller_id for seller in response.cart.sellers] == ["seller-1"]
-    assert response.totals.item_subtotal == 11.0
-    assert response.totals.shipping_total == 10.0
-    assert response.totals.grand_total == 21.0
+    assert [seller.seller_id for seller in response.cart.sellers] == ["seller-2"]
+    assert response.totals.item_subtotal == 12.0
+    assert response.totals.shipping_total == 2.5
+    assert response.totals.grand_total == 14.5
 
 
 def test_optimize_returns_empty_cart_summary_for_infeasible_request() -> None:
