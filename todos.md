@@ -1,14 +1,12 @@
-Make sure users do not srape more than 70 cards.
-If they scrape more than 30 -- only one country is allowed
-If they scrape les than 30 -- only two countries are allowed
-
------------
-
 get as little permissions as necessary
 
 ----------
 
 drop the developer screen
+
+----------
+
+adding to cart does not work in the cart page
 
 ----------
 

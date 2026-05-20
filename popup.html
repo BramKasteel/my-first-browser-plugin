@@ -1092,38 +1092,19 @@
       </section>
 
       <section class="panel">
-        <details id="debugTools" class="collapsible">
-          <summary>Debug tools and results</summary>
-          <div class="collapsible-body">
-            <div class="debug-stack">
-              <section class="step-highlight">
-                <div class="panel-header">
-                  <h3 class="panel-title">Fixture loader</h3>
-                </div>
-                <p class="panel-note">Debug path. Skip seller scrape and load known optimizer input directly.</p>
-                <label class="config-label" for="optimizerFixtureSelect">
-                  <span>Optimizer fixture</span>
-                  <select id="optimizerFixtureSelect">
-                    <option value="small_wantslist">small_wantslist</option>
-                    <option value="big_list">big_list</option>
-                    <option value="ob_nixilis_improvements">ob_nixilis_improvements</option>
-                  </select>
-                </label>
-                <button id="loadOptimizerFixture" class="secondary">Load fixture</button>
-                <button id="optimizeOrderLocalDebug" class="secondary">Optimize via localhost</button>
-              </section>
+        <div class="panel-header">
+          <h2 class="panel-title">Results and Activity</h2>
+        </div>
 
-              <div id="runStatus" class="run-status" aria-live="polite">
-                <span class="run-status-dot" aria-hidden="true"></span>
-                <span id="runStatusText" class="run-status-text">Idle. Start extract, scrape, or probe.</span>
-              </div>
+        <div id="runStatus" class="run-status" aria-live="polite">
+          <span class="run-status-dot" aria-hidden="true"></span>
+          <span id="runStatusText" class="run-status-text">Idle. Start extract, scrape, or optimize.</span>
+        </div>
 
-            <div class="result-tabs" role="tablist" aria-label="Result views">
+        <div class="result-tabs" role="tablist" aria-label="Result views">
               <button type="button" class="secondary mini-button result-tab active" id="resultTabOverview" data-result-tab="overview" aria-selected="true"><span class="tab-label">Overview</span></button>
               <button type="button" class="secondary mini-button result-tab" id="resultTabCart" data-result-tab="cart" aria-selected="false"><span class="tab-label">Cart</span></button>
               <button type="button" class="secondary mini-button result-tab" id="resultTabSellers" data-result-tab="sellers" aria-selected="false"><span class="tab-label">Sellers</span></button>
-              <button type="button" class="secondary mini-button result-tab" id="resultTabPayload" data-result-tab="payload" aria-selected="false"><span class="tab-label">Optimizer</span></button>
-              <button type="button" class="secondary mini-button result-tab" id="resultTabFrontend" data-result-tab="frontend" aria-selected="false"><span class="tab-label">Frontend</span></button>
               <button type="button" class="secondary mini-button result-tab" id="resultTabActivity" data-result-tab="activity" aria-selected="false"><span class="tab-label">Activity <span id="activityBadge" class="tab-badge" aria-hidden="true"></span></span></button>
             </div>
 
@@ -1152,28 +1133,9 @@
               <div id="sellerItems" class="items"></div>
             </div>
 
-            <div class="result-view" data-result-panel="payload">
-              <div class="panel-header">
-                <h3 class="panel-title">Optimizer Payload</h3>
-                <button id="copyPayload" class="secondary mini-button">Copy JSON</button>
-              </div>
-              <pre id="payloadView" class="code-view">No optimizer payload yet.</pre>
-            </div>
-
-            <div class="result-view" data-result-panel="frontend">
-              <div class="panel-header">
-                <h3 class="panel-title">Frontend Dump</h3>
-                <button id="copyFrontendPayload" class="secondary mini-button">Copy JSON</button>
-              </div>
-              <pre id="frontendPayloadView" class="code-view">No frontend dump yet.</pre>
-            </div>
-
-            <div class="result-view" data-result-panel="activity">
-              <ul id="statusLog" class="status-log"></ul>
-            </div>
-            </div>
-          </div>
-        </details>
+        <div class="result-view" data-result-panel="activity">
+          <ul id="statusLog" class="status-log"></ul>
+        </div>
       </section>
     </section>
   </main>

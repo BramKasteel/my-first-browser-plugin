@@ -48,7 +48,7 @@ VS Code:
 - Install Playwright VS Code extension if not present
 - Use Testing panel or launch configs in `.vscode/launch.json`
 
-Note: Cardmarket may show Cloudflare challenge for browser automation. Headed debug flow usually easiest place to inspect and adapt selectors or wait strategy.
+Note: Cardmarket may show Cloudflare challenge for browser automation. Headed Playwright run usually easiest place to inspect and adapt selectors or wait strategy.
 
 Live want-list tests use your own Cardmarket data. Keep `CARDMARKET_WANTLIST_EXPECTED_NAMES` in same order as list should load in popup, separated by `|`.
 Single live end-to-end test logs in, loads want list, sets seller filters, starts scrape, and checks intermediate state plus final payload and optimize-step summary.

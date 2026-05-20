@@ -1,14 +1,11 @@
 const extractItemsButton = document.getElementById('extractItems');
 const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
-const loadOptimizerFixtureButton = document.getElementById('loadOptimizerFixture');
 const optimizeOrderButton = document.getElementById('optimizeOrder');
-const optimizeOrderLocalDebugButton = document.getElementById('optimizeOrderLocalDebug');
 const fillCartButton = document.getElementById('fillCart');
 const probeRateLimitsButton = document.getElementById('probeRateLimits');
 const sellerDelayInput = document.getElementById('sellerDelayMs');
 const probeRequestCountInput = document.getElementById('probeRequestCount');
 const probePageBudgetInput = document.getElementById('probePageBudget');
-const optimizerFixtureSelectEl = document.getElementById('optimizerFixtureSelect');
 const optimizerApiUrlInput = document.getElementById('optimizerApiUrl');
 const sellerReputationFilterEl = document.getElementById('sellerReputationFilter');
 const sellerDeliveryTimeFilterEl = document.getElementById('sellerDeliveryTimeFilter');
@@ -22,8 +19,6 @@ const sellerProgressLabelEl = document.getElementById('sellerProgressLabel');
 const sellerProgressCurrentEl = document.getElementById('sellerProgressCurrent');
 const sellerProgressPercentEl = document.getElementById('sellerProgressPercent');
 const sellerProgressBarEl = document.getElementById('sellerProgressBar');
-const copyPayloadButton = document.getElementById('copyPayload');
-const copyFrontendPayloadButton = document.getElementById('copyFrontendPayload');
 const wantListPreviewEl = document.getElementById('wantListPreview');
 const wantListWarningEl = document.getElementById('wantListWarning');
 const wantListSelectEl = document.getElementById('wantListSelect');
@@ -33,8 +28,6 @@ const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
 const cartItemsEl = document.getElementById('cartItems');
 const sellerItemsEl = document.getElementById('sellerItems');
-const payloadViewEl = document.getElementById('payloadView');
-const frontendPayloadViewEl = document.getElementById('frontendPayloadView');
 const cartSummaryEl = document.getElementById('cartSummary');
 const cartSummaryGrandTotalEl = document.getElementById('cartSummaryGrandTotal');
 const cartSummaryTotalItemsEl = document.getElementById('cartSummaryTotalItems');
@@ -47,7 +40,6 @@ const resultTabButtons = [...document.querySelectorAll('[data-result-tab]')];
 const resultPanels = [...document.querySelectorAll('[data-result-panel]')];
 const workflowStepButtons = [...document.querySelectorAll('[data-workflow-step]')];
 const workflowStepPanels = [...document.querySelectorAll('[data-step-panel]')];
-const debugToolsEl = document.getElementById('debugTools');
 const workflowCurrentStepEl = document.getElementById('workflowCurrentStep');
 const workflowStepHintEl = document.getElementById('workflowStepHint');
 const workflowBackButton = document.getElementById('workflowBack');
@@ -104,13 +96,11 @@ const MAX_WANT_LIST_ITEMS = 70;
 const SINGLE_COUNTRY_WANT_LIST_THRESHOLD = 30;
 const MAX_SELLER_COUNTRIES = 2;
 const DEFAULT_OPTIMIZER_API_URL = textOf(window.APP_CONFIG?.optimizerApiUrl);
-const LOCALHOST_OPTIMIZER_API_URL = 'http://127.0.0.1:8000/optimize';
-const DEFAULT_OPTIMIZER_FIXTURE = 'small_wantslist';
 const WORKFLOW_STEPS = ['source', 'sellers', 'optimize', 'fill'];
 const WORKFLOW_META = {
   source: {
     title: 'Select Cards',
-    hint: 'Load selected want list from active Cardmarket tab. Debug fixture path lives in debug tools.',
+    hint: 'Load selected want list from active Cardmarket tab.',
   },
   sellers: {
     title: 'Get Seller Data',
@@ -125,20 +115,6 @@ const WORKFLOW_META = {
     hint: 'Push chosen Cardmarket offers into your cart after reviewing optimized result.',
   },
 };
-const OPTIMIZER_FIXTURE_OPTIONS = [
-  {
-    value: 'small_wantslist',
-    path: 'optimizer-api/tests/fixtures/requests/small_wantslist.json',
-  },
-  {
-    value: 'big_list',
-    path: 'optimizer-api/tests/fixtures/requests/big_list.json',
-  },
-  {
-    value: 'ob_nixilis_improvements',
-    path: 'optimizer-api/tests/fixtures/requests/ob_nixilis_improvements.json',
-  },
-];
 const SELLER_COUNTRY_OPTIONS = [
   'Austria',
   'Belgium',
@@ -178,12 +154,6 @@ const SELLER_COUNTRY_OPTIONS = [
 ];
 
 selectedSellerCountries = [...DEFAULT_SELLER_COUNTRIES];
-
-function openDebugTools() {
-  if (debugToolsEl) {
-    debugToolsEl.open = true;
-  }
-}
 
 function appendStatus(message, tone = '') {
   const entry = document.createElement('li');
@@ -240,9 +210,6 @@ function syncOptimizeButton(isBusy = false) {
   optimizeOrderButton.disabled = isBusy || !hasPayload;
   optimizeOrderButton.classList.toggle('is-busy', isBusy);
   optimizeOrderButton.classList.toggle('secondary', !hasPayload);
-  optimizeOrderLocalDebugButton.disabled = isBusy || !hasPayload;
-  optimizeOrderLocalDebugButton.classList.toggle('is-busy', isBusy);
-  optimizeOrderLocalDebugButton.classList.toggle('secondary', !hasPayload);
 }
 
 function hasOptimizedCart() {
@@ -258,19 +225,10 @@ function syncFillCartButton(isBusy = false) {
   fillCartButton.classList.toggle('secondary', !hasCart);
 }
 
-function syncFixtureButton(isBusy = false) {
-  loadOptimizerFixtureButton.disabled = isBusy;
-  loadOptimizerFixtureButton.classList.toggle('is-busy', isBusy);
-}
-
 function setBusy(isBusy) {
   isUiBusy = isBusy;
-  loadOptimizerFixtureButton.disabled = isBusy;
-  loadOptimizerFixtureButton.classList.toggle('is-busy', isBusy);
   optimizeOrderButton.disabled = isBusy;
   optimizeOrderButton.classList.toggle('is-busy', isBusy);
-  optimizeOrderLocalDebugButton.disabled = isBusy;
-  optimizeOrderLocalDebugButton.classList.toggle('is-busy', isBusy);
   fillCartButton.disabled = isBusy;
   fillCartButton.classList.toggle('is-busy', isBusy);
   probeRateLimitsButton.disabled = isBusy;
@@ -278,7 +236,6 @@ function setBusy(isBusy) {
   sellerDelayInput.disabled = isBusy;
   probeRequestCountInput.disabled = isBusy;
   probePageBudgetInput.disabled = isBusy;
-  optimizerFixtureSelectEl.disabled = isBusy;
   sellerReputationFilterEl.disabled = isBusy;
   sellerDeliveryTimeFilterEl.disabled = isBusy;
   sellerTypeFilterEl.disabled = isBusy;
@@ -288,13 +245,8 @@ function setBusy(isBusy) {
   selectedSellerCountriesEl.querySelectorAll('button').forEach((button) => {
     button.disabled = isBusy;
   });
-  copyPayloadButton.disabled = isBusy;
-  copyPayloadButton.classList.toggle('is-busy', isBusy);
-  copyFrontendPayloadButton.disabled = isBusy;
-  copyFrontendPayloadButton.classList.toggle('is-busy', isBusy);
   syncExtractButton(isBusy);
   syncSellerScrapeButton(isBusy);
-  syncFixtureButton(isBusy);
   syncOptimizeButton(isBusy);
   syncFillCartButton(isBusy);
   renderWorkflow();
@@ -589,7 +541,6 @@ function getWorkflowState() {
     hasExtractedWants: latestExtractedItems.length > 0,
     wantListBlocked: wantListPolicy.isBlocked,
     hasSellerBatch: frontendKind === 'seller-scrape-batch',
-    hasFixturePayload: frontendKind === 'optimizer-fixture' && !!latestExtractPayload,
     hasOptimizerPayload: !!latestExtractPayload,
     hasOptimizationResult: !!latestOptimizationResult,
     hasOptimalCart: hasOptimizedCart(),
@@ -628,9 +579,6 @@ function getPreviousWorkflowStepFromHistory(state = getWorkflowState()) {
 
 function getWorkflowStepHint(stepName, state = getWorkflowState()) {
   if (stepName === 'source') {
-    if (state.hasFixturePayload) {
-      return 'Fixture payload loaded. Seller scrape skipped. Continue with optimization or reload want-list path.';
-    }
     if (state.hasExtractedWants && state.wantListBlocked) {
       return getWantListSelectionHint();
     }
@@ -659,7 +607,7 @@ function getWorkflowStepHint(stepName, state = getWorkflowState()) {
 
   if (stepName === 'optimize') {
     if (!state.hasOptimizerPayload) {
-      return 'Optimization locked until fixture or seller payload exists.';
+      return 'Optimization locked until seller payload exists.';
     }
     if (state.hasOptimizationResult && !state.hasOptimalCart) {
       return 'Optimizer ran. Review infeasible or partial result before trying again.';
@@ -698,7 +646,7 @@ function renderWorkflow() {
     if (isAccessible) {
       stepState = isActive ? 'active' : 'done';
     }
-    if (stepName === 'source' && !state.hasExtractedWants && !state.hasFixturePayload) {
+    if (stepName === 'source' && !state.hasExtractedWants) {
       stepState = isActive ? 'active' : 'done';
     }
     if (stepName === 'sellers' && isAccessible && !state.hasSellerBatch && !isActive) {
@@ -734,9 +682,7 @@ function renderWorkflow() {
     workflowBackButton.disabled = isUiBusy || !previousStep;
   }
 
-  if (state.hasFixturePayload) {
-    setStepBadge(sourceStepBadgeEl, 'Fixture loaded', 'good');
-  } else if (state.hasExtractedWants) {
+  if (state.hasExtractedWants) {
     setStepBadge(sourceStepBadgeEl, `${latestExtractedItems.length} items ready`, 'good');
   } else if (hasSelectedWantList()) {
     setStepBadge(sourceStepBadgeEl, 'List selected', 'good');
@@ -805,14 +751,6 @@ function syncOptimizerApiUrlInput() {
   optimizerApiUrlInput.value = DEFAULT_OPTIMIZER_API_URL;
 }
 
-function sanitizeOptimizerFixture(value) {
-  const normalized = textOf(value);
-  if (OPTIMIZER_FIXTURE_OPTIONS.some((entry) => entry.value === normalized)) {
-    return normalized;
-  }
-  return DEFAULT_OPTIMIZER_FIXTURE;
-}
-
 function clampProbeRuns(value) {
   return Math.min(8, Math.max(1, parseInt(value, 10) || 3));
 }
@@ -848,7 +786,6 @@ async function loadSellerSettings() {
   sellerDelayInput.value = String(sanitizeSellerDelay(settings.delayMs));
   probeRequestCountInput.value = String(clampProbeRuns(settings.probeRuns));
   probePageBudgetInput.value = String(clampProbePageBudget(settings.probePages));
-  optimizerFixtureSelectEl.value = sanitizeOptimizerFixture(settings.optimizerFixture);
   syncOptimizerApiUrlInput();
   sellerReputationFilterEl.value = normalizeSellerReputation(settings.sellerReputationFilter);
   sellerDeliveryTimeFilterEl.value = normalizeMaxShippingTime(settings.sellerDeliveryTimeFilter);
@@ -887,7 +824,6 @@ async function saveSellerSettings() {
       delayMs: sanitizeSellerDelay(sellerDelayInput.value),
       probeRuns: clampProbeRuns(probeRequestCountInput.value),
       probePages: clampProbePageBudget(probePageBudgetInput.value),
-      optimizerFixture: sanitizeOptimizerFixture(optimizerFixtureSelectEl.value),
       sellerReputationFilter: normalizeSellerReputation(sellerReputationFilterEl.value),
       sellerDeliveryTimeFilter: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
       sellerTypeFilter: normalizeSellerType(sellerTypeFilterEl.value),
@@ -1610,16 +1546,12 @@ function renderPayload(payload) {
   if (payloadChanged) {
     renderOptimizationResult(null);
   }
-  payloadViewEl.textContent = payload ? JSON.stringify(payload, null, 2) : 'No optimizer payload yet.';
-  copyPayloadButton.disabled = !payload;
   syncOptimizeButton(isUiBusy);
   renderWorkflow();
 }
 
 function renderFrontendPayload(payload) {
   latestFrontendPayload = payload;
-  frontendPayloadViewEl.textContent = payload ? JSON.stringify(payload, null, 2) : 'No frontend dump yet.';
-  copyFrontendPayloadButton.disabled = !payload;
   renderOptimizerInputContext();
   renderWorkflow();
 }
@@ -2075,67 +2007,6 @@ async function warmOptimizerApi(endpoint, { reason = '', force = false } = {}) {
   }
 }
 
-async function loadOptimizerFixturePayload(fixtureName) {
-  const fixture = OPTIMIZER_FIXTURE_OPTIONS.find((entry) => entry.value === fixtureName);
-  if (!fixture) {
-    throw new Error(`Unknown optimizer fixture: ${fixtureName}`);
-  }
-
-  const response = await fetch(chrome.runtime.getURL(fixture.path));
-  if (!response.ok) {
-    throw new Error(`Fixture load failed (${response.status}) for ${fixture.value}.`);
-  }
-
-  const payload = await response.json();
-  if (!Array.isArray(payload?.items) || !Array.isArray(payload?.sellers) || !Array.isArray(payload?.offers)) {
-    throw new Error(`Fixture ${fixture.value} is not valid optimizer request payload.`);
-  }
-
-  return { fixture, payload };
-}
-
-async function handleLoadOptimizerFixture() {
-  const fixtureName = sanitizeOptimizerFixture(optimizerFixtureSelectEl.value);
-  optimizerFixtureSelectEl.value = fixtureName;
-  await saveSellerSettings();
-
-  openDebugTools();
-  startRun(`Loading optimizer fixture ${fixtureName}...`);
-  setBusy(true);
-  try {
-    const { fixture, payload } = await loadOptimizerFixturePayload(fixtureName);
-    renderPayload(payload);
-    renderFrontendPayload({
-      kind: 'optimizer-fixture',
-      fixture: fixture.value,
-      path: fixture.path,
-      loadedAt: new Date().toISOString(),
-      totals: {
-        items: payload.items.length,
-        sellers: payload.sellers.length,
-        offers: payload.offers.length,
-      },
-    });
-    renderSummary([
-      { label: 'Source', value: `fixture:${fixture.value}`, tone: 'good' },
-      { label: 'Items', value: String(payload.items.length) },
-      { label: 'Sellers', value: String(payload.sellers.length) },
-      { label: 'Offers', value: String(payload.offers.length) },
-      { label: 'Buyer country', value: payload.buyer_country || '?' },
-      { label: 'Currency', value: payload.currency || 'EUR' },
-    ]);
-    setActiveWorkflowStep('optimize', { force: true });
-    setActiveResultTab('payload');
-    appendStatus(`Loaded optimizer fixture ${fixture.value}: ${payload.items.length} items, ${payload.sellers.length} sellers, ${payload.offers.length} offers.`, 'good');
-    finishRun(`Fixture ${fixture.value} loaded. Ready to optimize.`, 'good');
-  } catch (error) {
-    appendStatus(error.message, 'bad');
-    finishRun(error.message, 'bad');
-  } finally {
-    setBusy(false);
-  }
-}
-
 async function submitOptimizationRequest(endpoint) {
   if (!latestExtractPayload) {
     appendStatus('No optimizer payload ready yet. Scrape sellers first.', 'bad');
@@ -2234,10 +2105,6 @@ async function submitOptimizationRequest(endpoint) {
 
 async function handleOptimizeOrder() {
   return submitOptimizationRequest(DEFAULT_OPTIMIZER_API_URL);
-}
-
-async function handleOptimizeOrderLocalDebug() {
-  return submitOptimizationRequest(LOCALHOST_OPTIMIZER_API_URL);
 }
 
 async function getTargetTab() {
@@ -3224,47 +3091,15 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
   };
 }
 
-async function handleCopyPayload() {
-  if (!latestExtractPayload) {
-    appendStatus('No optimizer payload available to copy yet.', 'bad');
-    return;
-  }
-
-  try {
-    await navigator.clipboard.writeText(JSON.stringify(latestExtractPayload, null, 2));
-    appendStatus('Copied optimizer payload JSON to clipboard.', 'good');
-  } catch (error) {
-    appendStatus(`Clipboard copy failed: ${error.message}`, 'bad');
-  }
-}
-
-async function handleCopyFrontendPayload() {
-  if (!latestFrontendPayload) {
-    appendStatus('No frontend dump available to copy yet.', 'bad');
-    return;
-  }
-
-  try {
-    await navigator.clipboard.writeText(JSON.stringify(latestFrontendPayload, null, 2));
-    appendStatus('Copied frontend dump JSON to clipboard.', 'good');
-  } catch (error) {
-    appendStatus(`Clipboard copy failed: ${error.message}`, 'bad');
-  }
-}
-
 extractItemsButton.addEventListener('click', handleExtractItems);
 confirmWantListButton?.addEventListener('click', () => {
   if (!hasLoadedWantItems() || getWantListSelectionPolicy().isBlocked) return;
   setActiveWorkflowStep('sellers', { force: true });
 });
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
-loadOptimizerFixtureButton.addEventListener('click', handleLoadOptimizerFixture);
 optimizeOrderButton.addEventListener('click', handleOptimizeOrder);
-optimizeOrderLocalDebugButton.addEventListener('click', handleOptimizeOrderLocalDebug);
 fillCartButton.addEventListener('click', handleFillCart);
 probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
-copyPayloadButton.addEventListener('click', handleCopyPayload);
-copyFrontendPayloadButton.addEventListener('click', handleCopyFrontendPayload);
 workflowStepButtons.forEach((button) => {
   button.addEventListener('click', () => {
     const stepName = button.dataset.workflowStep || 'source';
@@ -3286,7 +3121,6 @@ resultTabButtons.forEach((button) => {
 sellerDelayInput.addEventListener('change', saveSellerSettings);
 probeRequestCountInput.addEventListener('change', saveSellerSettings);
 probePageBudgetInput.addEventListener('change', saveSellerSettings);
-optimizerFixtureSelectEl.addEventListener('change', saveSellerSettings);
 wantListSelectEl?.addEventListener('change', () => {
   selectedWantListId = textOf(wantListSelectEl.value);
   saveSellerSettings();
@@ -3348,7 +3182,6 @@ renderSellerCountryFilterList();
 renderWantListOptions();
 syncExtractButton();
 syncSellerScrapeButton();
-syncFixtureButton();
 syncOptimizeButton();
 syncFillCartButton();
 renderStepActivity();
