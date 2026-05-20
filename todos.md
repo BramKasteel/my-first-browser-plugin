@@ -2,10 +2,6 @@ get as little permissions as necessary
 
 ----------
 
-optimizing 'last' gives price of 100 euros?? its only one watcher for tomorrow
-
-----------
-
 Work on layout
 
 ----------

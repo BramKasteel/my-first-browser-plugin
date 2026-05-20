@@ -88,12 +88,7 @@
 
     .workflow-shell {
       display: grid;
-      gap: 12px;
-    }
-
-    .workflow-header {
-      display: grid;
-      gap: 12px;
+      gap: 0;
     }
 
     .workflow-steps {
@@ -155,21 +150,6 @@
       margin: 0;
       font-size: 13px;
       font-weight: 700;
-    }
-
-    .workflow-nav {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: center;
-    }
-
-    .workflow-nav-meta {
-      margin: 0;
-      text-align: center;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.4;
     }
 
     .panel.step-panel {
@@ -843,15 +823,6 @@
         grid-template-columns: 1fr;
       }
 
-      .workflow-nav {
-        align-items: stretch;
-        flex-direction: column;
-      }
-
-      .workflow-nav-meta {
-        text-align: left;
-      }
-
       .result-tabs {
         grid-template-columns: 1fr;
       }
@@ -877,37 +848,27 @@
     </section>
 
     <section class="panel workflow-shell">
-      <div class="workflow-header">
-        <div class="panel-header">
-          <h2 class="panel-title">Workflow</h2>
-        </div>
-        <div class="workflow-steps" role="tablist" aria-label="Optimization workflow">
-          <button type="button" class="secondary workflow-step" data-workflow-step="source" data-state="active" aria-selected="true">
-            <span class="workflow-step-index">Step 1</span>
-            <span class="workflow-step-title">Select cards</span>
-            <span class="workflow-step-meta">Want list extract</span>
-          </button>
-          <button type="button" class="secondary workflow-step" data-workflow-step="sellers" data-state="locked" aria-selected="false">
-            <span class="workflow-step-index">Step 2</span>
-            <span class="workflow-step-title">Get Sellers</span>
-            <span class="workflow-step-meta">Scrape market rows</span>
-          </button>
-          <button type="button" class="secondary workflow-step" data-workflow-step="optimize" data-state="locked" aria-selected="false">
-            <span class="workflow-step-index">Step 3</span>
-            <span class="workflow-step-title">Optimize</span>
-            <span class="workflow-step-meta">Price and shipping</span>
-          </button>
-          <button type="button" class="secondary workflow-step" data-workflow-step="fill" data-state="locked" aria-selected="false">
-            <span class="workflow-step-index">Step 4</span>
-            <span class="workflow-step-title">Fill Cart</span>
-            <span class="workflow-step-meta">Push chosen offers</span>
-          </button>
-        </div>
-        <div class="workflow-nav">
-          <p id="workflowStepHint" class="panel-note">Open Cardmarket want list, extract cards, then continue through sellers, optimize, and fill cart.</p>
-          <button type="button" id="workflowBack" class="secondary">Back</button>
-          <p id="workflowNavMeta" class="workflow-nav-meta">Step 1 of 4</p>
-        </div>
+      <div class="workflow-steps" role="tablist" aria-label="Optimization workflow">
+        <button type="button" class="secondary workflow-step" data-workflow-step="source" data-state="active" aria-selected="true">
+          <span class="workflow-step-index">Step 1</span>
+          <span class="workflow-step-title">Select cards</span>
+          <span class="workflow-step-meta">Want list extract</span>
+        </button>
+        <button type="button" class="secondary workflow-step" data-workflow-step="sellers" data-state="locked" aria-selected="false">
+          <span class="workflow-step-index">Step 2</span>
+          <span class="workflow-step-title">Get Sellers</span>
+          <span class="workflow-step-meta">Scrape market rows</span>
+        </button>
+        <button type="button" class="secondary workflow-step" data-workflow-step="optimize" data-state="locked" aria-selected="false">
+          <span class="workflow-step-index">Step 3</span>
+          <span class="workflow-step-title">Optimize</span>
+          <span class="workflow-step-meta">Price and shipping</span>
+        </button>
+        <button type="button" class="secondary workflow-step" data-workflow-step="fill" data-state="locked" aria-selected="false">
+          <span class="workflow-step-index">Step 4</span>
+          <span class="workflow-step-title">Fill Cart</span>
+          <span class="workflow-step-meta">Push chosen offers</span>
+        </button>
       </div>
     </section>
 

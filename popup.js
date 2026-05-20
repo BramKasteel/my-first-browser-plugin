@@ -41,10 +41,6 @@ const resultTabButtons = [...document.querySelectorAll('[data-result-tab]')];
 const resultPanels = [...document.querySelectorAll('[data-result-panel]')];
 const workflowStepButtons = [...document.querySelectorAll('[data-workflow-step]')];
 const workflowStepPanels = [...document.querySelectorAll('[data-step-panel]')];
-const workflowCurrentStepEl = document.getElementById('workflowCurrentStep');
-const workflowStepHintEl = document.getElementById('workflowStepHint');
-const workflowBackButton = document.getElementById('workflowBack');
-const workflowNavMetaEl = document.getElementById('workflowNavMeta');
 const sourceStepBadgeEl = document.getElementById('sourceStepBadge');
 const sellerStepBadgeEl = document.getElementById('sellerStepBadge');
 const optimizeStepBadgeEl = document.getElementById('optimizeStepBadge');
@@ -681,22 +677,6 @@ function renderWorkflow() {
   workflowStepPanels.forEach((panel) => {
     panel.classList.toggle('active', panel.dataset.stepPanel === activeWorkflowStep);
   });
-
-  if (workflowCurrentStepEl) {
-    workflowCurrentStepEl.textContent = WORKFLOW_META[activeWorkflowStep]?.title || 'Workflow';
-  }
-  if (workflowStepHintEl) {
-    workflowStepHintEl.textContent = getWorkflowStepHint(activeWorkflowStep, state);
-  }
-  if (workflowNavMetaEl) {
-    const stepIndex = Math.max(0, WORKFLOW_STEPS.indexOf(activeWorkflowStep));
-    workflowNavMetaEl.textContent = `Step ${stepIndex + 1} of ${WORKFLOW_STEPS.length}`;
-  }
-
-  const previousStep = getPreviousWorkflowStepFromHistory(state);
-  if (workflowBackButton) {
-    workflowBackButton.disabled = isUiBusy || !previousStep;
-  }
 
   if (state.hasExtractedWants) {
     setStepBadge(sourceStepBadgeEl, `${latestExtractedItems.length} items ready`, 'good');
@@ -3252,13 +3232,6 @@ workflowStepButtons.forEach((button) => {
     const stepName = button.dataset.workflowStep || 'source';
     setActiveWorkflowStep(stepName);
   });
-});
-workflowBackButton?.addEventListener('click', () => {
-  const previousStep = getPreviousWorkflowStepFromHistory();
-  if (previousStep) {
-    workflowHistory.pop();
-    setActiveWorkflowStep(previousStep, { force: true, recordHistory: false });
-  }
 });
 resultTabButtons.forEach((button) => {
   button.addEventListener('click', () => {
