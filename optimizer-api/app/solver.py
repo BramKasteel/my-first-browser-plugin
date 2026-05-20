@@ -20,8 +20,8 @@ from .models import (
 LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
 APPROX_GRAMS_PER_CARD = 2.5
 MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
-WARM_START_MAX_TIME_SECONDS = 4
-IMPROVEMENT_MAX_TIME_SECONDS = 6
+WARM_START_MAX_TIME_SECONDS = 6
+IMPROVEMENT_MAX_TIME_SECONDS = 9
 SOLVER_ABSOLUTE_GAP_LIMIT = 10
 SOLVER_NUM_SEARCH_WORKERS = 8
 SELLER_DOMINANCE_MAX_DISTINCT_ITEMS = 2
@@ -63,6 +63,20 @@ def _new_solver(cp_model, *, max_time_seconds: float | None):
     solver.parameters.absolute_gap_limit = SOLVER_ABSOLUTE_GAP_LIMIT
     solver.parameters.num_search_workers = SOLVER_NUM_SEARCH_WORKERS
     return solver
+
+
+def _cp_sat_status_name(cp_model, status: int) -> str:
+    if status == cp_model.OPTIMAL:
+        return "optimal"
+    if status == cp_model.FEASIBLE:
+        return "feasible"
+    if status == cp_model.INFEASIBLE:
+        return "infeasible"
+    if status == cp_model.MODEL_INVALID:
+        return "model_invalid"
+    if status == cp_model.UNKNOWN:
+        return "unknown"
+    return f"status_{status}"
 
 
 def _offer_prune_rank(offer: Offer) -> tuple[float, int, str]:
@@ -408,9 +422,9 @@ def _build_route_min_shipping_warm_start(
     item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
     route_book: shipping.ShippingRouteBook | None,
-) -> tuple[dict[str, int], dict[str, int]]:
+) -> tuple[dict[str, int], dict[str, int], str]:
     if not usable_offers:
-        return {}, {}
+        return {}, {}, "skipped"
 
     hint_model = cp_model.CpModel()
     hint_offer_vars = {}
@@ -472,8 +486,8 @@ def _build_route_min_shipping_warm_start(
 
     hint_solver = _new_solver(cp_model, max_time_seconds=WARM_START_MAX_TIME_SECONDS)
     status = hint_solver.Solve(hint_model)
-    if status != cp_model.OPTIMAL:
-        return {}, {}
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return {}, {}, _cp_sat_status_name(cp_model, status)
 
     return (
         {
@@ -485,6 +499,7 @@ def _build_route_min_shipping_warm_start(
             seller_id: hint_solver.Value(var)
             for seller_id, var in hint_seller_active_vars.items()
         },
+        _cp_sat_status_name(cp_model, status),
     )
 
 
@@ -755,13 +770,15 @@ def _solve_exact_shipping_order(
     if request.preferences.max_sellers is not None:
         model.Add(sum(seller_active_exprs.values()) <= request.preferences.max_sellers)
 
-    warm_start_offer_values, _ = _build_route_min_shipping_warm_start(
-        cp_model=cp_model,
-        request=request,
-        usable_offers=usable_offers,
-        item_map=item_map,
-        seller_map=seller_map,
-        route_book=route_book,
+    warm_start_offer_values, _, warm_start_status = (
+        _build_route_min_shipping_warm_start(
+            cp_model=cp_model,
+            request=request,
+            usable_offers=usable_offers,
+            item_map=item_map,
+            seller_map=seller_map,
+            route_book=route_book,
+        )
     )
     warm_start_seller_values = {
         seller_id: int(
@@ -830,7 +847,7 @@ def _solve_exact_shipping_order(
         for offer in usable_offers
         if solver.Value(offer_vars[offer.offer_id]) > 0
     }
-    return solution_status, selected_offer_quantities
+    return solution_status, selected_offer_quantities, warm_start_status
 
 
 def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
@@ -917,7 +934,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             notes=["Solver found no feasible solution."],
         )
 
-    solution_status, selected_offer_quantities = solution
+    solution_status, selected_offer_quantities, warm_start_status = solution
 
     allocations = []
     cart_items_by_seller = defaultdict(list)
@@ -1018,6 +1035,18 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         notes.append(
             "Solve uses two phases: warm start with cheapest per-seller route floor, then main solve with exact imported shipping tiers."
         )
+        if warm_start_status == "optimal":
+            notes.append(
+                "Warm-start floor solve proved optimal and seeded hints for exact solve."
+            )
+        elif warm_start_status == "feasible":
+            notes.append(
+                "Warm-start floor solve found feasible solution before proof of optimality and seeded hints for exact solve."
+            )
+        else:
+            notes.append(
+                f"Warm-start floor solve status: {warm_start_status}. Exact solve ran without warm-start hints."
+            )
         if use_explicit_weights:
             notes.append(
                 "Exact shipping costs use selected item value, summed item weight, and parcel-only item flags."
@@ -1047,6 +1076,18 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
                 "Current route table: Germany -> Netherlands = 1.55 EUR, Netherlands -> Netherlands = 1.70 EUR, fallback = 1.00 EUR.",
             ]
         )
+        if warm_start_status == "optimal":
+            notes.append(
+                "Warm-start proxy solve proved optimal and seeded hints for main solve."
+            )
+        elif warm_start_status == "feasible":
+            notes.append(
+                "Warm-start proxy solve found feasible solution before proof of optimality and seeded hints for main solve."
+            )
+        else:
+            notes.append(
+                f"Warm-start proxy solve status: {warm_start_status}. Main solve ran without warm-start hints."
+            )
         if route_book is None:
             notes.append(
                 "Imported shipping data unavailable. Run `uv run cm-import-shipping` to enable route-method pricing."

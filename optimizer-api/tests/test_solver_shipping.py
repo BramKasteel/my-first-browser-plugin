@@ -211,16 +211,20 @@ def test_optimize_uses_legacy_shipping_when_imported_data_unavailable(
     assert response.totals.shipping_total == 1.55
 
 
-def test_warm_start_requires_optimal_status(monkeypatch) -> None:
+def test_warm_start_keeps_feasible_solution(monkeypatch) -> None:
     request = _request(unit_price=1.0, quantity=1)
     seller_map = {seller.seller_id: seller for seller in request.sellers}
     item_map = {item.item_id: item for item in request.items}
 
-    monkeypatch.setattr(
-        cp_model.CpSolver, "Solve", lambda self, model: cp_model.FEASIBLE
-    )
+    original_solve = cp_model.CpSolver.Solve
 
-    offer_values, seller_values = _build_route_min_shipping_warm_start(
+    def wrapped_solve(self, model):
+        original_solve(self, model)
+        return cp_model.FEASIBLE
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", wrapped_solve)
+
+    offer_values, seller_values, warm_start_status = _build_route_min_shipping_warm_start(
         cp_model=cp_model,
         request=request,
         usable_offers=request.offers,
@@ -229,8 +233,9 @@ def test_warm_start_requires_optimal_status(monkeypatch) -> None:
         route_book=None,
     )
 
-    assert offer_values == {}
-    assert seller_values == {}
+    assert offer_values == {"offer-1": 1}
+    assert seller_values == {"seller-1": 1}
+    assert warm_start_status == "feasible"
 
 
 def test_optimize_uses_configured_improvement_budget(monkeypatch) -> None:
