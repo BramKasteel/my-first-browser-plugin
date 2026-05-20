@@ -2,6 +2,10 @@ get as little permissions as necessary
 
 ------------
 
+get a better url name
+
+------------
+
 after pushing to cart, make a diff with what you thought that would go into the card.
 Make it clear which cards are missing
 
@@ -12,7 +16,7 @@ Work on layout
 
 ----------
 
-increase the lambda memory above free-tier level --> later
+increase the lambda memory above free-tier level --> created a ticket
 
 ---------------
 
