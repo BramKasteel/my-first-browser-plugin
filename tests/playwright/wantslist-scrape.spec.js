@@ -51,10 +51,23 @@ test.describe('Want list scraping flow', () => {
     expect(extractedSnapshot.wantLists.selectedWantListId).toBe(matchingWantList.id);
     expect(extractedSnapshot.extractedItems.count).toBeGreaterThan(0);
     expect(extractedSnapshot.frontendPayload?.wantListName?.toLowerCase()).toContain(wantListName.toLowerCase());
+    expect(extractedSnapshot.workflow.activeStep).toBe('source');
 
     const storedState = await readPopupStorage(popupPage, ['sellerScrapeSettings']);
     expect(storedState.sellerScrapeSettings?.selectedWantListId).toBe(matchingWantList.id);
 
+    await expect(popupPage.locator('#confirmWantList')).toBeVisible();
+    await expect(popupPage.locator('#confirmWantList')).toBeEnabled();
+    await popupPage.click('#confirmWantList');
+
+    await popupPage.waitForFunction(
+      () => window.__cmOptimizerTestApi.getSnapshot().workflow.activeStep === 'sellers',
+      null,
+      { timeout: 10_000 },
+    );
+
+    await expect(popupPage.locator('#scrapeAllItems')).toBeVisible();
+    await expect(popupPage.locator('#scrapeAllItems')).toBeEnabled();
     await popupPage.click('#scrapeAllItems');
 
     await popupPage.waitForFunction(
