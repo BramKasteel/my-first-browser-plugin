@@ -394,8 +394,12 @@ function getSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
 function renderSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
   if (!sellerCountryLimitHintEl) return;
   const message = getSellerCountryLimitHint(policy);
+  const isSingleCountryPolicy = !policy.isBlocked && policy.maxSellerCountries === 1;
+  const hasExactRequiredSelection = selectedSellerCountries.length === 1;
   sellerCountryLimitHintEl.textContent = message;
   sellerCountryLimitHintEl.hidden = !message;
+  sellerCountryLimitHintEl.classList.toggle('good', !!message && isSingleCountryPolicy && hasExactRequiredSelection);
+  sellerCountryLimitHintEl.classList.toggle('bad', !!message && (policy.isBlocked || (isSingleCountryPolicy && !hasExactRequiredSelection)));
 }
 
 function areSameCountries(left = [], right = []) {
@@ -414,6 +418,8 @@ function enforceWantListSelectionPolicy({ persist = false, announce = false } = 
   const policy = getWantListSelectionPolicy();
   const constrainedCountries = clampSellerCountriesToPolicy(selectedSellerCountries, policy);
   const changed = !areSameCountries(constrainedCountries, selectedSellerCountries);
+
+  renderSellerCountryLimitHint(policy);
 
   if (changed) {
     renderSellerCountryFilterList(constrainedCountries);
