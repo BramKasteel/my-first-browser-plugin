@@ -422,6 +422,19 @@
       padding: 0 12px 12px;
     }
 
+    #wantListPreview {
+      margin-top: 14px;
+    }
+
+    #wantListPreview summary {
+      padding: 12px 14px;
+      font-size: 14px;
+    }
+
+    #wantListPreview .collapsible-body {
+      padding: 0 14px 14px;
+    }
+
     button {
       border: 0;
       border-radius: 10px;
@@ -490,6 +503,12 @@
       gap: 6px;
       font-size: 12px;
       color: var(--muted);
+    }
+
+    .seller-filter-field > span {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
     }
 
     .toggle-row {
@@ -880,26 +899,23 @@
         </div>
         <div class="source-shell">
           <section class="source-card">
-            <h3 class="source-title">From Cardmarket want list</h3>
-            <p class="panel-note">Open any Cardmarket page, pick want list here, then review preview before seller scrape.</p>
+            <h3 class="source-title">Select a wants list</h3>
             <div class="step-card-actions">
               <div class="config-row">
-                <label class="config-label" for="wantListSelect">
-                  <span>Want list</span>
+                <div class="config-label">
                   <select id="wantListSelect">
                     <option value="">Loading want lists...</option>
                   </select>
-                </label>
+                </div>
               </div>
               <button id="extractItems" class="secondary" hidden>Load Want List</button>
-              <button id="confirmWantList" class="secondary" hidden>Continue to Seller Scrape</button>
-              <p id="wantListConfirmHint" class="panel-note" hidden>Review preview below before moving to seller scrape.</p>
+              <button id="confirmWantList" class="secondary" hidden>Filter sellers</button>
               <p id="wantListWarning" class="inline-notice" hidden></p>
             </div>
           </section>
         </div>
         <details id="wantListPreview" class="collapsible is-empty">
-          <summary>Want list preview</summary>
+          <summary>Preview</summary>
           <div class="collapsible-body">
             <div id="items" class="items"></div>
           </div>
@@ -912,9 +928,8 @@
           <span id="sellerStepBadge" class="step-pill">Locked</span>
         </div>
         <div id="sellerSettingsBody" class="config-block">
-          <p class="panel-note">Scrape seller rows only after want items loaded. Filters apply before optimizer payload build.</p>
           <div class="filter-grid">
-            <label class="config-label" for="sellerReputationFilter">
+            <label class="config-label seller-filter-field" for="sellerReputationFilter">
               <span>Seller reputation</span>
               <select id="sellerReputationFilter">
                 <option value="">Any</option>
@@ -925,7 +940,7 @@
                 <option value="Bad">Bad</option>
               </select>
             </label>
-            <label class="config-label" for="sellerDeliveryTimeFilter">
+            <label class="config-label seller-filter-field" for="sellerDeliveryTimeFilter">
               <span>Max delivery time</span>
               <select id="sellerDeliveryTimeFilter">
                 <option value="">Any</option>
@@ -937,7 +952,7 @@
                 <option value="7">7+ days</option>
               </select>
             </label>
-            <label class="config-label" for="sellerTypeFilter">
+            <label class="config-label seller-filter-field" for="sellerTypeFilter">
               <span>Seller type</span>
               <select id="sellerTypeFilter">
                 <option value="">Any</option>
@@ -947,10 +962,9 @@
               </select>
             </label>
           </div>
-          <div class="config-label">
-            <span>Choose seller countries to include when scraping.</span>
+          <div class="config-label seller-filter-field">
+            <span>Seller country</span>
             <div class="country-section">
-              <span class="country-section-label">Selected countries</span>
               <div id="selectedSellerCountries" class="country-selected-list" role="group" aria-label="Selected seller countries"></div>
             </div>
             <div class="country-section">
@@ -960,36 +974,8 @@
             <p id="sellerCountryLimitHint" class="inline-notice" hidden></p>
           </div>
           <div class="actions">
-            <button id="scrapeAllItems" class="secondary">Scrape sellers</button>
+            <button id="scrapeAllItems" class="secondary">Get sellers</button>
           </div>
-          <details class="collapsible is-ready">
-            <summary>Advanced rate probe</summary>
-            <div class="collapsible-body">
-              <section class="step-highlight">
-                <div class="panel-header">
-                  <h3 class="panel-title">Rate Probe</h3>
-                  <button id="probeRateLimits" class="secondary mini-button">Run Safe Rate Probe</button>
-                </div>
-                <div class="config-row">
-                  <label class="config-label" for="sellerDelayMs">
-                    <span>Seller request delay (ms)</span>
-                    <input id="sellerDelayMs" type="number" min="250" step="50" value="2000">
-                  </label>
-                  <label class="config-label" for="probeRequestCount">
-                    <span>Probe runs per delay stage</span>
-                    <input id="probeRequestCount" type="number" min="1" max="8" step="1" value="3">
-                  </label>
-                </div>
-                <div class="config-row">
-                  <label class="config-label" for="probePageBudget">
-                    <span>Probe page budget per run</span>
-                    <input id="probePageBudget" type="number" min="1" max="3" step="1" value="2">
-                  </label>
-                </div>
-                <p class="subtle">Probe mode tests one item serially at staged delays, applies small random jitter, stops on first warning, and recommends conservative seller delay.</p>
-              </section>
-            </div>
-          </details>
         </div>
         <section id="sellerScrapeProgress" class="step-progress" aria-live="polite" hidden>
           <div class="step-progress-head">
@@ -1080,9 +1066,9 @@
 
         <div class="result-tabs" role="tablist" aria-label="Result views">
               <button type="button" class="secondary mini-button result-tab active" id="resultTabOverview" data-result-tab="overview" aria-selected="true"><span class="tab-label">Overview</span></button>
-              <button type="button" class="secondary mini-button result-tab" id="resultTabCart" data-result-tab="cart" aria-selected="false"><span class="tab-label">Cart</span></button>
+            <button type="button" class="secondary mini-button result-tab" id="resultTabActivity" data-result-tab="activity" aria-selected="false"><span class="tab-label">Logs <span id="activityBadge" class="tab-badge" aria-hidden="true"></span></span></button>
               <button type="button" class="secondary mini-button result-tab" id="resultTabSellers" data-result-tab="sellers" aria-selected="false"><span class="tab-label">Sellers</span></button>
-              <button type="button" class="secondary mini-button result-tab" id="resultTabActivity" data-result-tab="activity" aria-selected="false"><span class="tab-label">Activity <span id="activityBadge" class="tab-badge" aria-hidden="true"></span></span></button>
+            <button type="button" class="secondary mini-button result-tab" id="resultTabCart" data-result-tab="cart" aria-selected="false"><span class="tab-label">Cart</span></button>
             </div>
 
             <div class="result-view active" data-result-panel="overview">

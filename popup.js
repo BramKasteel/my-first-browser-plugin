@@ -2,10 +2,6 @@ const extractItemsButton = document.getElementById('extractItems');
 const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
 const optimizeOrderButton = document.getElementById('optimizeOrder');
 const fillCartButton = document.getElementById('fillCart');
-const probeRateLimitsButton = document.getElementById('probeRateLimits');
-const sellerDelayInput = document.getElementById('sellerDelayMs');
-const probeRequestCountInput = document.getElementById('probeRequestCount');
-const probePageBudgetInput = document.getElementById('probePageBudget');
 const optimizerApiUrlInput = document.getElementById('optimizerApiUrl');
 const buyerCountrySelectEl = document.getElementById('buyerCountry');
 const sellerReputationFilterEl = document.getElementById('sellerReputationFilter');
@@ -24,7 +20,6 @@ const wantListPreviewEl = document.getElementById('wantListPreview');
 const wantListWarningEl = document.getElementById('wantListWarning');
 const wantListSelectEl = document.getElementById('wantListSelect');
 const confirmWantListButton = document.getElementById('confirmWantList');
-const wantListConfirmHintEl = document.getElementById('wantListConfirmHint');
 const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
 const cartItemsEl = document.getElementById('cartItems');
@@ -82,15 +77,15 @@ let workflowHistory = [];
 let activeStepActivity = null;
 let lastOptimizerWarmupAt = 0;
 let wantListRetryTimer = null;
+let sellerRequestDelayMs = 2000;
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
+const DEFAULT_SELLER_DELAY_MS = 2000;
 const MIN_SELLER_DELAY_MS = 250;
-const REQUEST_JITTER_RATIO = 0.15;
 const OPTIMIZER_WARMUP_THROTTLE_MS = 90 * 1000;
 const WANT_LIST_RETRY_DELAY_MS = 2000;
-const RATE_PROBE_DELAYS_MS = [1500, 1000, 750, 500, 350, 300, 250, 200];
 const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
 const MAX_WANT_LIST_ITEMS = 70;
 const SINGLE_COUNTRY_WANT_LIST_THRESHOLD = 30;
@@ -192,9 +187,6 @@ function syncExtractButton(isBusy = false) {
     confirmWantListButton.classList.toggle('is-busy', false);
     confirmWantListButton.classList.toggle('secondary', !hasLoadedItems || wantListPolicy.isBlocked);
   }
-  if (wantListConfirmHintEl) {
-    wantListConfirmHintEl.hidden = !hasLoadedItems;
-  }
 }
 
 function syncSellerScrapeButton(isBusy = false) {
@@ -232,11 +224,6 @@ function setBusy(isBusy) {
   optimizeOrderButton.classList.toggle('is-busy', isBusy);
   fillCartButton.disabled = isBusy;
   fillCartButton.classList.toggle('is-busy', isBusy);
-  probeRateLimitsButton.disabled = isBusy;
-  probeRateLimitsButton.classList.toggle('is-busy', isBusy);
-  sellerDelayInput.disabled = isBusy;
-  probeRequestCountInput.disabled = isBusy;
-  probePageBudgetInput.disabled = isBusy;
   buyerCountrySelectEl.disabled = isBusy;
   sellerReputationFilterEl.disabled = isBusy;
   sellerDeliveryTimeFilterEl.disabled = isBusy;
@@ -804,28 +791,8 @@ function refreshOptimizerPayloadFromCurrentState() {
   renderPayload(buildOptimizerPayload(latestFrontendPayload));
 }
 
-function clampProbeRuns(value) {
-  return Math.min(8, Math.max(1, parseInt(value, 10) || 3));
-}
-
-function clampProbePageBudget(value) {
-  return Math.min(3, Math.max(1, parseInt(value, 10) || 2));
-}
-
-function roundProbeRecommendation(delayMs) {
-  return Math.max(MIN_SELLER_DELAY_MS, Math.ceil((delayMs * 1.25) / 50) * 50);
-}
-
 function sanitizeSellerDelay(value) {
-  return Math.max(MIN_SELLER_DELAY_MS, parseInt(value, 10) || 2000);
-}
-
-function applyJitter(baseMs, jitterRatio = REQUEST_JITTER_RATIO) {
-  const safeBase = Math.max(0, parseInt(baseMs, 10) || 0);
-  if (!safeBase || jitterRatio <= 0) return safeBase;
-  const spread = safeBase * jitterRatio;
-  const jittered = safeBase + ((Math.random() * 2) - 1) * spread;
-  return Math.max(0, Math.round(jittered));
+  return Math.max(MIN_SELLER_DELAY_MS, parseInt(value, 10) || DEFAULT_SELLER_DELAY_MS);
 }
 
 async function getStorageArea() {
@@ -836,9 +803,7 @@ async function loadSellerSettings() {
   const storageArea = await getStorageArea();
   const stored = await storageArea.get(SELLER_SETTINGS_KEY);
   const settings = stored[SELLER_SETTINGS_KEY] || {};
-  sellerDelayInput.value = String(sanitizeSellerDelay(settings.delayMs));
-  probeRequestCountInput.value = String(clampProbeRuns(settings.probeRuns));
-  probePageBudgetInput.value = String(clampProbePageBudget(settings.probePages));
+  sellerRequestDelayMs = sanitizeSellerDelay(settings.delayMs);
   syncOptimizerApiUrlInput();
   sellerReputationFilterEl.value = normalizeSellerReputation(settings.sellerReputationFilter);
   sellerDeliveryTimeFilterEl.value = normalizeMaxShippingTime(settings.sellerDeliveryTimeFilter);
@@ -876,9 +841,7 @@ async function saveSellerSettings() {
   const storageArea = await getStorageArea();
   await storageArea.set({
     [SELLER_SETTINGS_KEY]: {
-      delayMs: sanitizeSellerDelay(sellerDelayInput.value),
-      probeRuns: clampProbeRuns(probeRequestCountInput.value),
-      probePages: clampProbePageBudget(probePageBudgetInput.value),
+      delayMs: sellerRequestDelayMs,
       sellerReputationFilter: normalizeSellerReputation(sellerReputationFilterEl.value),
       sellerDeliveryTimeFilter: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
       sellerTypeFilter: normalizeSellerType(sellerTypeFilterEl.value),
@@ -2522,7 +2485,7 @@ async function handleScrapeAllItems() {
     });
 
     const requestContext = await resolveSellerRequestContext(latestExtractedItems.find((item) => item?.productUrl) || latestExtractedItems[0]);
-    const delayMs = sanitizeSellerDelay(sellerDelayInput.value);
+    const delayMs = sellerRequestDelayMs;
     await ensureSellerScrapeNotCoolingDown();
 
     setStepActivity({
@@ -2763,161 +2726,6 @@ async function handleScrapeAllItems() {
     finishRun(error.message, 'bad');
   } finally {
     setStepActivity(null);
-    setBusy(false);
-  }
-}
-
-async function handleProbeRateLimits() {
-  startRun('Running safe rate probe for first extracted want item...');
-  setBusy(true);
-  try {
-    appendStatus('Starting safe rate probe for the first extracted item. Serial requests only; the probe will stop on the first warning.', 'good');
-    if (!latestExtractedItems.length) {
-      throw new Error('Extract want items first so the popup has a product to probe.');
-    }
-
-    const firstItem = latestExtractedItems[0];
-    if (!firstItem.idProduct) {
-      throw new Error('The first extracted item has no idProduct, so probing cannot start yet.');
-    }
-
-    const requestContext = await resolveSellerRequestContext(firstItem);
-    const cooldownUntil = await getSellerCooldownUntil();
-    if (cooldownUntil > Date.now()) {
-      throw new Error(`Seller scraping is paused after rate limiting. Try again in ${formatRemaining(cooldownUntil - Date.now())}.`);
-    }
-
-    const probeRuns = clampProbeRuns(probeRequestCountInput.value);
-    const probePages = clampProbePageBudget(probePageBudgetInput.value);
-    const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(firstItem));
-    const requestCountryIds = getCardmarketCountryIdsFromCountries(getSelectedSellerCountries());
-    const requestFilters = {
-      languageId: requestLanguageId,
-      sellerCountryIds: requestCountryIds,
-      sellerReputationId: getCardmarketSellerReputationId(sellerReputationFilterEl.value),
-      maxShippingTimeId: getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value),
-      sellerTypeId: getCardmarketSellerTypeId(sellerTypeFilterEl.value),
-    };
-
-    const stageResults = [];
-    let lastSafeDelay = null;
-    let firstWarning = null;
-
-    for (const delayMs of RATE_PROBE_DELAYS_MS) {
-      appendStatus(`Probe stage ${delayMs} ms: running ${probeRuns} sample${probeRuns === 1 ? '' : 's'} with page budget ${probePages} and ${Math.round(REQUEST_JITTER_RATIO * 100)}% jitter.`);
-      const stage = {
-        delayMs,
-        runsRequested: probeRuns,
-        runsCompleted: 0,
-        pagesFetched: 0,
-        totalSellers: 0,
-        warnings: [],
-        statuses: [],
-      };
-
-      for (let runIndex = 0; runIndex < probeRuns; runIndex += 1) {
-        const result = await scrapeSingleWantItemSellers({
-          item: firstItem,
-          delay: delayMs,
-          previewLimit: 0,
-          requestFilters,
-          maxSellerPages: probePages,
-          maxFetchAttempts: 1,
-          jitterRatio: REQUEST_JITTER_RATIO,
-          requestContext,
-        });
-
-        if (!result) {
-          stage.warnings.push('No result returned from the Cardmarket tab.');
-          stage.statuses.push('no-result');
-          break;
-        }
-
-        stage.runsCompleted += 1;
-        stage.pagesFetched += result.pagesFetched || 0;
-        stage.totalSellers += result.totalSellers || 0;
-
-        if (result.error) {
-          stage.warnings.push(result.error);
-          stage.statuses.push(result.rateLimited ? 'rate-limited' : 'error');
-        } else if (result.rateLimited) {
-          stage.warnings.push('Cardmarket signalled rate limiting during the probe.');
-          stage.statuses.push('rate-limited');
-        } else if ((result.pagesFetched || 0) === 0 || (result.totalSellers || 0) === 0) {
-          stage.warnings.push('Probe returned no seller rows. Treating that as a warning signal.');
-          stage.statuses.push('empty');
-        } else {
-          stage.statuses.push('ok');
-        }
-
-        if (stage.warnings.length) {
-          if (result.rateLimited) {
-            await setSellerCooldownUntil(Date.now() + SELLER_COOLDOWN_MS);
-          }
-          break;
-        }
-
-        if (runIndex < probeRuns - 1) {
-          await sleep(applyJitter(delayMs));
-        }
-      }
-
-      stageResults.push(stage);
-      if (stage.warnings.length) {
-        firstWarning = { delayMs, message: stage.warnings[0] };
-        appendStatus(`Probe stopped at ${delayMs} ms: ${stage.warnings[0]}`, 'bad');
-        break;
-      }
-
-      lastSafeDelay = delayMs;
-      appendStatus(`Probe stage ${delayMs} ms completed without warnings across ${stage.runsCompleted} runs.`, 'good');
-      await sleep(2000);
-    }
-
-    const recommendedDelay = roundProbeRecommendation(lastSafeDelay || RATE_PROBE_DELAYS_MS[0]);
-    sellerDelayInput.value = String(recommendedDelay);
-    await saveSellerSettings();
-
-    renderSummary([
-      { label: 'Probe item', value: firstItem.productName || firstItem.idProduct, tone: 'good' },
-      { label: 'Stages tested', value: stageResults.map((stage) => `${stage.delayMs}ms`).join(' -> ') || '-' },
-      { label: 'Safe floor', value: lastSafeDelay ? `${lastSafeDelay} ms` : 'none confirmed', tone: lastSafeDelay ? 'good' : 'bad' },
-      { label: 'First warning', value: firstWarning ? `${firstWarning.delayMs} ms | ${firstWarning.message}` : 'none observed' },
-      { label: 'Recommended delay', value: `${recommendedDelay} ms`, tone: 'good' },
-      { label: 'Jitter', value: `${Math.round(REQUEST_JITTER_RATIO * 100)}% per request` },
-      { label: 'Probe budget', value: `${probeRuns} runs x ${probePages} page${probePages === 1 ? '' : 's'}` },
-    ]);
-
-    renderFrontendPayload({
-      kind: 'seller-rate-probe',
-      item: {
-        idProduct: firstItem.idProduct,
-        productName: firstItem.productName || '',
-      },
-      requestFilters,
-      probeRuns,
-      probePages,
-      stages: stageResults,
-      safeFloorDelayMs: lastSafeDelay,
-      firstWarning,
-      recommendedDelayMs: recommendedDelay,
-      jitterRatio: REQUEST_JITTER_RATIO,
-      testedAt: new Date().toISOString(),
-    });
-    renderPayload(null);
-    setActiveResultTab('overview');
-
-    if (lastSafeDelay) {
-      appendStatus(`Seller delay updated to ${recommendedDelay} ms based on the last clean probe stage.`, 'good');
-      finishRun(`Rate probe finished. Recommended seller delay: ${recommendedDelay} ms.`, 'good');
-    } else {
-      appendStatus(`No clean probe stage completed. Seller delay was reset to ${recommendedDelay} ms as a conservative fallback.`, 'bad');
-      finishRun(`Rate probe finished with warnings. Fallback delay: ${recommendedDelay} ms.`, 'bad');
-    }
-  } catch (error) {
-    appendStatus(error.message, 'bad');
-    finishRun(error.message, 'bad');
-  } finally {
     setBusy(false);
   }
 }
@@ -3226,7 +3034,6 @@ confirmWantListButton?.addEventListener('click', () => {
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 optimizeOrderButton.addEventListener('click', handleOptimizeOrder);
 fillCartButton.addEventListener('click', handleFillCart);
-probeRateLimitsButton.addEventListener('click', handleProbeRateLimits);
 workflowStepButtons.forEach((button) => {
   button.addEventListener('click', () => {
     const stepName = button.dataset.workflowStep || 'source';
@@ -3238,9 +3045,6 @@ resultTabButtons.forEach((button) => {
     setActiveResultTab(button.dataset.resultTab || 'overview');
   });
 });
-sellerDelayInput.addEventListener('change', saveSellerSettings);
-probeRequestCountInput.addEventListener('change', saveSellerSettings);
-probePageBudgetInput.addEventListener('change', saveSellerSettings);
 wantListSelectEl?.addEventListener('change', () => {
   selectedWantListId = textOf(wantListSelectEl.value);
   saveSellerSettings();
