@@ -21,7 +21,8 @@ LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
 APPROX_GRAMS_PER_CARD = 2.5
 MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
 WARM_START_MAX_TIME_SECONDS = 4
-IMPROVEMENT_MAX_TIME_SECONDS = 4
+IMPROVEMENT_MAX_TIME_SECONDS = 6
+SOLVER_ABSOLUTE_GAP_LIMIT = 10
 SOLVER_NUM_SEARCH_WORKERS = 8
 SELLER_DOMINANCE_MAX_DISTINCT_ITEMS = 2
 
@@ -59,6 +60,7 @@ def _new_solver(cp_model, *, max_time_seconds: float | None):
     solver = cp_model.CpSolver()
     if max_time_seconds is not None:
         solver.parameters.max_time_in_seconds = max_time_seconds
+    solver.parameters.absolute_gap_limit = SOLVER_ABSOLUTE_GAP_LIMIT
     solver.parameters.num_search_workers = SOLVER_NUM_SEARCH_WORKERS
     return solver
 
