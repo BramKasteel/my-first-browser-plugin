@@ -34,6 +34,9 @@ const cartItemsEl = document.getElementById('cartItems');
 const sellerItemsEl = document.getElementById('sellerItems');
 const payloadViewEl = document.getElementById('payloadView');
 const frontendPayloadViewEl = document.getElementById('frontendPayloadView');
+const cartSummaryEl = document.getElementById('cartSummary');
+const cartSummaryGrandTotalEl = document.getElementById('cartSummaryGrandTotal');
+const cartSummaryTotalItemsEl = document.getElementById('cartSummaryTotalItems');
 const statusLogEl = document.getElementById('statusLog');
 const runStatusEl = document.getElementById('runStatus');
 const runStatusTextEl = document.getElementById('runStatusText');
@@ -53,6 +56,13 @@ const sellerStepBadgeEl = document.getElementById('sellerStepBadge');
 const optimizeStepBadgeEl = document.getElementById('optimizeStepBadge');
 const fillStepBadgeEl = document.getElementById('fillStepBadge');
 const optimizerSettingsBodyEl = document.getElementById('optimizerSettingsBody');
+const optimizerInputContextEl = document.getElementById('optimizerInputContext');
+const optimizerInputMetaEl = document.getElementById('optimizerInputMeta');
+const optimizerInputFiltersEl = document.getElementById('optimizerInputFilters');
+const optimizerInputItemsEl = document.getElementById('optimizerInputItems');
+const mainCartSummaryEl = document.getElementById('mainCartSummary');
+const mainCartSummaryGrandTotalEl = document.getElementById('mainCartSummaryGrandTotal');
+const mainCartSummaryTotalItemsEl = document.getElementById('mainCartSummaryTotalItems');
 const optimizerWaitingEl = document.getElementById('optimizerWaiting');
 const optimizerWaitingTextEl = document.getElementById('optimizerWaitingText');
 const optimizerWaitingDetailEl = document.getElementById('optimizerWaitingDetail');
@@ -349,12 +359,41 @@ function getPopupSnapshot() {
       count: latestExtractedItems.length,
       sample: latestExtractedItems.slice(0, 3),
     },
+    sellerFilters: getCurrentSellerFilterState(),
     frontendPayload: latestFrontendPayload,
     optimizerPayload: latestExtractPayload,
+    optimizeContext: getOptimizeContextSnapshot(),
     optimizationResult: latestOptimizationResult,
     stepActivity: activeStepActivity ? { ...activeStepActivity } : null,
     summary: readSummaryRows(),
     statusLog: readStatusLogEntries(),
+  };
+}
+
+function getCurrentSellerFilterState() {
+  return {
+    sellerReputation: normalizeSellerReputation(sellerReputationFilterEl?.value),
+    maxShippingTime: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl?.value),
+    sellerType: normalizeSellerType(sellerTypeFilterEl?.value),
+    sellerCountries: getSelectedSellerCountries(),
+  };
+}
+
+function getOptimizeContextSnapshot() {
+  if (latestFrontendPayload?.kind !== 'seller-scrape-batch') return null;
+
+  return {
+    wantListId: textOf(latestFrontendPayload.wantListId),
+    requestSettings: latestFrontendPayload.requestSettings
+      ? {
+          ...latestFrontendPayload.requestSettings,
+          sellerCountries: [...(latestFrontendPayload.requestSettings.sellerCountries || [])],
+        }
+      : null,
+    totals: latestFrontendPayload.totals ? { ...latestFrontendPayload.totals } : null,
+    itemNames: (latestFrontendPayload.results || [])
+      .map((result) => textOf(result?.item?.productName))
+      .filter(Boolean),
   };
 }
 
@@ -1470,7 +1509,52 @@ function renderFrontendPayload(payload) {
   latestFrontendPayload = payload;
   frontendPayloadViewEl.textContent = payload ? JSON.stringify(payload, null, 2) : 'No frontend dump yet.';
   copyFrontendPayloadButton.disabled = !payload;
+  renderOptimizerInputContext();
   renderWorkflow();
+}
+
+function renderOptimizerInputContext() {
+  if (!optimizerInputContextEl || !optimizerInputMetaEl || !optimizerInputFiltersEl || !optimizerInputItemsEl) {
+    return;
+  }
+
+  const context = getOptimizeContextSnapshot();
+  if (!context) {
+    optimizerInputContextEl.hidden = true;
+    optimizerInputMetaEl.textContent = 'No seller scrape summary yet.';
+    optimizerInputFiltersEl.textContent = 'No seller filters captured yet.';
+    optimizerInputItemsEl.replaceChildren();
+    return;
+  }
+
+  optimizerInputContextEl.hidden = false;
+
+  const totals = context.totals || {};
+  const itemCount = Number.isFinite(totals.extractedItems) ? totals.extractedItems : context.itemNames.length;
+  const sellerRows = Number.isFinite(totals.totalSellerRows) ? totals.totalSellerRows : 0;
+  optimizerInputMetaEl.textContent = `${itemCount} item${itemCount === 1 ? '' : 's'} scraped, ${sellerRows} seller row${sellerRows === 1 ? '' : 's'} kept.`;
+
+  const filters = [];
+  if (context.requestSettings?.sellerCountries?.length) {
+    filters.push(`Countries: ${context.requestSettings.sellerCountries.join(', ')}`);
+  }
+  if (context.requestSettings?.sellerReputation) {
+    filters.push(`Reputation: ${context.requestSettings.sellerReputation}`);
+  }
+  if (context.requestSettings?.maxShippingTime) {
+    filters.push(`Max delivery: ${context.requestSettings.maxShippingTime} day${context.requestSettings.maxShippingTime === '1' ? '' : 's'}`);
+  }
+  if (context.requestSettings?.sellerType) {
+    filters.push(`Seller type: ${context.requestSettings.sellerType}`);
+  }
+  optimizerInputFiltersEl.textContent = filters.length ? filters.join(' | ') : 'No seller filters were applied.';
+
+  optimizerInputItemsEl.replaceChildren();
+  context.itemNames.forEach((name) => {
+    const item = document.createElement('li');
+    item.textContent = name;
+    optimizerInputItemsEl.appendChild(item);
+  });
 }
 
 function renderSummary(rows) {
@@ -1597,6 +1681,7 @@ function renderOptimizationResult(result) {
   latestOptimizationResult = result;
   cartItemsEl.replaceChildren();
   syncFillCartButton(isUiBusy);
+  renderCartSummary(result);
 
   if (!result) {
     const empty = document.createElement('p');
@@ -1656,6 +1741,41 @@ function renderOptimizationResult(result) {
   }
 
   renderWorkflow();
+}
+
+function renderCartSummary(result) {
+  const summaryTargets = [
+    {
+      container: cartSummaryEl,
+      totalEl: cartSummaryGrandTotalEl,
+      itemsEl: cartSummaryTotalItemsEl,
+    },
+    {
+      container: mainCartSummaryEl,
+      totalEl: mainCartSummaryGrandTotalEl,
+      itemsEl: mainCartSummaryTotalItemsEl,
+    },
+  ].filter((entry) => entry.container && entry.totalEl && entry.itemsEl);
+
+  if (!summaryTargets.length) return;
+
+  if (!result) {
+    summaryTargets.forEach(({ container, totalEl, itemsEl }) => {
+      container.hidden = true;
+      totalEl.textContent = '-';
+      itemsEl.textContent = '-';
+    });
+    return;
+  }
+
+  const grandTotalText = formatCurrencyAmount(result?.totals?.grand_total || 0, result?.currency || 'EUR');
+  const totalItemsText = String(result?.cart?.total_units || 0);
+
+  summaryTargets.forEach(({ container, totalEl, itemsEl }) => {
+    container.hidden = false;
+    totalEl.textContent = grandTotalText;
+    itemsEl.textContent = totalItemsText;
+  });
 }
 
 function buildCartFillPayload(result) {
@@ -3095,6 +3215,7 @@ renderOptimizationResult(null);
 renderSellers([], 0);
 renderPayload(null);
 renderFrontendPayload(null);
+renderOptimizerInputContext();
 installE2eTestApi();
 renderSellerCountryFilterList();
 renderWantListOptions();

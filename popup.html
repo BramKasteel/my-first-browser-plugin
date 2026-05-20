@@ -1040,6 +1040,12 @@
         </div>
         <div id="optimizerSettingsBody" class="config-block">
           <p class="panel-note">Once seller batch or fixture payload ready, send normalized request to optimizer API.</p>
+          <section id="optimizerInputContext" class="step-highlight" hidden>
+            <p class="panel-note">Latest scrape carried into optimization.</p>
+            <p id="optimizerInputMeta" class="panel-note">No seller scrape summary yet.</p>
+            <p id="optimizerInputFilters" class="panel-note">No seller filters captured yet.</p>
+            <ul id="optimizerInputItems" class="bullet-list"></ul>
+          </section>
           <label class="config-label" for="optimizerApiUrl">
             <span>Optimizer API URL</span>
               <input id="optimizerApiUrl" type="text" value="" spellcheck="false" autocomplete="off" readonly>
@@ -1068,6 +1074,16 @@
         </div>
         <div class="step-highlight">
           <p class="panel-note">Push chosen Cardmarket article rows into current cart only after optimal cart looks right in results.</p>
+          <div id="mainCartSummary" class="summary" hidden>
+            <div class="summary-line">
+              <span class="summary-label">Total price</span>
+              <span id="mainCartSummaryGrandTotal" class="summary-value">-</span>
+            </div>
+            <div class="summary-line">
+              <span class="summary-label">Total items</span>
+              <span id="mainCartSummaryTotalItems" class="summary-value">-</span>
+            </div>
+          </div>
           <div class="actions">
             <button id="fillCart" class="secondary mini-button" disabled>Fill cart</button>
           </div>
@@ -1117,6 +1133,16 @@
             <div class="result-view" data-result-panel="cart">
               <div class="panel-header">
                 <h3 class="panel-title">Optimized Cart</h3>
+              </div>
+              <div id="cartSummary" class="summary" hidden>
+                <div class="summary-line">
+                  <span class="summary-label">Total price</span>
+                  <span id="cartSummaryGrandTotal" class="summary-value">-</span>
+                </div>
+                <div class="summary-line">
+                  <span class="summary-label">Total items</span>
+                  <span id="cartSummaryTotalItems" class="summary-value">-</span>
+                </div>
               </div>
               <div id="cartItems" class="items"></div>
             </div>

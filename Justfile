@@ -9,3 +9,6 @@ playwright mode='headed':
 	else
 	  PW_HEADLESS=0 npx playwright test --headed
 	fi
+
+playwright-report:
+    npx playwright show-report
