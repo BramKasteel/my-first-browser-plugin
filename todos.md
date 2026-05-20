@@ -1,10 +1,8 @@
 get as little permissions as necessary
 
 ----------
-optimizing 'last' gives price of 100 euros?? its only one watcher for tomorrow
-----------
 
-adding to cart does not work in the cart page
+optimizing 'last' gives price of 100 euros?? its only one watcher for tomorrow
 
 ----------
 

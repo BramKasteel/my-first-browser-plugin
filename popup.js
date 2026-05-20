@@ -7,6 +7,7 @@ const sellerDelayInput = document.getElementById('sellerDelayMs');
 const probeRequestCountInput = document.getElementById('probeRequestCount');
 const probePageBudgetInput = document.getElementById('probePageBudget');
 const optimizerApiUrlInput = document.getElementById('optimizerApiUrl');
+const buyerCountrySelectEl = document.getElementById('buyerCountry');
 const sellerReputationFilterEl = document.getElementById('sellerReputationFilter');
 const sellerDeliveryTimeFilterEl = document.getElementById('sellerDeliveryTimeFilter');
 const sellerTypeFilterEl = document.getElementById('sellerTypeFilter');
@@ -208,9 +209,10 @@ function syncSellerScrapeButton(isBusy = false) {
 
 function syncOptimizeButton(isBusy = false) {
   const hasPayload = !!latestExtractPayload;
-  optimizeOrderButton.disabled = isBusy || !hasPayload;
+  const hasBuyerCountry = !!getSelectedBuyerCountry();
+  optimizeOrderButton.disabled = isBusy || !hasPayload || !hasBuyerCountry;
   optimizeOrderButton.classList.toggle('is-busy', isBusy);
-  optimizeOrderButton.classList.toggle('secondary', !hasPayload);
+  optimizeOrderButton.classList.toggle('secondary', !hasPayload || !hasBuyerCountry);
 }
 
 function hasOptimizedCart() {
@@ -237,6 +239,7 @@ function setBusy(isBusy) {
   sellerDelayInput.disabled = isBusy;
   probeRequestCountInput.disabled = isBusy;
   probePageBudgetInput.disabled = isBusy;
+  buyerCountrySelectEl.disabled = isBusy;
   sellerReputationFilterEl.disabled = isBusy;
   sellerDeliveryTimeFilterEl.disabled = isBusy;
   sellerTypeFilterEl.disabled = isBusy;
@@ -337,6 +340,7 @@ function getPopupSnapshot() {
 
 function getCurrentSellerFilterState() {
   return {
+    buyerCountry: getSelectedBuyerCountry(),
     sellerReputation: normalizeSellerReputation(sellerReputationFilterEl?.value),
     maxShippingTime: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl?.value),
     sellerType: normalizeSellerType(sellerTypeFilterEl?.value),
@@ -758,6 +762,48 @@ function syncOptimizerApiUrlInput() {
   optimizerApiUrlInput.value = DEFAULT_OPTIMIZER_API_URL;
 }
 
+function getSelectedBuyerCountry() {
+  return normalizeCountryName(buyerCountrySelectEl?.value);
+}
+
+function renderBuyerCountryOptions(selectedCountry = '') {
+  if (!buyerCountrySelectEl) return;
+
+  const normalizedSelectedCountry = normalizeCountryName(selectedCountry);
+  buyerCountrySelectEl.replaceChildren();
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Select buyer country';
+  placeholder.selected = !normalizedSelectedCountry;
+  buyerCountrySelectEl.appendChild(placeholder);
+
+  SELLER_COUNTRY_OPTIONS.forEach((country) => {
+    const option = document.createElement('option');
+    option.value = country;
+    option.textContent = country;
+    option.selected = normalizedSelectedCountry === normalizeCountryName(country);
+    buyerCountrySelectEl.appendChild(option);
+  });
+}
+
+function refreshOptimizerPayloadFromCurrentState() {
+  if (latestFrontendPayload?.kind !== 'seller-scrape-batch') {
+    syncOptimizeButton(isUiBusy);
+    return;
+  }
+
+  latestFrontendPayload = {
+    ...latestFrontendPayload,
+    requestSettings: {
+      ...(latestFrontendPayload.requestSettings || {}),
+      buyerCountry: getSelectedBuyerCountry(),
+    },
+  };
+  renderFrontendPayload(latestFrontendPayload);
+  renderPayload(buildOptimizerPayload(latestFrontendPayload));
+}
+
 function clampProbeRuns(value) {
   return Math.min(8, Math.max(1, parseInt(value, 10) || 3));
 }
@@ -797,6 +843,7 @@ async function loadSellerSettings() {
   sellerReputationFilterEl.value = normalizeSellerReputation(settings.sellerReputationFilter);
   sellerDeliveryTimeFilterEl.value = normalizeMaxShippingTime(settings.sellerDeliveryTimeFilter);
   sellerTypeFilterEl.value = normalizeSellerType(settings.sellerTypeFilter);
+  renderBuyerCountryOptions(settings.buyerCountry || inferBuyerCountry());
   selectedWantListId = textOf(settings.selectedWantListId);
   restoredWantListId = selectedWantListId;
   const selectedCountries = getStoredSellerCountries(settings);
@@ -835,6 +882,7 @@ async function saveSellerSettings() {
       sellerReputationFilter: normalizeSellerReputation(sellerReputationFilterEl.value),
       sellerDeliveryTimeFilter: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
       sellerTypeFilter: normalizeSellerType(sellerTypeFilterEl.value),
+      buyerCountry: getSelectedBuyerCountry(),
       selectedWantListId: textOf(selectedWantListId),
       sellerLocationFilter: getSelectedSellerCountries(),
     },
@@ -882,6 +930,7 @@ function renderWantListOptions() {
 
   availableWantLists.forEach((wantList) => {
     const option = document.createElement('option');
+            buyerCountry: normalizeCountryName(latestFrontendPayload.requestSettings.buyerCountry),
     option.value = wantList.id;
     option.textContent = wantList.name;
     wantListSelectEl.appendChild(option);
@@ -1534,7 +1583,7 @@ function buildOptimizerPayload(batchResult) {
   }
 
   return {
-    buyer_country: inferBuyerCountry(),
+    buyer_country: getSelectedBuyerCountry() || 'Unknown',
     currency: 'EUR',
     items: [...itemsById.values()],
     sellers: [...sellersById.values()],
@@ -1586,6 +1635,9 @@ function renderOptimizerInputContext() {
   optimizerInputMetaEl.textContent = `${itemCount} item${itemCount === 1 ? '' : 's'} scraped, ${sellerRows} seller row${sellerRows === 1 ? '' : 's'} kept.`;
 
   const filters = [];
+  if (context.requestSettings?.buyerCountry) {
+    filters.push(`Buyer: ${context.requestSettings.buyerCountry}`);
+  }
   if (context.requestSettings?.sellerCountries?.length) {
     filters.push(`Countries: ${context.requestSettings.sellerCountries.join(', ')}`);
   }
@@ -2077,6 +2129,11 @@ async function warmOptimizerApi(endpoint, { reason = '', force = false } = {}) {
 async function submitOptimizationRequest(endpoint) {
   if (!latestExtractPayload) {
     appendStatus('No optimizer payload ready yet. Scrape sellers first.', 'bad');
+    return;
+  }
+
+  if (!getSelectedBuyerCountry()) {
+    appendStatus('Buyer country missing. Choose buyer country before running optimizer.', 'bad');
     return;
   }
 
@@ -2649,6 +2706,7 @@ async function handleScrapeAllItems() {
       finishedAt: new Date().toISOString(),
       requestSettings: {
         delayMs,
+        buyerCountry: getSelectedBuyerCountry(),
         sellerReputation: normalizeSellerReputation(sellerReputationFilterEl.value),
         maxShippingTime: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
         sellerType: normalizeSellerType(sellerTypeFilterEl.value),
@@ -3205,6 +3263,10 @@ wantListSelectEl?.addEventListener('change', () => {
 sellerReputationFilterEl.addEventListener('change', saveSellerSettings);
 sellerDeliveryTimeFilterEl.addEventListener('change', saveSellerSettings);
 sellerTypeFilterEl.addEventListener('change', saveSellerSettings);
+buyerCountrySelectEl.addEventListener('change', () => {
+  saveSellerSettings();
+  refreshOptimizerPayloadFromCurrentState();
+});
 sellerLocationFilterListEl.addEventListener('change', (event) => {
   if (event.target instanceof HTMLInputElement && event.target.name === 'sellerCountryFilter') {
     const country = normalizeCountryName(event.target.value);
@@ -3244,6 +3306,7 @@ renderSellers([], 0);
 renderPayload(null);
 renderFrontendPayload(null);
 renderOptimizerInputContext();
+renderBuyerCountryOptions();
 installE2eTestApi();
 renderSellerCountryFilterList();
 renderWantListOptions();

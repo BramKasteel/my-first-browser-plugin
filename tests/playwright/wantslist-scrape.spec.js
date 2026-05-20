@@ -232,6 +232,7 @@ async function openWantsPopupAndLoadExpectedList({ page, context, extensionId })
 }
 
 async function configureSellerFilters(popupPage, sellerFilterConfig) {
+  await popupPage.selectOption('#buyerCountry', sellerFilterConfig.buyerCountry);
   await popupPage.selectOption('#sellerReputationFilter', sellerFilterConfig.sellerReputation);
   await popupPage.selectOption('#sellerDeliveryTimeFilter', sellerFilterConfig.maxShippingTime);
 
@@ -244,7 +245,8 @@ async function configureSellerFilters(popupPage, sellerFilterConfig) {
   await popupPage.waitForFunction(
     (expected) => {
       const snapshot = window.__cmOptimizerTestApi.getSnapshot();
-      return snapshot.sellerFilters.sellerReputation === expected.sellerReputation
+      return snapshot.sellerFilters.buyerCountry === expected.buyerCountry
+        && snapshot.sellerFilters.sellerReputation === expected.sellerReputation
         && snapshot.sellerFilters.maxShippingTime === expected.maxShippingTime
         && snapshot.sellerFilters.sellerCountries.length === 1
         && snapshot.sellerFilters.sellerCountries[0] === expected.sellerCountry;
@@ -354,11 +356,13 @@ test.describe('Want list scraping flow', () => {
     await configureSellerFilters(popupPage, sellerFilterConfig);
 
     const configuredSnapshot = await readPopupSnapshot(popupPage);
+    expect(configuredSnapshot.sellerFilters.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
     expect(configuredSnapshot.sellerFilters.sellerReputation).toBe(sellerFilterConfig.sellerReputation);
     expect(configuredSnapshot.sellerFilters.maxShippingTime).toBe(sellerFilterConfig.maxShippingTime);
     expect(configuredSnapshot.sellerFilters.sellerCountries).toEqual([sellerFilterConfig.sellerCountry]);
 
     const configuredStorage = await readPopupStorage(popupPage, ['sellerScrapeSettings']);
+    expect(configuredStorage.sellerScrapeSettings?.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
     expect(configuredStorage.sellerScrapeSettings?.sellerReputationFilter).toBe(sellerFilterConfig.sellerReputation);
     expect(configuredStorage.sellerScrapeSettings?.sellerDeliveryTimeFilter).toBe(sellerFilterConfig.maxShippingTime);
     expect(configuredStorage.sellerScrapeSettings?.sellerLocationFilter).toEqual([sellerFilterConfig.sellerCountry]);
@@ -395,6 +399,7 @@ test.describe('Want list scraping flow', () => {
 
     const scrapedNames = normalizeNames(batchPayload.results.map((result) => result.item?.productName));
     expect(scrapedNames).toEqual(wantListConfig.expectedNames);
+    expect(batchPayload?.requestSettings?.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
     expect(batchPayload?.requestSettings?.sellerReputation).toBe(sellerFilterConfig.sellerReputation);
     expect(batchPayload?.requestSettings?.maxShippingTime).toBe(sellerFilterConfig.maxShippingTime);
     expect(batchPayload?.requestSettings?.sellerCountries).toEqual([sellerFilterConfig.sellerCountry]);
@@ -414,6 +419,7 @@ test.describe('Want list scraping flow', () => {
     });
 
     expect(optimizerPayload).toBeTruthy();
+    expect(optimizerPayload.buyer_country).toBe(sellerFilterConfig.buyerCountry);
     expect(optimizerPayload.items).toHaveLength(wantListConfig.expectedCount);
     expect(normalizeNames(optimizerPayload.items.map((item) => item.name))).toEqual(wantListConfig.expectedNames);
     expect(optimizerPayload.sellers.length).toBeGreaterThan(0);
@@ -421,12 +427,14 @@ test.describe('Want list scraping flow', () => {
 
     expect(optimizeContext).toBeTruthy();
     expect(normalizeNames(optimizeContext.itemNames)).toEqual(wantListConfig.expectedNames);
+    expect(optimizeContext.requestSettings?.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
     expect(optimizeContext.requestSettings?.sellerReputation).toBe(sellerFilterConfig.sellerReputation);
     expect(optimizeContext.requestSettings?.maxShippingTime).toBe(sellerFilterConfig.maxShippingTime);
     expect(optimizeContext.requestSettings?.sellerCountries).toEqual([sellerFilterConfig.sellerCountry]);
 
     await expect(popupPage.locator('#optimizerInputContext')).toBeVisible();
     await expect(popupPage.locator('#optimizerInputMeta')).toContainText(`${wantListConfig.expectedCount} item`);
+    await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.buyerCountry);
     await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.sellerCountry);
     await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.sellerReputation);
     await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.maxShippingTime);
