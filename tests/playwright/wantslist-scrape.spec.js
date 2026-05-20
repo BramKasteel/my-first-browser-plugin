@@ -6,7 +6,7 @@ const {
   readPopupSnapshot,
   readPopupStorage,
 } = require('./fixtures/extension');
-const { hasCardmarketCredentials, loginToCardmarket } = require('./helpers/cardmarket');
+const { dismissCookieBanner, hasCardmarketCredentials, loginToCardmarket } = require('./helpers/cardmarket');
 const { readExpectedSellerFilterConfig } = require('./helpers/seller-filters');
 const {
   assertWantListSizeLimitConfig,
@@ -31,6 +31,115 @@ async function openWantsPopupForCardmarketWants({ page, context, extensionId }) 
   );
 
   return popupPage;
+}
+
+async function readShoppingCartState(page) {
+  await page.goto('https://www.cardmarket.com/en/Magic/ShoppingCart', { waitUntil: 'domcontentloaded' });
+  await dismissCookieBanner(page);
+
+  await page.waitForFunction(() => document.readyState === 'interactive' || document.readyState === 'complete');
+
+  return page.evaluate(() => {
+    const textOf = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const parsePositiveInteger = (value) => {
+      const normalized = textOf(value).replace(/[^0-9]/g, '');
+      if (!normalized) return null;
+      const parsed = Number.parseInt(normalized, 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const bodyText = textOf(document.body?.innerText || '');
+    const cartLinkText = textOf(document.querySelector('#cart')?.textContent || '');
+    const emptyCart = /your shopping cart is empty|shopping cart is empty/i.test(bodyText);
+    const summaryPatterns = [
+      /Amount of articles\s+(\d+)\s+Articles/i,
+      /Contents\s+(\d+)\s+Articles/i,
+      /Cart\s*\([^)]*\)\s*(\d+)$/i,
+    ];
+
+    for (const pattern of summaryPatterns) {
+      const match = bodyText.match(pattern) || cartLinkText.match(pattern);
+      const parsed = parsePositiveInteger(match?.[1] || '');
+      if (parsed != null) {
+        return {
+          unitCount: parsed,
+          emptyCart,
+          cartLinkText,
+          quantitySources: [{ source: 'summary', quantity: parsed, pattern: pattern.source }],
+          bodyPreview: bodyText.slice(0, 2000),
+        };
+      }
+    }
+
+    const quantitySources = [];
+    const quantitySelectors = [
+      'input[type="number"]',
+      'input[name*="amount" i]',
+      'input[name*="qty" i]',
+      'input[name*="quantity" i]',
+      'select[name*="amount" i]',
+      'select[name*="qty" i]',
+      'select[name*="quantity" i]',
+      '[data-amount]',
+      '[data-quantity]',
+      '[data-qty]',
+    ];
+    const seenQuantityKeys = new Set();
+
+    document.querySelectorAll(quantitySelectors.join(',')).forEach((node) => {
+      const rawValue = node instanceof HTMLInputElement || node instanceof HTMLSelectElement
+        ? node.value
+        : node.getAttribute('data-amount') || node.getAttribute('data-quantity') || node.getAttribute('data-qty') || '';
+      const quantity = parsePositiveInteger(rawValue);
+      if (!quantity) return;
+
+      const quantityKey = [
+        node.getAttribute('name') || '',
+        node.getAttribute('id') || '',
+        node.getAttribute('class') || '',
+        textOf(node.closest('[class*="article"], [class*="seller"], li, tr, .row')?.textContent || '').slice(0, 120),
+      ].join('|');
+      if (seenQuantityKeys.has(quantityKey)) return;
+      seenQuantityKeys.add(quantityKey);
+
+      quantitySources.push({
+        source: 'field',
+        quantity,
+        name: node.getAttribute('name') || '',
+        id: node.getAttribute('id') || '',
+        className: node.getAttribute('class') || '',
+      });
+    });
+
+    if (!quantitySources.length) {
+      const textPatterns = [
+        /Qty\s*:?\s*(\d+)/gi,
+        /Quantity\s*:?\s*(\d+)/gi,
+        /Amount\s*:?\s*(\d+)/gi,
+      ];
+      const bodyText = textOf(document.body?.innerText || '');
+      for (const pattern of textPatterns) {
+        for (const match of bodyText.matchAll(pattern)) {
+          const quantity = parsePositiveInteger(match[1]);
+          if (!quantity) continue;
+          quantitySources.push({
+            source: 'text',
+            quantity,
+            snippet: textOf(match[0]),
+          });
+        }
+      }
+    }
+
+    const unitCount = quantitySources.reduce((sum, entry) => sum + entry.quantity, 0);
+
+    return {
+      unitCount,
+      emptyCart,
+      cartLinkText,
+      quantitySources: quantitySources.slice(0, 40),
+      bodyPreview: bodyText.slice(0, 2000),
+    };
+  });
 }
 
 async function goToWorkflowStep(popupPage, stepName) {
@@ -202,7 +311,7 @@ test.describe('Want list scraping flow', () => {
     'Set CARDMARKET_USERNAME and CARDMARKET_PASSWORD in .env.playwright.local before running live Cardmarket tests.',
   );
 
-  test.skip('logs in, loads expected want list items, scrapes sellers, and requests optimization', async ({ page, context, extensionId, extensionErrors }) => {
+  test('logs in, loads expected want list items, scrapes sellers, requests optimization, and fills shopping cart', async ({ page, context, extensionId, extensionErrors }) => {
     test.skip(
       !hasExpectedWantListConfig(),
       'Set CARDMARKET_WANTLIST_EXPECTED_COUNT and CARDMARKET_WANTLIST_EXPECTED_NAMES in .env.playwright.local before running this live test.',
@@ -215,6 +324,7 @@ test.describe('Want list scraping flow', () => {
       context,
       extensionId,
     });
+    const cartBeforeFill = await readShoppingCartState(page);
     const sellerFilterConfig = readExpectedSellerFilterConfig();
 
     const extractedSnapshot = await readPopupSnapshot(popupPage);
@@ -372,6 +482,29 @@ test.describe('Want list scraping flow', () => {
     await expect(popupPage.locator('#mainCartSummaryTotalItems')).not.toHaveText('-');
     await expect(popupPage.locator('#mainCartSummaryTotalItems')).not.toHaveText('');
     await expect(popupPage.locator('#mainCartSummaryTotalItems')).toContainText(/[1-9]/);
+
+    const expectedFilledUnits = Number(optimizationResult?.cart?.total_units || 0);
+    expect(expectedFilledUnits).toBeGreaterThan(0);
+
+    await expect(popupPage.locator('#fillCart')).toBeVisible();
+    await expect(popupPage.locator('#fillCart')).toBeEnabled();
+    await popupPage.click('#fillCart');
+
+    await popupPage.waitForFunction(
+      () => {
+        const snapshot = window.__cmOptimizerTestApi.getSnapshot();
+        return !snapshot.runState.active
+          && snapshot.statusLog.some((entry) => /cart updated/i.test(entry.text || ''));
+      },
+      null,
+      { timeout: 30_000 },
+    );
+
+    const cartAfterFill = await readShoppingCartState(page);
+    const addedUnits = cartAfterFill.unitCount - cartBeforeFill.unitCount;
+
+    expect(addedUnits, `Shopping cart unit delta mismatch. Before: ${JSON.stringify(cartBeforeFill, null, 2)} After: ${JSON.stringify(cartAfterFill, null, 2)}`).toBe(expectedFilledUnits);
+    expect(cartAfterFill.emptyCart).toBe(false);
 
     await popupPage.close();
     assertNoExtensionErrors(extensionErrors);

@@ -79,6 +79,7 @@ let isUiBusy = false;
 let selectedSellerCountries = [];
 let availableWantLists = [];
 let selectedWantListId = '';
+let restoredWantListId = '';
 let activeWorkflowStep = 'source';
 let workflowHistory = [];
 let activeStepActivity = null;
@@ -797,6 +798,7 @@ async function loadSellerSettings() {
   sellerDeliveryTimeFilterEl.value = normalizeMaxShippingTime(settings.sellerDeliveryTimeFilter);
   sellerTypeFilterEl.value = normalizeSellerType(settings.sellerTypeFilter);
   selectedWantListId = textOf(settings.selectedWantListId);
+  restoredWantListId = selectedWantListId;
   const selectedCountries = getStoredSellerCountries(settings);
   setSelectedSellerCountries(selectedCountries.length ? selectedCountries : DEFAULT_SELLER_COUNTRIES);
 }
@@ -1868,13 +1870,70 @@ async function submitOptimizedCartInTab(payload) {
     const pathParts = location.pathname.split('/').filter(Boolean);
     const lang = pathParts[0] || 'en';
     const game = pathParts[1] || 'Magic';
-    const cmtkn = document.querySelector('input[name="__cmtkn"]')?.value || '';
-    if (!cmtkn) {
-      throw new Error('Missing __cmtkn on active Cardmarket page. Open seller or wants page first.');
+
+    function extractCmtknFromDocument(doc) {
+      if (!doc?.querySelector) return '';
+
+      const directValue = doc.querySelector('input[name="__cmtkn"]')?.value
+        || doc.querySelector('meta[name="__cmtkn"]')?.getAttribute('content')
+        || doc.querySelector('[data-cmtkn]')?.getAttribute('data-cmtkn')
+        || doc.querySelector('[data-csrf-token]')?.getAttribute('data-csrf-token')
+        || '';
+      if (directValue) return directValue;
+
+      const html = doc.documentElement?.outerHTML || '';
+      const tokenMatch = html.match(/name=["']__cmtkn["'][^>]*value=["']([^"']+)["']/i)
+        || html.match(/value=["']([^"']+)["'][^>]*name=["']__cmtkn["']/i)
+        || html.match(/["']__cmtkn["']\s*[:=]\s*["']([^"']+)["']/i);
+      return tokenMatch?.[1] || '';
+    }
+
+    async function resolveCmtkn() {
+      const triedPaths = [];
+      const currentToken = extractCmtknFromDocument(document);
+      if (currentToken) {
+        return { token: currentToken, source: location.pathname || '/' };
+      }
+
+      const candidatePaths = [
+        `${location.pathname || '/'}${location.search || ''}`,
+        `/${lang}/${game}/Wants`,
+        `/${lang}/${game}/ShoppingCart`,
+        `/${lang}/${game}`,
+      ].filter((value, index, allValues) => value && allValues.indexOf(value) === index);
+
+      for (const candidatePath of candidatePaths) {
+        triedPaths.push(candidatePath);
+        try {
+          const response = await fetch(new URL(candidatePath, location.origin).toString(), {
+            credentials: 'include',
+            cache: 'no-store',
+          });
+          if (!response.ok) continue;
+
+          const html = await response.text();
+          const token = extractCmtknFromDocument(new DOMParser().parseFromString(html, 'text/html'));
+          if (token) {
+            return { token, source: candidatePath };
+          }
+        } catch {
+          // Ignore token refresh failures and keep trying fallback pages.
+        }
+      }
+
+      return {
+        token: '',
+        source: triedPaths.join(', '),
+      };
+    }
+
+    const tokenResult = await resolveCmtkn();
+    if (!tokenResult.token) {
+      throw new Error(`Missing __cmtkn on active Cardmarket session. Tried: ${tokenResult.source || location.pathname || '/'}. Open Cardmarket page with active session and retry.`);
     }
 
     const formData = new FormData();
-    formData.append('__cmtkn', cmtkn);
+    formData.append('__cmtkn', tokenResult.token);
     formData.append('idArticle', JSON.stringify(cartPayload.idArticle));
     formData.append('amount', JSON.stringify(cartPayload.amount));
 
@@ -1884,6 +1943,7 @@ async function submitOptimizedCartInTab(payload) {
       body: formData,
       headers: {
         Accept: '*/*',
+        'X-Requested-With': 'XMLHttpRequest',
       },
     });
 
@@ -1907,6 +1967,7 @@ async function submitOptimizedCartInTab(payload) {
       ok: true,
       articleCount: Object.keys(cartPayload.idArticle).length,
       unitCount: Object.values(cartPayload.amount).reduce((sum, value) => sum + Number(value || 0), 0),
+      tokenSource: tokenResult.source,
       hasMenuMarkup: Boolean(root.querySelector('scMenuHubResponsive')),
       responsePreview: responseText.slice(0, 240),
     };
@@ -3202,6 +3263,13 @@ if (!isDetached) {
 } else {
   loadSellerSettings()
     .then(() => refreshWantLists({ quiet: true }))
+    .then(() => {
+      if (!restoredWantListId || selectedWantListId !== restoredWantListId || !hasSelectedWantList() || hasLoadedWantItems()) {
+        return null;
+      }
+
+      return handleExtractItems();
+    })
     .then(() => refreshWantListWarning())
     .catch((error) => {
       const message = error?.message || '';
