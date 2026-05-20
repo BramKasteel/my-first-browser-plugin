@@ -99,6 +99,9 @@ const REQUEST_JITTER_RATIO = 0.15;
 const OPTIMIZER_WARMUP_THROTTLE_MS = 90 * 1000;
 const RATE_PROBE_DELAYS_MS = [1500, 1000, 750, 500, 350, 300, 250, 200];
 const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
+const MAX_WANT_LIST_ITEMS = 70;
+const SINGLE_COUNTRY_WANT_LIST_THRESHOLD = 30;
+const MAX_SELLER_COUNTRIES = 2;
 const DEFAULT_OPTIMIZER_API_URL = textOf(window.APP_CONFIG?.optimizerApiUrl);
 const LOCALHOST_OPTIMIZER_API_URL = 'http://127.0.0.1:8000/optimize';
 const DEFAULT_OPTIMIZER_FIXTURE = 'small_wantslist';
@@ -203,6 +206,7 @@ function syncExtractButton(isBusy = false) {
   const hasWantLists = availableWantLists.length > 0;
   const hasSelection = hasSelectedWantList();
   const hasLoadedItems = hasLoadedWantItems();
+  const wantListPolicy = getWantListSelectionPolicy();
   if (extractItemsButton) {
     extractItemsButton.disabled = isBusy || !hasWantLists || !hasSelection;
     extractItemsButton.classList.toggle('is-busy', isBusy);
@@ -213,9 +217,9 @@ function syncExtractButton(isBusy = false) {
   }
   if (confirmWantListButton) {
     confirmWantListButton.hidden = !hasLoadedItems;
-    confirmWantListButton.disabled = isBusy || !hasLoadedItems;
+    confirmWantListButton.disabled = isBusy || !hasLoadedItems || wantListPolicy.isBlocked;
     confirmWantListButton.classList.toggle('is-busy', false);
-    confirmWantListButton.classList.toggle('secondary', !hasLoadedItems);
+    confirmWantListButton.classList.toggle('secondary', !hasLoadedItems || wantListPolicy.isBlocked);
   }
   if (wantListConfirmHintEl) {
     wantListConfirmHintEl.hidden = !hasLoadedItems;
@@ -224,9 +228,10 @@ function syncExtractButton(isBusy = false) {
 
 function syncSellerScrapeButton(isBusy = false) {
   const hasItems = hasLoadedWantItems();
-  scrapeAllItemsButton.disabled = isBusy || !hasItems;
+  const wantListPolicy = getWantListSelectionPolicy();
+  scrapeAllItemsButton.disabled = isBusy || !hasItems || wantListPolicy.isBlocked;
   scrapeAllItemsButton.classList.toggle('is-busy', isBusy);
-  scrapeAllItemsButton.classList.toggle('secondary', !hasItems);
+  scrapeAllItemsButton.classList.toggle('secondary', !hasItems || wantListPolicy.isBlocked);
 }
 
 function syncOptimizeButton(isBusy = false) {
@@ -355,11 +360,17 @@ function getPopupSnapshot() {
       selectedWantListId,
       available: availableWantLists.map((entry) => ({ ...entry })),
     },
+    wantListConstraints: getWantListSelectionPolicy(),
     extractedItems: {
       count: latestExtractedItems.length,
+      distinctCount: getLoadedWantDistinctItemCount(),
       sample: latestExtractedItems.slice(0, 3),
     },
     sellerFilters: getCurrentSellerFilterState(),
+    controls: {
+      confirmWantListDisabled: !!confirmWantListButton?.disabled,
+      scrapeAllItemsDisabled: !!scrapeAllItemsButton?.disabled,
+    },
     frontendPayload: latestFrontendPayload,
     optimizerPayload: latestExtractPayload,
     optimizeContext: getOptimizeContextSnapshot(),
@@ -377,6 +388,78 @@ function getCurrentSellerFilterState() {
     sellerType: normalizeSellerType(sellerTypeFilterEl?.value),
     sellerCountries: getSelectedSellerCountries(),
   };
+}
+
+function getLoadedWantItemCount() {
+  return Array.isArray(latestExtractedItems) ? latestExtractedItems.length : 0;
+}
+
+function buildDistinctWantItemKey(item) {
+  if (textOf(item?.idWant)) return `want-${textOf(item.idWant)}`;
+  if (textOf(item?.idProduct)) return `product-${textOf(item.idProduct)}`;
+  return `name-${textOf(item?.productName)}`;
+}
+
+function getLoadedWantDistinctItemCount(items = latestExtractedItems) {
+  if (!Array.isArray(items) || !items.length) return 0;
+  return new Set(items.map((item) => buildDistinctWantItemKey(item)).filter(Boolean)).size;
+}
+
+function getWantListSelectionPolicy(distinctItemCount = getLoadedWantDistinctItemCount()) {
+  const normalizedDistinctItemCount = Math.max(0, parseInt(distinctItemCount, 10) || 0);
+  const isBlocked = normalizedDistinctItemCount > MAX_WANT_LIST_ITEMS;
+  return {
+    distinctItemCount: normalizedDistinctItemCount,
+    isBlocked,
+    maxSellerCountries: normalizedDistinctItemCount > SINGLE_COUNTRY_WANT_LIST_THRESHOLD ? 1 : MAX_SELLER_COUNTRIES,
+    warningMessage: isBlocked
+      ? `Want list has ${normalizedDistinctItemCount} distinct items. Seller scrape locked above ${MAX_WANT_LIST_ITEMS}. Choose smaller want list.`
+      : '',
+  };
+}
+
+function getWantListSelectionHint(policy = getWantListSelectionPolicy()) {
+  if (!policy.distinctItemCount) return '';
+  if (policy.isBlocked) return policy.warningMessage;
+  if (policy.maxSellerCountries === 1) {
+    return `Want list has ${policy.distinctItemCount} distinct items. Only 1 seller country allowed above ${SINGLE_COUNTRY_WANT_LIST_THRESHOLD}.`;
+  }
+  return `Want list has ${policy.distinctItemCount} distinct items. Up to ${MAX_SELLER_COUNTRIES} seller countries allowed.`;
+}
+
+function areSameCountries(left = [], right = []) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function clampSellerCountriesToPolicy(countries, policy = getWantListSelectionPolicy()) {
+  const normalizedCountries = [...new Set((countries || [])
+    .map((value) => normalizeCountryName(value))
+    .filter(Boolean))];
+  return normalizedCountries.slice(0, Math.min(MAX_SELLER_COUNTRIES, policy.maxSellerCountries));
+}
+
+function enforceWantListSelectionPolicy({ persist = false, announce = false } = {}) {
+  const policy = getWantListSelectionPolicy();
+  const constrainedCountries = clampSellerCountriesToPolicy(selectedSellerCountries, policy);
+  const changed = !areSameCountries(constrainedCountries, selectedSellerCountries);
+
+  if (changed) {
+    renderSellerCountryFilterList(constrainedCountries);
+    if (announce && policy.distinctItemCount) {
+      appendStatus(
+        policy.maxSellerCountries === 1
+          ? `Want list has more than ${SINGLE_COUNTRY_WANT_LIST_THRESHOLD} distinct items. Seller country filter trimmed to 1 country.`
+          : `Seller country filter trimmed to ${policy.maxSellerCountries} countries.`,
+        'bad'
+      );
+    }
+    if (persist) {
+      void saveSellerSettings();
+    }
+  }
+
+  return policy;
 }
 
 function getOptimizeContextSnapshot() {
@@ -482,8 +565,10 @@ function setActiveResultTab(tabName) {
 
 function getWorkflowState() {
   const frontendKind = textOf(latestFrontendPayload?.kind);
+  const wantListPolicy = getWantListSelectionPolicy();
   return {
     hasExtractedWants: latestExtractedItems.length > 0,
+    wantListBlocked: wantListPolicy.isBlocked,
     hasSellerBatch: frontendKind === 'seller-scrape-batch',
     hasFixturePayload: frontendKind === 'optimizer-fixture' && !!latestExtractPayload,
     hasOptimizerPayload: !!latestExtractPayload,
@@ -494,7 +579,7 @@ function getWorkflowState() {
 
 function canAccessWorkflowStep(stepName, state = getWorkflowState()) {
   if (stepName === 'source') return true;
-  if (stepName === 'sellers') return state.hasExtractedWants;
+  if (stepName === 'sellers') return state.hasExtractedWants && !state.wantListBlocked;
   if (stepName === 'optimize') return state.hasOptimizerPayload;
   if (stepName === 'fill') return state.hasOptimalCart;
   return false;
@@ -527,8 +612,11 @@ function getWorkflowStepHint(stepName, state = getWorkflowState()) {
     if (state.hasFixturePayload) {
       return 'Fixture payload loaded. Seller scrape skipped. Continue with optimization or reload want-list path.';
     }
+    if (state.hasExtractedWants && state.wantListBlocked) {
+      return getWantListSelectionHint();
+    }
     if (state.hasExtractedWants) {
-      return 'Want items loaded. Review preview, then continue to seller scrape when ready.';
+      return getWantListSelectionHint();
     }
     if (!availableWantLists.length) {
       return 'Open any Cardmarket page. Popup auto-detects want lists from your logged-in session.';
@@ -541,6 +629,9 @@ function getWorkflowStepHint(stepName, state = getWorkflowState()) {
   if (stepName === 'sellers') {
     if (!state.hasExtractedWants) {
       return 'Seller scrape locked until want items are extracted from Cardmarket page.';
+    }
+    if (state.wantListBlocked) {
+      return getWantListSelectionHint();
     }
     if (state.hasSellerBatch) {
       return 'Seller batch ready. Review preview rows or continue to optimization.';
@@ -886,14 +977,14 @@ function getOrderedSellerCountries(selectedCountries = []) {
 }
 
 function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTRIES) {
-  const normalizedSelectedCountries = [...new Set((selectedCountries || [])
-    .map((value) => normalizeCountryName(value))
-    .filter(Boolean))];
+  const wantListPolicy = getWantListSelectionPolicy();
+  const normalizedSelectedCountries = clampSellerCountriesToPolicy(selectedCountries, wantListPolicy);
   selectedSellerCountries = normalizedSelectedCountries;
 
   selectedSellerCountriesEl.replaceChildren();
   sellerLocationFilterListEl.replaceChildren();
   const selected = new Set(normalizedSelectedCountries);
+  const maxCountriesReached = normalizedSelectedCountries.length >= wantListPolicy.maxSellerCountries;
 
   if (normalizedSelectedCountries.length) {
     normalizedSelectedCountries.forEach((country) => {
@@ -934,7 +1025,7 @@ function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTR
     input.name = 'sellerCountryFilter';
     input.value = country;
     input.checked = false;
-    input.disabled = isUiBusy;
+    input.disabled = isUiBusy || wantListPolicy.isBlocked || maxCountriesReached;
 
     const text = document.createElement('span');
     text.textContent = country;
@@ -2308,6 +2399,12 @@ async function refreshWantListWarning() {
       return;
     }
 
+    const wantListPolicy = getWantListSelectionPolicy();
+    if (wantListPolicy.warningMessage) {
+      renderWantListWarning(wantListPolicy.warningMessage);
+      return;
+    }
+
     renderWantListWarning('');
   } catch {
     renderWantListWarning('Could not inspect current tab. Open Cardmarket page and retry.');
@@ -2341,21 +2438,31 @@ async function handleExtractItems() {
       { label: 'Rows parsed', value: String(result.debug.parsedItems || 0) },
     ]);
     latestExtractedItems = result.items;
+    const wantListPolicy = enforceWantListSelectionPolicy({ persist: true, announce: true });
     syncExtractButton();
     syncSellerScrapeButton();
     renderItems(result.items.slice(0, 8), result.totalVisible);
     renderSellers([], 0, result.items[0]?.productName || 'the first item');
     renderFrontendPayload(result);
     renderPayload(null);
+    renderOptimizationResult(null);
     setActiveWorkflowStep('source', { force: true, recordHistory: false });
     setActiveResultTab('overview');
-    appendStatus(`Loaded ${result.totalVisible} want items from ${result.wantListName || `want list ${result.wantListId}`}.`, result.totalVisible ? 'good' : 'bad');
-    finishRun(`Loaded ${result.totalVisible} want items.`, result.totalVisible ? 'good' : 'bad');
+    await refreshWantListWarning();
+    if (wantListPolicy.isBlocked) {
+      appendStatus(wantListPolicy.warningMessage, 'bad');
+      finishRun(`Loaded ${result.totalVisible} want items. Seller scrape locked.`, 'bad');
+    } else {
+      appendStatus(`Loaded ${result.totalVisible} want items from ${result.wantListName || `want list ${result.wantListId}`}.`, result.totalVisible ? 'good' : 'bad');
+      finishRun(`Loaded ${result.totalVisible} want items.`, result.totalVisible ? 'good' : 'bad');
+    }
     confirmWantListButton?.focus();
   } catch (error) {
     latestExtractedItems = [];
     syncExtractButton();
     syncSellerScrapeButton();
+    renderPayload(null);
+    renderOptimizationResult(null);
     renderWorkflow();
     appendStatus(error.message, 'bad');
     finishRun(error.message, 'bad');
@@ -3127,7 +3234,7 @@ async function handleCopyFrontendPayload() {
 
 extractItemsButton.addEventListener('click', handleExtractItems);
 confirmWantListButton?.addEventListener('click', () => {
-  if (!hasLoadedWantItems()) return;
+  if (!hasLoadedWantItems() || getWantListSelectionPolicy().isBlocked) return;
   setActiveWorkflowStep('sellers', { force: true });
 });
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
@@ -3181,7 +3288,7 @@ sellerLocationFilterListEl.addEventListener('change', (event) => {
   if (event.target instanceof HTMLInputElement && event.target.name === 'sellerCountryFilter') {
     const country = normalizeCountryName(event.target.value);
     if (event.target.checked && country && !selectedSellerCountries.includes(country)) {
-      setSelectedSellerCountries([...selectedSellerCountries, country]);
+      setSelectedSellerCountries(clampSellerCountriesToPolicy([...selectedSellerCountries, country]));
     }
     saveSellerSettings();
   }

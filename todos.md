@@ -1,37 +1,35 @@
 Make sure users do not srape more than 70 cards.
 If they scrape more than 30 -- only one country is allowed
 If they scrape les than 30 -- only two countries are allowed
+
 -----------
 
-Create a bipartite graph of sellers and items. Decompose it and solve the sub problems.
-You can also remove leaf nodes if they are more expensive then others:
-price(item, leaf) + shipping(leaf) >= max(price(item, other nodes))
+get as little permissions as necessary
+
+----------
+
+drop the developer screen
+
+----------
+
+Work on layout
+
+----------
+
+increase the lambda memory above free-tier level --> later
 
 ---------------
 
 Shipping costs might actually differ: in Germany there is a 'large letter' which is absent from the tables
-Asked a seller, should ask more
+Asked a seller, should ask more.
+Answer: apparently sellers can offer their own selling solutions --> don't know how to model this.
+
 ---------
 
 what to do which different currencies. delevery costs is in multiple currencies.
 For now: only deal with countries that use euros
 
 --------
-
-Do not require to be on a specific wants list page.
-Instead -- show a drop-down to load a wants list.
-
----------
-
-Get an estimate for the shopping wizard prices:
-- reduced price
-- reduced shipments
-- if you come from a shopping wizard result -- take that information
-
----------
-for a certain query cache the results for 5 minutes
-
-----------
 
 if an order cannot be filled -- remove the articleid that wasn't available.
 Run the optimizer again.
@@ -51,12 +49,3 @@ create a default settings tab that hides much of the stuff
 ---------
 
 searching for foils doesnt work
-
-----------
-
-currently implemented: if we have >300 results for a country, only query powersellers
-This causes the search to be not full
-
----------
-
-try to get flow frontend-backend-frontend-cart working

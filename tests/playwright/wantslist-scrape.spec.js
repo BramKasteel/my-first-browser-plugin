@@ -9,14 +9,14 @@ const {
 const { hasCardmarketCredentials, loginToCardmarket } = require('./helpers/cardmarket');
 const { readExpectedSellerFilterConfig } = require('./helpers/seller-filters');
 const {
+  assertWantListSizeLimitConfig,
   assertExpectedWantListConfig,
+  hasWantListSizeLimitConfig,
   hasExpectedWantListConfig,
   normalizeNames,
 } = require('./helpers/wantslist');
 
-async function openWantsPopupAndLoadExpectedList({ page, context, extensionId }) {
-  const wantListConfig = assertExpectedWantListConfig();
-
+async function openWantsPopupForCardmarketWants({ page, context, extensionId }) {
   await loginToCardmarket(page);
   await page.goto('https://www.cardmarket.com/en/Magic/Wants', { waitUntil: 'domcontentloaded' });
   await expect(page).toHaveURL(/\/Wants(?:[/?#]|$)/i);
@@ -30,26 +30,48 @@ async function openWantsPopupAndLoadExpectedList({ page, context, extensionId })
     { timeout: 30_000 },
   );
 
+  return popupPage;
+}
+
+async function selectWantListAndWaitForLoad(popupPage, { wantListName, expectedCount = null, expectedDistinctCount = null }) {
   const initialSnapshot = await readPopupSnapshot(popupPage);
   const matchingWantList = initialSnapshot.wantLists.available.find(
-    (entry) => entry.name.toLowerCase() === wantListConfig.wantListName.toLowerCase(),
+    (entry) => entry.name.toLowerCase() === wantListName.toLowerCase(),
   );
 
   expect(
     matchingWantList,
-    `Want list "${wantListConfig.wantListName}" not found. Available: ${initialSnapshot.wantLists.available.map((entry) => entry.name).join(', ')}`,
+    `Want list "${wantListName}" not found. Available: ${initialSnapshot.wantLists.available.map((entry) => entry.name).join(', ')}`,
   ).toBeTruthy();
 
   await popupPage.selectOption('#wantListSelect', matchingWantList.id);
 
   await popupPage.waitForFunction(
-    () => {
+    (expected) => {
       const snapshot = window.__cmOptimizerTestApi.getSnapshot();
-      return snapshot.extractedItems.count > 0 && !snapshot.runState.active;
+      return snapshot.wantLists.selectedWantListId === expected.wantListId
+        && (expected.expectedCount == null || snapshot.extractedItems.count === expected.expectedCount)
+        && (expected.expectedDistinctCount == null || snapshot.extractedItems.distinctCount === expected.expectedDistinctCount)
+        && !snapshot.runState.active;
     },
-    null,
+    {
+      wantListId: matchingWantList.id,
+      expectedCount,
+      expectedDistinctCount,
+    },
     { timeout: 60_000 },
   );
+
+  return matchingWantList;
+}
+
+async function openWantsPopupAndLoadExpectedList({ page, context, extensionId }) {
+  const wantListConfig = assertExpectedWantListConfig();
+  const popupPage = await openWantsPopupForCardmarketWants({ page, context, extensionId });
+  const matchingWantList = await selectWantListAndWaitForLoad(popupPage, {
+    wantListName: wantListConfig.wantListName,
+    expectedCount: wantListConfig.expectedCount,
+  });
 
   return {
     popupPage,
@@ -62,9 +84,7 @@ async function configureSellerFilters(popupPage, sellerFilterConfig) {
   await popupPage.selectOption('#sellerReputationFilter', sellerFilterConfig.sellerReputation);
   await popupPage.selectOption('#sellerDeliveryTimeFilter', sellerFilterConfig.maxShippingTime);
 
-  while (await popupPage.locator('#selectedSellerCountries button[data-country-remove]').count()) {
-    await popupPage.locator('#selectedSellerCountries button[data-country-remove]').first().click();
-  }
+  await clearSelectedSellerCountries(popupPage);
 
   const desiredCountry = popupPage.locator(`#sellerLocationFilterList input[name="sellerCountryFilter"][value="${sellerFilterConfig.sellerCountry}"]`);
   await expect(desiredCountry).toBeVisible();
@@ -79,6 +99,23 @@ async function configureSellerFilters(popupPage, sellerFilterConfig) {
         && snapshot.sellerFilters.sellerCountries[0] === expected.sellerCountry;
     },
     sellerFilterConfig,
+    { timeout: 15_000 },
+  );
+}
+
+async function clearSelectedSellerCountries(popupPage) {
+  while (await popupPage.locator('#selectedSellerCountries button[data-country-remove]').count()) {
+    await popupPage.locator('#selectedSellerCountries button[data-country-remove]').first().click();
+  }
+}
+
+async function waitForSelectedCountries(popupPage, expectedCountries) {
+  await popupPage.waitForFunction(
+    (expected) => {
+      const selected = window.__cmOptimizerTestApi.getSnapshot().sellerFilters.sellerCountries || [];
+      return JSON.stringify(selected) === JSON.stringify(expected);
+    },
+    expectedCountries,
     { timeout: 15_000 },
   );
 }
@@ -119,11 +156,16 @@ async function waitForScrapeStart(popupPage) {
 
 test.describe('Want list scraping flow', () => {
   test.skip(
-    !hasCardmarketCredentials() || !hasExpectedWantListConfig(),
-    'Set CARDMARKET_USERNAME, CARDMARKET_PASSWORD, CARDMARKET_WANTLIST_EXPECTED_COUNT, and CARDMARKET_WANTLIST_EXPECTED_NAMES in .env.playwright.local before running live Cardmarket tests.',
+    !hasCardmarketCredentials(),
+    'Set CARDMARKET_USERNAME and CARDMARKET_PASSWORD in .env.playwright.local before running live Cardmarket tests.',
   );
 
   test('logs in, loads expected want list items, scrapes sellers, and requests optimization', async ({ page, context, extensionId, extensionErrors }) => {
+    test.skip(
+      !hasExpectedWantListConfig(),
+      'Set CARDMARKET_WANTLIST_EXPECTED_COUNT and CARDMARKET_WANTLIST_EXPECTED_NAMES in .env.playwright.local before running this live test.',
+    );
+
     test.setTimeout(300_000);
 
     const { popupPage, matchingWantList, wantListConfig } = await openWantsPopupAndLoadExpectedList({
@@ -288,6 +330,88 @@ test.describe('Want list scraping flow', () => {
     await expect(popupPage.locator('#mainCartSummaryTotalItems')).not.toHaveText('-');
     await expect(popupPage.locator('#mainCartSummaryTotalItems')).not.toHaveText('');
     await expect(popupPage.locator('#mainCartSummaryTotalItems')).toContainText(/[1-9]/);
+
+    await popupPage.close();
+    assertNoExtensionErrors(extensionErrors);
+  });
+
+  test('enforces want list size limits for seller countries and blocks lists above 70 distinct items', async ({ page, context, extensionId, extensionErrors }) => {
+    test.skip(
+      !hasWantListSizeLimitConfig(),
+      'Set CARDMARKET_WANTLIST_UNDER_30_NAME/_DISTINCT_COUNT, CARDMARKET_WANTLIST_31_TO_70_NAME/_DISTINCT_COUNT, and CARDMARKET_WANTLIST_OVER_70_NAME/_DISTINCT_COUNT in .env.playwright.local before running this live limit test.',
+    );
+
+    test.setTimeout(180_000);
+
+    const sizeConfig = assertWantListSizeLimitConfig();
+    const popupPage = await openWantsPopupForCardmarketWants({ page, context, extensionId });
+
+    await selectWantListAndWaitForLoad(popupPage, {
+      wantListName: sizeConfig.under30.wantListName,
+      expectedDistinctCount: sizeConfig.under30.expectedDistinctCount,
+    });
+
+    let snapshot = await readPopupSnapshot(popupPage);
+    expect(snapshot.extractedItems.distinctCount).toBe(sizeConfig.under30.expectedDistinctCount);
+    expect(snapshot.wantListConstraints.isBlocked).toBe(false);
+    expect(snapshot.wantListConstraints.distinctItemCount).toBe(sizeConfig.under30.expectedDistinctCount);
+    expect(snapshot.wantListConstraints.maxSellerCountries).toBe(2);
+    expect(snapshot.sellerFilters.sellerCountries).toHaveLength(2);
+    await expect(popupPage.locator('#confirmWantList')).toBeEnabled();
+
+    await popupPage.click('#confirmWantList');
+    await popupPage.waitForFunction(
+      () => window.__cmOptimizerTestApi.getSnapshot().workflow.activeStep === 'sellers',
+      null,
+      { timeout: 10_000 },
+    );
+
+    await clearSelectedSellerCountries(popupPage);
+    await popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="Germany"]').click();
+    await popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="Netherlands"]').click();
+    await waitForSelectedCountries(popupPage, ['Germany', 'Netherlands']);
+    await expect(popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="France"]')).toBeDisabled();
+
+    await selectWantListAndWaitForLoad(popupPage, {
+      wantListName: sizeConfig.between31And70.wantListName,
+      expectedDistinctCount: sizeConfig.between31And70.expectedDistinctCount,
+    });
+
+    snapshot = await readPopupSnapshot(popupPage);
+    expect(snapshot.extractedItems.distinctCount).toBe(sizeConfig.between31And70.expectedDistinctCount);
+    expect(snapshot.wantListConstraints.isBlocked).toBe(false);
+    expect(snapshot.wantListConstraints.distinctItemCount).toBe(sizeConfig.between31And70.expectedDistinctCount);
+    expect(snapshot.wantListConstraints.maxSellerCountries).toBe(1);
+    expect(snapshot.sellerFilters.sellerCountries).toHaveLength(1);
+    await expect(popupPage.locator('#confirmWantList')).toBeEnabled();
+
+    await popupPage.click('#confirmWantList');
+    await popupPage.waitForFunction(
+      () => window.__cmOptimizerTestApi.getSnapshot().workflow.activeStep === 'sellers',
+      null,
+      { timeout: 10_000 },
+    );
+
+    await clearSelectedSellerCountries(popupPage);
+    await popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="Germany"]').click();
+    await waitForSelectedCountries(popupPage, ['Germany']);
+    await expect(popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="France"]')).toBeDisabled();
+
+    await selectWantListAndWaitForLoad(popupPage, {
+      wantListName: sizeConfig.over70.wantListName,
+      expectedDistinctCount: sizeConfig.over70.expectedDistinctCount,
+    });
+
+    snapshot = await readPopupSnapshot(popupPage);
+    expect(snapshot.extractedItems.distinctCount).toBe(sizeConfig.over70.expectedDistinctCount);
+    expect(snapshot.wantListConstraints.isBlocked).toBe(true);
+    expect(snapshot.wantListConstraints.distinctItemCount).toBe(sizeConfig.over70.expectedDistinctCount);
+    expect(snapshot.controls.confirmWantListDisabled).toBe(true);
+    expect(snapshot.controls.scrapeAllItemsDisabled).toBe(true);
+    await expect(popupPage.locator('#wantListWarning')).toContainText('Seller scrape locked above 70');
+    await expect(popupPage.locator('[data-workflow-step="sellers"]')).toBeDisabled();
+    await expect(popupPage.locator('#confirmWantList')).toBeDisabled();
+    await expect(popupPage.locator('#scrapeAllItems')).toBeDisabled();
 
     await popupPage.close();
     assertNoExtensionErrors(extensionErrors);
