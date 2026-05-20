@@ -27,3 +27,23 @@ Use it for:
 - Lambda + API Gateway deployment from pushed optimizer image
 
 See `infra/README.md` for one-time bootstrap and CI setup steps.
+
+## Playwright Tests
+
+Playwright setup lives at repo root and targets Chromium with unpacked extension loaded.
+
+Setup:
+- `npm install`
+- `npm run playwright:install`
+- Copy `.env.playwright.example` to `.env.playwright.local`
+- Fill `CARDMARKET_USERNAME` and `CARDMARKET_PASSWORD`
+
+Run:
+- `npm run test:e2e -- --grep login`
+- `npm run test:e2e:debug -- tests/playwright/login.spec.js`
+
+VS Code:
+- Install Playwright VS Code extension if not present
+- Use Testing panel or launch configs in `.vscode/launch.json`
+
+Note: Cardmarket may show Cloudflare challenge for browser automation. Headed debug flow usually easiest place to inspect and adapt selectors or wait strategy.
