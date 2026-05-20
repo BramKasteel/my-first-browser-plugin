@@ -224,13 +224,15 @@ def test_warm_start_keeps_feasible_solution(monkeypatch) -> None:
 
     monkeypatch.setattr(cp_model.CpSolver, "Solve", wrapped_solve)
 
-    offer_values, seller_values, warm_start_status = _build_route_min_shipping_warm_start(
-        cp_model=cp_model,
-        request=request,
-        usable_offers=request.offers,
-        item_map=item_map,
-        seller_map=seller_map,
-        route_book=None,
+    offer_values, seller_values, warm_start_status = (
+        _build_route_min_shipping_warm_start(
+            cp_model=cp_model,
+            request=request,
+            usable_offers=request.offers,
+            item_map=item_map,
+            seller_map=seller_map,
+            route_book=None,
+        )
     )
 
     assert offer_values == {"offer-1": 1}
