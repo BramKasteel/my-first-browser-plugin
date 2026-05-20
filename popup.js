@@ -77,12 +77,12 @@ let workflowHistory = [];
 let activeStepActivity = null;
 let lastOptimizerWarmupAt = 0;
 let wantListRetryTimer = null;
-let sellerRequestDelayMs = 2000;
+let sellerRequestDelayMs = 250;
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
-const DEFAULT_SELLER_DELAY_MS = 2000;
+const DEFAULT_SELLER_DELAY_MS = 250;
 const MIN_SELLER_DELAY_MS = 250;
 const OPTIMIZER_WARMUP_THROTTLE_MS = 90 * 1000;
 const WANT_LIST_RETRY_DELAY_MS = 2000;

@@ -1,5 +1,11 @@
 get as little permissions as necessary
 
+------------
+
+after pushing to cart, make a diff with what you thought that would go into the card.
+Make it clear which cards are missing
+
+
 ----------
 
 Work on layout
