@@ -15,6 +15,7 @@ const sellerDeliveryTimeFilterEl = document.getElementById('sellerDeliveryTimeFi
 const sellerTypeFilterEl = document.getElementById('sellerTypeFilter');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
 const selectedSellerCountriesEl = document.getElementById('selectedSellerCountries');
+const sellerCountryLimitHintEl = document.getElementById('sellerCountryLimitHint');
 const sellerSettingsBodyEl = document.getElementById('sellerSettingsBody');
 const sellerScrapeProgressEl = document.getElementById('sellerScrapeProgress');
 const sellerProgressLabelEl = document.getElementById('sellerProgressLabel');
@@ -425,6 +426,24 @@ function getWantListSelectionHint(policy = getWantListSelectionPolicy()) {
     return `Want list has ${policy.distinctItemCount} distinct items. Only 1 seller country allowed above ${SINGLE_COUNTRY_WANT_LIST_THRESHOLD}.`;
   }
   return `Want list has ${policy.distinctItemCount} distinct items. Up to ${MAX_SELLER_COUNTRIES} seller countries allowed.`;
+}
+
+function getSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
+  if (!policy.distinctItemCount) return '';
+  if (policy.isBlocked) {
+    return `Want list has ${policy.distinctItemCount} distinct items. Seller scrape disabled above ${MAX_WANT_LIST_ITEMS}.`;
+  }
+  if (policy.maxSellerCountries === 1) {
+    return `Want list has more than ${SINGLE_COUNTRY_WANT_LIST_THRESHOLD} distinct items. Select exactly 1 seller country for scrape.`;
+  }
+  return '';
+}
+
+function renderSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
+  if (!sellerCountryLimitHintEl) return;
+  const message = getSellerCountryLimitHint(policy);
+  sellerCountryLimitHintEl.textContent = message;
+  sellerCountryLimitHintEl.hidden = !message;
 }
 
 function areSameCountries(left = [], right = []) {
@@ -980,6 +999,7 @@ function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTR
   const wantListPolicy = getWantListSelectionPolicy();
   const normalizedSelectedCountries = clampSellerCountriesToPolicy(selectedCountries, wantListPolicy);
   selectedSellerCountries = normalizedSelectedCountries;
+  renderSellerCountryLimitHint(wantListPolicy);
 
   selectedSellerCountriesEl.replaceChildren();
   sellerLocationFilterListEl.replaceChildren();
