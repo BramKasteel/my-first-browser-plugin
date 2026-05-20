@@ -40,6 +40,7 @@ Setup:
 
 Run:
 - `npm run test:e2e -- --grep login`
+- `npm run test:e2e -- tests/playwright/wantslist-scrape.spec.js`
 - `npm run test:e2e:debug -- tests/playwright/login.spec.js`
 
 VS Code:
@@ -47,3 +48,12 @@ VS Code:
 - Use Testing panel or launch configs in `.vscode/launch.json`
 
 Note: Cardmarket may show Cloudflare challenge for browser automation. Headed debug flow usually easiest place to inspect and adapt selectors or wait strategy.
+
+Extension loading in Playwright:
+- `tests/playwright/fixtures/extension.js` launches persistent Chromium with `--disable-extensions-except` and `--load-extension`
+- tests then open `chrome-extension://<id>/popup.html?detached=1&tabId=<cardmarket-tab-id>&e2e=1`
+
+Validation strategy without debug UI:
+- popup exposes hidden test API only when `e2e=1`
+- Playwright reads structured snapshot of run state, selected want list, extracted items, payloads, and storage
+- fixture records `pageerror` and `console.error` from extension pages, so tests can fail even after debug panels are removed

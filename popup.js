@@ -61,6 +61,7 @@ const urlParams = new URLSearchParams(window.location.search);
 const isDetached = urlParams.get('detached') === '1';
 const autoStartMode = urlParams.get('autoStart') || '';
 const forcedTabId = urlParams.get('tabId') ? parseInt(urlParams.get('tabId'), 10) : null;
+const isE2e = urlParams.get('e2e') === '1';
 
 if (isDetached) {
   document.body.classList.add('detached');
@@ -300,6 +301,84 @@ function startRun(message) {
 
 function finishRun(message, tone = '') {
   setRunState({ active: false, message, tone });
+}
+
+function getRunStatusTone() {
+  if (runStatusEl.classList.contains('bad')) return 'bad';
+  if (runStatusEl.classList.contains('good')) return 'good';
+  return '';
+}
+
+function readSummaryRows() {
+  return [...summaryEl.querySelectorAll('.summary-line')].map((row) => ({
+    label: textOf(row.querySelector('.summary-label')?.textContent),
+    value: textOf(row.querySelector('.summary-value')?.textContent),
+    tone: [...(row.querySelector('.summary-value')?.classList || [])]
+      .filter((value) => value !== 'summary-value')
+      .join(' '),
+  }));
+}
+
+function readStatusLogEntries(limit = 25) {
+  return [...statusLogEl.querySelectorAll('li')]
+    .slice(0, limit)
+    .map((entry) => ({
+      text: textOf(entry.textContent),
+      tone: textOf(entry.className),
+    }));
+}
+
+function getPopupSnapshot() {
+  return {
+    isDetached,
+    isBusy: isUiBusy,
+    runState: {
+      active: isRunActive,
+      message: textOf(runStatusTextEl.textContent),
+      tone: getRunStatusTone(),
+    },
+    workflow: {
+      activeStep: activeWorkflowStep,
+      history: [...workflowHistory],
+    },
+    wantLists: {
+      selectedWantListId,
+      available: availableWantLists.map((entry) => ({ ...entry })),
+    },
+    extractedItems: {
+      count: latestExtractedItems.length,
+      sample: latestExtractedItems.slice(0, 3),
+    },
+    frontendPayload: latestFrontendPayload,
+    optimizerPayload: latestExtractPayload,
+    optimizationResult: latestOptimizationResult,
+    stepActivity: activeStepActivity ? { ...activeStepActivity } : null,
+    summary: readSummaryRows(),
+    statusLog: readStatusLogEntries(),
+  };
+}
+
+function installE2eTestApi() {
+  if (!isE2e) return;
+
+  window.__cmOptimizerTestApi = {
+    getSnapshot: () => getPopupSnapshot(),
+    getStorage: async (keys = null) => {
+      const storageArea = await getStorageArea();
+      if (keys == null) return storageArea.get(null);
+      return storageArea.get(keys);
+    },
+    setStorage: async (values) => {
+      const storageArea = await getStorageArea();
+      await storageArea.set(values || {});
+      return storageArea.get(null);
+    },
+    clearStorage: async () => {
+      const storageArea = await getStorageArea();
+      await storageArea.clear();
+      return true;
+    },
+  };
 }
 
 function setStepActivity(activity = null) {
@@ -3016,6 +3095,7 @@ renderOptimizationResult(null);
 renderSellers([], 0);
 renderPayload(null);
 renderFrontendPayload(null);
+installE2eTestApi();
 renderSellerCountryFilterList();
 renderWantListOptions();
 syncExtractButton();

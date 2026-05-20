@@ -1,3 +1,8 @@
+Make sure users do not srape more than 70 cards.
+If they scrape more than 30 -- only one country is allowed
+If they scrape les than 30 -- only two countries are allowed
+-----------
+
 Create a bipartite graph of sellers and items. Decompose it and solve the sub problems.
 You can also remove leaf nodes if they are more expensive then others:
 price(item, leaf) + shipping(leaf) >= max(price(item, other nodes))
