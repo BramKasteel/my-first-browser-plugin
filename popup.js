@@ -85,6 +85,7 @@ let activeWorkflowStep = 'source';
 let workflowHistory = [];
 let activeStepActivity = null;
 let lastOptimizerWarmupAt = 0;
+let wantListRetryTimer = null;
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
@@ -92,6 +93,7 @@ const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
 const MIN_SELLER_DELAY_MS = 250;
 const REQUEST_JITTER_RATIO = 0.15;
 const OPTIMIZER_WARMUP_THROTTLE_MS = 90 * 1000;
+const WANT_LIST_RETRY_DELAY_MS = 2000;
 const RATE_PROBE_DELAYS_MS = [1500, 1000, 750, 500, 350, 300, 250, 200];
 const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
 const MAX_WANT_LIST_ITEMS = 70;
@@ -452,6 +454,9 @@ function getOptimizeContextSnapshot() {
     requestSettings: latestFrontendPayload.requestSettings
       ? {
           ...latestFrontendPayload.requestSettings,
+          buyerCountry: normalizeCountryName(
+            latestFrontendPayload.requestSettings.buyerCountry
+          ),
           sellerCountries: [...(latestFrontendPayload.requestSettings.sellerCountries || [])],
         }
       : null,
@@ -762,6 +767,21 @@ function syncOptimizerApiUrlInput() {
   optimizerApiUrlInput.value = DEFAULT_OPTIMIZER_API_URL;
 }
 
+function clearWantListRetry() {
+  if (wantListRetryTimer !== null) {
+    window.clearTimeout(wantListRetryTimer);
+    wantListRetryTimer = null;
+  }
+}
+
+function scheduleWantListRetry() {
+  if (wantListRetryTimer !== null || !isDetached) return;
+  wantListRetryTimer = window.setTimeout(() => {
+    wantListRetryTimer = null;
+    refreshWantLists({ quiet: true }).catch(() => {});
+  }, WANT_LIST_RETRY_DELAY_MS);
+}
+
 function getSelectedBuyerCountry() {
   return normalizeCountryName(buyerCountrySelectEl?.value);
 }
@@ -930,7 +950,6 @@ function renderWantListOptions() {
 
   availableWantLists.forEach((wantList) => {
     const option = document.createElement('option');
-            buyerCountry: normalizeCountryName(latestFrontendPayload.requestSettings.buyerCountry),
     option.value = wantList.id;
     option.textContent = wantList.name;
     wantListSelectEl.appendChild(option);
@@ -946,14 +965,17 @@ async function refreshWantLists({ quiet = false } = {}) {
     await saveSellerSettings();
 
     if (!availableWantLists.length) {
+      scheduleWantListRetry();
       renderWantListWarning('No Cardmarket want lists detected yet. Check login status and keep Cardmarket tab open.');
       if (!quiet) appendStatus('No want lists found on Cardmarket account.', 'bad');
       return;
     }
 
+    clearWantListRetry();
     renderWantListWarning('');
     if (!quiet) appendStatus(`Loaded ${availableWantLists.length} want lists from Cardmarket.`, 'good');
   } catch (error) {
+    scheduleWantListRetry();
     setAvailableWantLists([], '');
     renderWantListWarning(error.message);
     if (!quiet) appendStatus(error.message, 'bad');
