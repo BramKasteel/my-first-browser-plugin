@@ -566,7 +566,8 @@ test.describe('Want list scraping flow', () => {
     expect(snapshot.wantListConstraints.maxSellerCountries).toBe(2);
     expect(snapshot.sellerFilters.sellerCountries).toHaveLength(2);
     await expect(popupPage.locator('#confirmWantList')).toBeEnabled();
-    await expect(popupPage.locator('#sellerCountryLimitHint')).toBeHidden();
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('up to 2 seller countries');
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);
 
     await popupPage.click('#confirmWantList');
     await popupPage.waitForFunction(
@@ -575,11 +576,16 @@ test.describe('Want list scraping flow', () => {
       { timeout: 10_000 },
     );
 
+    await expect(popupPage.locator('#sellerLocationFilterList')).toBeHidden();
+
     await clearSelectedSellerCountries(popupPage);
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('up to 2 seller countries');
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);
+    await expect(popupPage.locator('#sellerLocationFilterList')).toBeVisible();
     await popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="Germany"]').click();
     await popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="Netherlands"]').click();
     await waitForSelectedCountries(popupPage, ['Germany', 'Netherlands']);
-    await expect(popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="France"]')).toBeDisabled();
+    await expect(popupPage.locator('#sellerLocationFilterList')).toBeHidden();
 
     await selectWantListAndWaitForLoad(popupPage, {
       wantListName: sizeConfig.between31And70.wantListName,
@@ -595,6 +601,7 @@ test.describe('Want list scraping flow', () => {
     await expect(popupPage.locator('#confirmWantList')).toBeEnabled();
     await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select exactly 1 seller country');
     await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);
+    await expect(popupPage.locator('#sellerLocationFilterList')).toBeHidden();
 
     await popupPage.click('#confirmWantList');
     await popupPage.waitForFunction(

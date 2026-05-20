@@ -378,17 +378,21 @@ function getSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
   if (policy.maxSellerCountries === 1) {
     return `Want list has more than ${SINGLE_COUNTRY_WANT_LIST_THRESHOLD} distinct items. Select exactly 1 seller country for scrape.`;
   }
-  return '';
+  return `Want list has ${policy.distinctItemCount} distinct items. You can choose up to ${policy.maxSellerCountries} seller countries for scrape.`;
 }
 
 function renderSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
   if (!sellerCountryLimitHintEl) return;
   const message = getSellerCountryLimitHint(policy);
   const isSingleCountryPolicy = !policy.isBlocked && policy.maxSellerCountries === 1;
+  const hasValidSelection = !policy.isBlocked && selectedSellerCountries.length <= policy.maxSellerCountries;
   const hasExactRequiredSelection = selectedSellerCountries.length === 1;
   sellerCountryLimitHintEl.textContent = message;
   sellerCountryLimitHintEl.hidden = !message;
-  sellerCountryLimitHintEl.classList.toggle('good', !!message && isSingleCountryPolicy && hasExactRequiredSelection);
+  sellerCountryLimitHintEl.classList.toggle(
+    'good',
+    !!message && (isSingleCountryPolicy ? hasExactRequiredSelection : hasValidSelection)
+  );
   sellerCountryLimitHintEl.classList.toggle('bad', !!message && (policy.isBlocked || (isSingleCountryPolicy && !hasExactRequiredSelection)));
 }
 
@@ -963,6 +967,11 @@ function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTR
   sellerLocationFilterListEl.replaceChildren();
   const selected = new Set(normalizedSelectedCountries);
   const maxCountriesReached = normalizedSelectedCountries.length >= wantListPolicy.maxSellerCountries;
+  const otherCountriesSectionEl = sellerLocationFilterListEl.parentElement;
+  const otherCountriesLabelEl = otherCountriesSectionEl?.querySelector('.country-section-label');
+
+  sellerLocationFilterListEl.hidden = maxCountriesReached;
+  if (otherCountriesLabelEl) otherCountriesLabelEl.hidden = maxCountriesReached;
 
   if (normalizedSelectedCountries.length) {
     normalizedSelectedCountries.forEach((country) => {
