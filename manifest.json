@@ -6,9 +6,7 @@
   "permissions": ["scripting", "tabs", "storage"],
   "host_permissions": [
     "https://www.cardmarket.com/*",
-    "https://*.execute-api.eu-central-1.amazonaws.com/*",
-    "http://127.0.0.1/*",
-    "http://localhost/*"
+    "https://h2ilohl6ll.execute-api.eu-central-1.amazonaws.com/*"
   ],
   "background": {
     "service_worker": "background.js"
