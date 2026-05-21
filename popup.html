@@ -46,6 +46,7 @@
     }
 
     .hero {
+      min-width: 0;
       padding: 16px;
       border: 1px solid var(--border);
       border-radius: 14px;
@@ -75,6 +76,7 @@
     }
 
     .panel {
+      min-width: 0;
       padding: 14px;
       border-radius: 12px;
       background: rgba(26, 35, 44, 0.92);
@@ -95,33 +97,32 @@
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
     }
 
     .workflow-step {
       display: inline-flex;
       align-items: center;
       gap: 0;
-      padding: 0;
+      padding: 5px 8px;
+      margin: 1px 0;
       text-align: left;
       color: var(--muted);
-      background: transparent;
-      border: 0;
+      background: rgba(17, 22, 27, 0.68);
+      border: 1px solid rgba(159, 176, 190, 0.14);
+      border-radius: 999px;
       font-size: 13px;
       line-height: 1.4;
       box-shadow: none;
     }
 
-    .workflow-step::after {
-      content: '>';
-      margin-left: 8px;
+    .workflow-separator {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0;
       color: rgba(159, 176, 190, 0.52);
       pointer-events: none;
-    }
-
-    .workflow-step:last-child::after {
-      content: '';
-      margin: 0;
     }
 
     .workflow-step:hover:not(:disabled) {
@@ -135,10 +136,13 @@
 
     .workflow-step[data-state="active"] {
       color: var(--accent-strong);
+      border-color: rgba(245, 158, 11, 0.32);
+      background: rgba(217, 119, 6, 0.12);
     }
 
     .workflow-step[data-state="done"] {
       color: var(--text);
+      border-color: rgba(159, 176, 190, 0.2);
     }
 
     .workflow-step-index,
@@ -552,6 +556,23 @@
       gap: 8px;
     }
 
+    .buyer-country-field.is-required .country-section select {
+      border-color: rgba(245, 158, 11, 0.48);
+      box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.12);
+    }
+
+    .seller-filter-field.is-required select,
+    .seller-filter-field.is-required .country-selected-list {
+      border-color: rgba(245, 158, 11, 0.48);
+      box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.12);
+    }
+
+    .buyer-country-field.is-required > span,
+    .seller-filter-field.is-required > span,
+    .buyer-country-field.is-required .country-section-label {
+      color: #f7d388;
+    }
+
     .country-section-label {
       font-size: 11px;
       letter-spacing: 0.04em;
@@ -693,6 +714,8 @@
       background: rgba(17, 22, 27, 0.75);
       border: 1px solid rgba(159, 176, 190, 0.08);
       color: var(--muted);
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
 
     .status-log li.good { color: var(--good); }
@@ -704,6 +727,10 @@
       align-items: center;
       gap: 10px;
       margin-bottom: 10px;
+    }
+
+    .panel-header > * {
+      min-width: 0;
     }
 
     .panel-title {
@@ -744,14 +771,19 @@
     }
 
     .result-tab {
+      padding: 8px 6px;
+      font-size: 12px;
       color: var(--text);
       background: rgba(17, 22, 27, 0.82);
       border: 1px solid rgba(159, 176, 190, 0.12);
     }
 
     .result-tab.active {
-      color: #17120b;
-      background: linear-gradient(135deg, var(--accent-strong), #fbbf24);
+      color: var(--accent-strong);
+      background: linear-gradient(180deg, #31414f, #283643);
+      border-color: rgba(159, 176, 190, 0.28);
+      box-shadow: inset 0 0 0 1px rgba(159, 176, 190, 0.08);
+      font-weight: 800;
     }
 
     .result-tab.has-live {
@@ -764,6 +796,8 @@
       align-items: center;
       justify-content: center;
       gap: 6px;
+      width: 100%;
+      font-weight: 600;
     }
 
     .tab-badge {
@@ -832,6 +866,9 @@
 
     .run-status-text {
       flex: 1 1 auto;
+      min-width: 0;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
 
     .result-view {
@@ -866,31 +903,42 @@
 <body>
   <main>
     <section class="hero">
-      <p class="eyebrow">Castle Fun Consultancy</p>
-      <h1>Cardmarket Wants Optimizer</h1>
-      <p class="subtle">Load in your wants list, and obtain the combination of sellers that result in the minimal price!</p>
+      <p class="eyebrow">Castle Consultancy</p>
+      <h1>Cardmarket Optimizer</h1>
+      <p class="subtle">Create an order that is significantly cheaper!</p>
+      <p class="subtle">We are in Beta: make sure to check your cart on items and price.</p>
+      <p class="subtle">Report bugs!</p>
+      <p class="subtle">Current limitations, in absence of funding:</p>
+      <ul class="subtle">
+        <li>Maximum of 70 unique cards</li>
+        <li>One or two seller countries</li>
+        <li>Only MTG implemented currently</li>
+      </ul>
     </section>
 
     <section class="panel workflow-shell">
       <div class="workflow-steps" role="tablist" aria-label="Optimization workflow">
         <button type="button" class="secondary workflow-step" data-workflow-step="source" data-state="active" aria-selected="true">
           <span class="workflow-step-index">Step 1</span>
-          <span class="workflow-step-title">Select cards</span>
+          <span class="workflow-step-title">Cards</span>
           <span class="workflow-step-meta">Want list extract</span>
         </button>
+        <span class="workflow-separator" aria-hidden="true">&gt;</span>
         <button type="button" class="secondary workflow-step" data-workflow-step="sellers" data-state="locked" aria-selected="false">
           <span class="workflow-step-index">Step 2</span>
-          <span class="workflow-step-title">Get Sellers</span>
+          <span class="workflow-step-title">Sellers</span>
           <span class="workflow-step-meta">Scrape market rows</span>
         </button>
+        <span class="workflow-separator" aria-hidden="true">&gt;</span>
         <button type="button" class="secondary workflow-step" data-workflow-step="optimize" data-state="locked" aria-selected="false">
           <span class="workflow-step-index">Step 3</span>
           <span class="workflow-step-title">Optimize</span>
           <span class="workflow-step-meta">Price and shipping</span>
         </button>
+        <span class="workflow-separator" aria-hidden="true">&gt;</span>
         <button type="button" class="secondary workflow-step" data-workflow-step="fill" data-state="locked" aria-selected="false">
           <span class="workflow-step-index">Step 4</span>
-          <span class="workflow-step-title">Fill Cart</span>
+          <span class="workflow-step-title">Cart</span>
           <span class="workflow-step-meta">Push chosen offers</span>
         </button>
       </div>
@@ -1004,20 +1052,15 @@
           <span id="optimizeStepBadge" class="step-pill">Locked</span>
         </div>
         <div id="optimizerSettingsBody" class="config-block">
-          <p class="panel-note">Once seller batch or fixture payload ready, send normalized request to optimizer API.</p>
           <section id="optimizerInputContext" class="step-highlight" hidden>
-            <p class="panel-note">Latest scrape carried into optimization.</p>
             <p id="optimizerInputMeta" class="panel-note">No seller scrape summary yet.</p>
-            <p id="optimizerInputFilters" class="panel-note">No seller filters captured yet.</p>
-            <ul id="optimizerInputItems" class="bullet-list"></ul>
           </section>
-          <label class="config-label" for="buyerCountry">
+          <label id="buyerCountryField" class="config-label seller-filter-field buyer-country-field" for="buyerCountry">
             <span>Buyer country</span>
-            <select id="buyerCountry"></select>
-          </label>
-          <label class="config-label" for="optimizerApiUrl">
-            <span>Optimizer API URL</span>
-              <input id="optimizerApiUrl" type="text" value="" spellcheck="false" autocomplete="off" readonly>
+            <div class="country-section">
+              <span class="country-section-label">Required for optimization</span>
+              <select id="buyerCountry"></select>
+            </div>
           </label>
           <div class="actions">
             <button id="optimizeOrder" class="secondary">Optimize order</button>
@@ -1042,7 +1085,6 @@
           <span id="fillStepBadge" class="step-pill">Locked</span>
         </div>
         <div class="step-highlight">
-          <p class="panel-note">Push chosen Cardmarket article rows into current cart only after optimal cart looks right in results.</p>
           <div id="mainCartSummary" class="summary" hidden>
             <div class="summary-line">
               <span class="summary-label">Total price</span>

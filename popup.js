@@ -43,8 +43,7 @@ const fillStepBadgeEl = document.getElementById('fillStepBadge');
 const optimizerSettingsBodyEl = document.getElementById('optimizerSettingsBody');
 const optimizerInputContextEl = document.getElementById('optimizerInputContext');
 const optimizerInputMetaEl = document.getElementById('optimizerInputMeta');
-const optimizerInputFiltersEl = document.getElementById('optimizerInputFilters');
-const optimizerInputItemsEl = document.getElementById('optimizerInputItems');
+const buyerCountryFieldEl = document.getElementById('buyerCountryField');
 const mainCartSummaryEl = document.getElementById('mainCartSummary');
 const mainCartSummaryGrandTotalEl = document.getElementById('mainCartSummaryGrandTotal');
 const mainCartSummaryTotalItemsEl = document.getElementById('mainCartSummaryTotalItems');
@@ -86,7 +85,7 @@ const DEFAULT_SELLER_DELAY_MS = 250;
 const MIN_SELLER_DELAY_MS = 250;
 const OPTIMIZER_WARMUP_THROTTLE_MS = 90 * 1000;
 const WANT_LIST_RETRY_DELAY_MS = 2000;
-const DEFAULT_SELLER_COUNTRIES = ['Germany', 'Netherlands'];
+const DEFAULT_SELLER_COUNTRIES = [];
 const MAX_WANT_LIST_ITEMS = 70;
 const SINGLE_COUNTRY_WANT_LIST_THRESHOLD = 30;
 const MAX_SELLER_COUNTRIES = 2;
@@ -195,6 +194,7 @@ function syncSellerScrapeButton(isBusy = false) {
   scrapeAllItemsButton.disabled = isBusy || !hasItems || wantListPolicy.isBlocked;
   scrapeAllItemsButton.classList.toggle('is-busy', isBusy);
   scrapeAllItemsButton.classList.toggle('secondary', !hasItems || wantListPolicy.isBlocked);
+  renderSellerFilterState();
 }
 
 function syncOptimizeButton(isBusy = false) {
@@ -203,6 +203,7 @@ function syncOptimizeButton(isBusy = false) {
   optimizeOrderButton.disabled = isBusy || !hasPayload || !hasBuyerCountry;
   optimizeOrderButton.classList.toggle('is-busy', isBusy);
   optimizeOrderButton.classList.toggle('secondary', !hasPayload || !hasBuyerCountry);
+  renderBuyerCountryState();
 }
 
 function hasOptimizedCart() {
@@ -436,6 +437,14 @@ function enforceWantListSelectionPolicy({ persist = false, announce = false } = 
 function getOptimizeContextSnapshot() {
   if (latestFrontendPayload?.kind !== 'seller-scrape-batch') return null;
 
+  const uniqueSellerIds = new Set();
+  (latestFrontendPayload.results || []).forEach((result) => {
+    const sellerRows = Array.isArray(result?.sellers) ? result.sellers : [];
+    sellerRows.forEach((sellerRow) => {
+      uniqueSellerIds.add(buildOptimizerSellerId(sellerRow));
+    });
+  });
+
   return {
     wantListId: textOf(latestFrontendPayload.wantListId),
     requestSettings: latestFrontendPayload.requestSettings
@@ -448,6 +457,7 @@ function getOptimizeContextSnapshot() {
         }
       : null,
     totals: latestFrontendPayload.totals ? { ...latestFrontendPayload.totals } : null,
+    totalSellers: uniqueSellerIds.size,
     itemNames: (latestFrontendPayload.results || [])
       .map((result) => textOf(result?.item?.productName))
       .filter(Boolean),
@@ -735,6 +745,7 @@ function sleep(ms) {
 }
 
 function syncOptimizerApiUrlInput() {
+  if (!optimizerApiUrlInput) return;
   optimizerApiUrlInput.value = DEFAULT_OPTIMIZER_API_URL;
 }
 
@@ -757,6 +768,33 @@ function getSelectedBuyerCountry() {
   return normalizeCountryName(buyerCountrySelectEl?.value);
 }
 
+function renderSellerFilterState() {
+  const reputationFieldEl = sellerReputationFilterEl?.closest('.seller-filter-field');
+  const deliveryFieldEl = sellerDeliveryTimeFilterEl?.closest('.seller-filter-field');
+  const typeFieldEl = sellerTypeFilterEl?.closest('.seller-filter-field');
+  const countryFieldEl = selectedSellerCountriesEl?.closest('.seller-filter-field');
+
+  if (reputationFieldEl) {
+    reputationFieldEl.classList.toggle('is-required', !normalizeSellerReputation(sellerReputationFilterEl?.value));
+  }
+  if (deliveryFieldEl) {
+    deliveryFieldEl.classList.toggle('is-required', !normalizeMaxShippingTime(sellerDeliveryTimeFilterEl?.value));
+  }
+  if (typeFieldEl) {
+    typeFieldEl.classList.toggle('is-required', !normalizeSellerType(sellerTypeFilterEl?.value));
+  }
+  if (countryFieldEl) {
+    countryFieldEl.classList.toggle('is-required', getSelectedSellerCountries().length === 0);
+  }
+}
+
+function renderBuyerCountryState() {
+  if (!buyerCountryFieldEl) return;
+
+  const isMissing = !getSelectedBuyerCountry();
+  buyerCountryFieldEl.classList.toggle('is-required', isMissing);
+}
+
 function renderBuyerCountryOptions(selectedCountry = '') {
   if (!buyerCountrySelectEl) return;
 
@@ -776,6 +814,8 @@ function renderBuyerCountryOptions(selectedCountry = '') {
     option.selected = normalizedSelectedCountry === normalizeCountryName(country);
     buyerCountrySelectEl.appendChild(option);
   });
+
+  renderBuyerCountryState();
 }
 
 function refreshOptimizerPayloadFromCurrentState() {
@@ -809,14 +849,13 @@ async function loadSellerSettings() {
   const settings = stored[SELLER_SETTINGS_KEY] || {};
   sellerRequestDelayMs = sanitizeSellerDelay(settings.delayMs);
   syncOptimizerApiUrlInput();
-  sellerReputationFilterEl.value = normalizeSellerReputation(settings.sellerReputationFilter);
-  sellerDeliveryTimeFilterEl.value = normalizeMaxShippingTime(settings.sellerDeliveryTimeFilter);
-  sellerTypeFilterEl.value = normalizeSellerType(settings.sellerTypeFilter);
+  sellerReputationFilterEl.value = '';
+  sellerDeliveryTimeFilterEl.value = '';
+  sellerTypeFilterEl.value = '';
   renderBuyerCountryOptions(settings.buyerCountry || inferBuyerCountry());
   selectedWantListId = textOf(settings.selectedWantListId);
   restoredWantListId = selectedWantListId;
-  const selectedCountries = getStoredSellerCountries(settings);
-  setSelectedSellerCountries(selectedCountries.length ? selectedCountries : DEFAULT_SELLER_COUNTRIES);
+  setSelectedSellerCountries(DEFAULT_SELLER_COUNTRIES);
 }
 
 async function loadDetachedBatchState() {
@@ -1020,6 +1059,8 @@ function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTR
     option.append(input, text);
     sellerLocationFilterListEl.appendChild(option);
   });
+
+  renderSellerFilterState();
 }
 
 function getSelectedSellerCountries() {
@@ -1588,7 +1629,7 @@ function renderFrontendPayload(payload) {
 }
 
 function renderOptimizerInputContext() {
-  if (!optimizerInputContextEl || !optimizerInputMetaEl || !optimizerInputFiltersEl || !optimizerInputItemsEl) {
+  if (!optimizerInputContextEl || !optimizerInputMetaEl) {
     return;
   }
 
@@ -1596,8 +1637,6 @@ function renderOptimizerInputContext() {
   if (!context) {
     optimizerInputContextEl.hidden = true;
     optimizerInputMetaEl.textContent = 'No seller scrape summary yet.';
-    optimizerInputFiltersEl.textContent = 'No seller filters captured yet.';
-    optimizerInputItemsEl.replaceChildren();
     return;
   }
 
@@ -1605,33 +1644,8 @@ function renderOptimizerInputContext() {
 
   const totals = context.totals || {};
   const itemCount = Number.isFinite(totals.extractedItems) ? totals.extractedItems : context.itemNames.length;
-  const sellerRows = Number.isFinite(totals.totalSellerRows) ? totals.totalSellerRows : 0;
-  optimizerInputMetaEl.textContent = `${itemCount} item${itemCount === 1 ? '' : 's'} scraped, ${sellerRows} seller row${sellerRows === 1 ? '' : 's'} kept.`;
-
-  const filters = [];
-  if (context.requestSettings?.buyerCountry) {
-    filters.push(`Buyer: ${context.requestSettings.buyerCountry}`);
-  }
-  if (context.requestSettings?.sellerCountries?.length) {
-    filters.push(`Countries: ${context.requestSettings.sellerCountries.join(', ')}`);
-  }
-  if (context.requestSettings?.sellerReputation) {
-    filters.push(`Reputation: ${context.requestSettings.sellerReputation}`);
-  }
-  if (context.requestSettings?.maxShippingTime) {
-    filters.push(`Max delivery: ${context.requestSettings.maxShippingTime} day${context.requestSettings.maxShippingTime === '1' ? '' : 's'}`);
-  }
-  if (context.requestSettings?.sellerType) {
-    filters.push(`Seller type: ${context.requestSettings.sellerType}`);
-  }
-  optimizerInputFiltersEl.textContent = filters.length ? filters.join(' | ') : 'No seller filters were applied.';
-
-  optimizerInputItemsEl.replaceChildren();
-  context.itemNames.forEach((name) => {
-    const item = document.createElement('li');
-    item.textContent = name;
-    optimizerInputItemsEl.appendChild(item);
-  });
+  const sellerCount = Number.isFinite(context.totalSellers) ? context.totalSellers : 0;
+  optimizerInputMetaEl.textContent = `${itemCount} item${itemCount === 1 ? '' : 's'} scraped, ${sellerCount} seller${sellerCount === 1 ? '' : 's'} found.`;
 }
 
 function renderSummary(rows) {
@@ -2291,6 +2305,10 @@ function parseOptimizerErrorBody(body) {
   return '';
 }
 
+function getSummaryToneForStatus(status) {
+  return ['optimal', 'feasible'].includes(status) ? 'good' : 'bad';
+}
+
 function deriveOptimizerHealthUrl(endpoint) {
   const rawEndpoint = textOf(endpoint);
   if (!rawEndpoint) return '';
@@ -2315,7 +2333,7 @@ async function warmOptimizerApi(endpoint, { reason = '', force = false } = {}) {
   lastOptimizerWarmupAt = now;
 
   const reasonSuffix = reason ? ` (${reason})` : '';
-  appendStatus(`Warming optimizer API via ${healthUrl}${reasonSuffix}.`);
+  appendStatus(`Warming optimizer API${reasonSuffix}.`);
 
   try {
     const response = await fetch(healthUrl, {
@@ -2364,10 +2382,10 @@ async function submitOptimizationRequest(endpoint) {
     setStepActivity({
       kind: 'optimizer-request',
       label: 'Posting payload to optimizer API.',
-      detail: `Sending ${latestExtractPayload.items.length} items, ${latestExtractPayload.sellers.length} sellers, and ${latestExtractPayload.offers.length} offers to ${endpoint}.`,
+      detail: `Sending ${latestExtractPayload.items.length} items, ${latestExtractPayload.sellers.length} sellers, and ${latestExtractPayload.offers.length} offers to optimizer.`,
       indeterminate: true,
     });
-    appendStatus(`Posting optimizer payload to ${endpoint}.`);
+    appendStatus('Posting optimizer payload to optimizer.');
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -2408,13 +2426,13 @@ async function submitOptimizationRequest(endpoint) {
     renderOptimizationResult(result);
     const isUsableCart = result.status === 'optimal' || result.status === 'feasible';
     renderSummary([
-      { label: 'Optimizer status', value: result.status || 'unknown', tone: isUsableCart ? 'good' : 'bad' },
+      { label: 'Solution', value: result.status || 'unknown', tone: getSummaryToneForStatus(result.status || 'unknown') },
+      { label: 'Warm start', value: result.warm_start_status || 'unknown', tone: getSummaryToneForStatus(result.warm_start_status || 'unknown') },
       { label: 'Grand total', value: formatCurrencyAmount(result?.totals?.grand_total || 0, result.currency || 'EUR'), tone: isUsableCart ? 'good' : '' },
       { label: 'Item subtotal', value: formatCurrencyAmount(result?.totals?.item_subtotal || 0, result.currency || 'EUR') },
       { label: 'Shipping total', value: formatCurrencyAmount(result?.totals?.shipping_total || 0, result.currency || 'EUR') },
       { label: 'Chosen sellers', value: String(result?.cart?.total_sellers || 0) },
       { label: 'Total units', value: String(result?.cart?.total_units || 0) },
-      { label: 'Notes', value: Array.isArray(result?.notes) && result.notes.length ? result.notes.join(' | ') : '-' },
     ]);
     setActiveWorkflowStep(isUsableCart ? 'fill' : 'optimize', { force: true });
     setActiveResultTab('cart');
@@ -3305,9 +3323,18 @@ wantListSelectEl?.addEventListener('change', () => {
     });
   }
 });
-sellerReputationFilterEl.addEventListener('change', saveSellerSettings);
-sellerDeliveryTimeFilterEl.addEventListener('change', saveSellerSettings);
-sellerTypeFilterEl.addEventListener('change', saveSellerSettings);
+sellerReputationFilterEl.addEventListener('change', () => {
+  renderSellerFilterState();
+  saveSellerSettings();
+});
+sellerDeliveryTimeFilterEl.addEventListener('change', () => {
+  renderSellerFilterState();
+  saveSellerSettings();
+});
+sellerTypeFilterEl.addEventListener('change', () => {
+  renderSellerFilterState();
+  saveSellerSettings();
+});
 buyerCountrySelectEl.addEventListener('change', () => {
   saveSellerSettings();
   refreshOptimizerPayloadFromCurrentState();
@@ -3342,7 +3369,7 @@ window.addEventListener('focus', () => {
 
 renderSummary([
   { label: 'Status', value: 'Ready for want-list loading' },
-  { label: 'Current scope', value: 'Load selected want list, scrape on any Cardmarket page' },
+  { label: 'Current scope', value: 'Select a wants list to continue.' },
 ]);
 finishRun('Idle. Start extract, scrape, or probe.');
 renderItems([], 0);

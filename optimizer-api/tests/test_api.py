@@ -81,6 +81,7 @@ def test_real_request_fixtures_acceptance(
     assert body["status"] in {"optimal", "feasible", "infeasible"}
     assert set(body.keys()) == {
         "status",
+        "warm_start_status",
         "currency",
         "totals",
         "chosen_sellers",
@@ -117,7 +118,9 @@ def test_real_request_fixtures_acceptance(
                 }
                 for seller in body["chosen_sellers"]
             ]
-            assert sorted(actual_profiles, key=lambda seller: seller["item_subtotal"]) == sorted(
+            assert sorted(
+                actual_profiles, key=lambda seller: seller["item_subtotal"]
+            ) == sorted(
                 expected["chosen_seller_profiles"],
                 key=lambda seller: seller["item_subtotal"],
             )

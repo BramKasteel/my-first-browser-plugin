@@ -228,6 +228,7 @@ class OptimizationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     status: Literal["optimal", "feasible", "infeasible"]
+    warm_start_status: str = "unknown"
     currency: CurrencyCode
     totals: OptimizationTotals
     chosen_sellers: list[SellerResult] = Field(default_factory=list)

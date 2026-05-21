@@ -1103,6 +1103,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
 
     return OptimizationResponse(
         status=solution_status,
+        warm_start_status=warm_start_status,
         currency=request.currency,
         totals=OptimizationTotals(
             item_subtotal=_from_cents(item_subtotal),
