@@ -2,6 +2,7 @@
   "name": "cardmarket-optimizer-extension",
   "private": true,
   "scripts": {
+    "generate:icons": "node scripts/generate-icons.js",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:debug": "PWDEBUG=1 playwright test --headed --workers=1",
@@ -9,6 +10,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.54.1",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "sharp": "^0.34.3"
   }
 }

@@ -11,8 +11,11 @@ get a better url name
 
 ------------
 
-after pushing to cart, make a diff with what you thought that would go into the card.
-Make it clear which cards are missing
+after pushing to cart, make a diff with what you thought that would go into the cart.
+Make it clear which cards are missing.
+if an order cannot be filled -- remove the articleid that wasn't available.
+Run the optimizer again.
+Fix the items that went into the cart, and optimize the rest.
 
 
 ----------
@@ -36,12 +39,8 @@ For now: only deal with countries that use euros
 
 --------
 
-if an order cannot be filled -- remove the articleid that wasn't available.
-Run the optimizer again.
 
-----------
 
-Try to make the scraping faster
 
 ----------
 
