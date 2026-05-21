@@ -1858,6 +1858,7 @@ function renderCartSummary(result) {
 function buildCartFillPayload(result) {
   const cartSellers = Array.isArray(result?.cart?.sellers) ? result.cart.sellers : [];
   const groupedArticles = new Map();
+  const detailsByArticle = {};
 
   for (const seller of cartSellers) {
     const sellerItems = Array.isArray(seller?.items) ? seller.items : [];
@@ -1868,6 +1869,20 @@ function buildCartFillPayload(result) {
         throw new Error('Optimizer cart contains row without valid Cardmarket article id and quantity.');
       }
       groupedArticles.set(articleId, (groupedArticles.get(articleId) || 0) + quantity);
+
+      if (!detailsByArticle[articleId]) {
+        detailsByArticle[articleId] = {
+          sellerId: textOf(seller?.seller_id),
+          sellerName: textOf(seller?.seller_name || seller?.seller_id),
+          items: [],
+        };
+      }
+
+      detailsByArticle[articleId].items.push({
+        itemId: textOf(item?.item_id),
+        itemName: textOf(item?.item_name || item?.item_id),
+        quantity,
+      });
     }
   }
 
@@ -1887,6 +1902,7 @@ function buildCartFillPayload(result) {
     unitCount: [...groupedArticles.values()].reduce((sum, value) => sum + value, 0),
     idArticle,
     amount,
+    detailsByArticle,
   };
 }
 
@@ -1953,10 +1969,128 @@ async function submitOptimizedCartInTab(payload) {
       };
     }
 
+    function textOfLocal(value) {
+      return String(value || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function looksLikeBase64Local(value) {
+      const normalized = textOfLocal(value);
+      return normalized.length >= 8
+        && normalized.length % 4 === 0
+        && /^[A-Za-z0-9+/=]+$/.test(normalized);
+    }
+
+    function decodeBase64Utf8Local(value) {
+      try {
+        const binary = atob(textOfLocal(value));
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        return new TextDecoder('utf-8').decode(bytes);
+      } catch {
+        return '';
+      }
+    }
+
+    function decodeAjaxNodeText(node) {
+      const raw = textOfLocal(node?.textContent || '');
+      if (!raw) return '';
+      return looksLikeBase64Local(raw) ? decodeBase64Utf8Local(raw) : raw;
+    }
+
+    function parsePositiveIntegerLocal(value) {
+      const normalized = textOfLocal(value).replace(/[^0-9]/g, '');
+      if (!normalized) return 0;
+      const parsed = Number.parseInt(normalized, 10);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function parseCartState(html) {
+      if (!html) return null;
+
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const articleMap = {};
+      const rowEls = [...doc.querySelectorAll('tr[data-article-id], [data-article-id][data-name], input[name="idArticle"]')];
+
+      rowEls.forEach((row) => {
+        let articleId = '';
+        let quantityCandidates = [];
+
+        if (row instanceof HTMLInputElement) {
+          articleId = textOfLocal(row.value);
+          const form = row.closest('form');
+          quantityCandidates = [
+            form?.querySelector(`select[name="amount-${articleId}"]`)?.value,
+            form?.querySelector(`input[name="amount-${articleId}"]`)?.value,
+            form?.querySelector('[data-amount]')?.getAttribute('data-amount'),
+          ];
+        } else {
+          articleId = textOfLocal(row.getAttribute('data-article-id') || row.querySelector('input[name="idArticle"]')?.value);
+          quantityCandidates = [
+            row.getAttribute('data-amount'),
+            row.querySelector(`select[name="amount-${articleId}"]`)?.value,
+            row.querySelector(`input[name="amount-${articleId}"]`)?.value,
+            row.querySelector('input[name*="amount" i]')?.value,
+            row.querySelector('input[name*="qty" i]')?.value,
+            row.querySelector('input[name*="quantity" i]')?.value,
+            row.querySelector('select[name*="amount" i]')?.value,
+            row.querySelector('select[name*="qty" i]')?.value,
+            row.querySelector('select[name*="quantity" i]')?.value,
+            row.querySelector('[data-amount]')?.getAttribute('data-amount'),
+            row.querySelector('[data-quantity]')?.getAttribute('data-quantity'),
+            row.querySelector('[data-qty]')?.getAttribute('data-qty'),
+            row.querySelector('td.amount')?.getAttribute('data-amount'),
+            row.querySelector('td.amount')?.textContent,
+          ];
+        }
+
+        if (!articleId) return;
+
+        const quantity = quantityCandidates
+          .map((value) => parsePositiveIntegerLocal(value))
+          .find((value) => value > 0) || 1;
+
+        articleMap[articleId] = Math.max(articleMap[articleId] || 0, quantity);
+      });
+
+      const bodyText = textOfLocal(doc.body?.innerText || '');
+      const summaryMatch = bodyText.match(/Amount of articles\s+(\d+)\s+Articles/i)
+        || bodyText.match(/Contents\s+(\d+)\s+Articles/i)
+        || bodyText.match(/Cart\s*\([^)]*\)\s*(\d+)$/i);
+      const summaryUnitCount = parsePositiveIntegerLocal(summaryMatch?.[1] || '');
+      const unitCount = Object.values(articleMap).reduce((sum, value) => sum + value, 0);
+      const detailedCoverage = summaryUnitCount > 0
+        ? Math.min(1, unitCount / summaryUnitCount)
+        : (unitCount > 0 ? 1 : 0);
+      return {
+        articleMap,
+        articleCount: Object.keys(articleMap).length,
+        unitCount,
+        rowCount: rowEls.length,
+        summaryUnitCount,
+        detailedCoverage,
+        isDetailed: Object.keys(articleMap).length > 0 && (summaryUnitCount === 0 || unitCount === summaryUnitCount),
+        bodyPreview: bodyText.slice(0, 1000),
+      };
+    }
+
+    async function fetchCartState() {
+      try {
+        const response = await fetch(`${location.origin}/${lang}/${game}/ShoppingCart`, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (!response.ok) return null;
+        return parseCartState(await response.text());
+      } catch {
+        return null;
+      }
+    }
+
     const tokenResult = await resolveCmtkn();
     if (!tokenResult.token) {
       throw new Error(`Missing __cmtkn on active Cardmarket session. Tried: ${tokenResult.source || location.pathname || '/'}. Open Cardmarket page with active session and retry.`);
     }
+
+    const beforeCartState = await fetchCartState();
 
     const formData = new FormData();
     formData.append('__cmtkn', tokenResult.token);
@@ -1989,6 +2123,40 @@ async function submitOptimizedCartInTab(payload) {
       throw new Error('Cardmarket cart add returned invalid XML.');
     }
 
+    const resultType = textOfLocal(decodeAjaxNodeText(root.querySelector('resultType'))).toLowerCase();
+    const serverMessageHtml = decodeAjaxNodeText(root.querySelector('systemMessage'));
+    const serverMessage = textOfLocal(
+      serverMessageHtml
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+    );
+
+    const afterCartState = await fetchCartState();
+    const shortages = [];
+    if (afterCartState?.isDetailed) {
+      Object.entries(cartPayload.amount || {}).forEach(([articleId, quantityValue]) => {
+        const requestedQuantity = Number(quantityValue || 0);
+        if (!Number.isFinite(requestedQuantity) || requestedQuantity < 1) return;
+
+        const afterQuantity = Number(afterCartState.articleMap?.[articleId] || 0);
+        if (afterQuantity >= requestedQuantity) return;
+
+        shortages.push({
+          articleId,
+          requestedQuantity,
+          afterQuantity,
+          missingQuantity: requestedQuantity - afterQuantity,
+          details: cartPayload.detailsByArticle?.[articleId] || null,
+        });
+      });
+    }
+
+    const beforeSummaryUnits = Number(beforeCartState?.summaryUnitCount || beforeCartState?.unitCount || 0);
+    const afterSummaryUnits = Number(afterCartState?.summaryUnitCount || afterCartState?.unitCount || 0);
+    const addedSummaryUnits = Math.max(0, afterSummaryUnits - beforeSummaryUnits);
+    const missingSummaryUnits = Math.max(0, cartPayload.unitCount - addedSummaryUnits);
+
     return {
       ok: true,
       articleCount: Object.keys(cartPayload.idArticle).length,
@@ -1996,6 +2164,31 @@ async function submitOptimizedCartInTab(payload) {
       tokenSource: tokenResult.source,
       hasMenuMarkup: Boolean(root.querySelector('scMenuHubResponsive')),
       responsePreview: responseText.slice(0, 240),
+      serverResultType: resultType,
+      serverMessage,
+      cartVerified: Boolean(afterCartState?.isDetailed),
+      shortages,
+      beforeCartState: beforeCartState
+        ? {
+            articleCount: beforeCartState.articleCount,
+            unitCount: beforeCartState.unitCount,
+            rowCount: beforeCartState.rowCount,
+            summaryUnitCount: beforeCartState.summaryUnitCount,
+            detailedCoverage: beforeCartState.detailedCoverage,
+          }
+        : null,
+      afterCartState: afterCartState
+        ? {
+            articleCount: afterCartState.articleCount,
+            unitCount: afterCartState.unitCount,
+            rowCount: afterCartState.rowCount,
+            summaryUnitCount: afterCartState.summaryUnitCount,
+            detailedCoverage: afterCartState.detailedCoverage,
+            bodyPreview: afterCartState.bodyPreview,
+          }
+        : null,
+      addedSummaryUnits,
+      missingSummaryUnits,
     };
   }, [payload]);
 
@@ -2010,6 +2203,42 @@ async function submitOptimizedCartInTab(payload) {
   return result;
 }
 
+function formatCartShortageMessage(result) {
+  const shortages = Array.isArray(result?.shortages) ? result.shortages : [];
+  if (!shortages.length) {
+    const missingUnits = Number(result?.missingSummaryUnits || 0);
+    const addedUnits = Number(result?.addedSummaryUnits || 0);
+    const requestedUnits = Number(result?.unitCount || 0);
+    if (missingUnits > 0) {
+      return `Cardmarket cart summary shows ${addedUnits} of ${requestedUnits} requested unit(s) added. Exact missing offers could not be identified reliably.`;
+    }
+    return '';
+  }
+
+  const missingUnits = shortages.reduce((sum, entry) => sum + Number(entry?.missingQuantity || 0), 0);
+
+  const preview = shortages.slice(0, 6).map((entry) => {
+    const sellerName = textOf(entry?.details?.sellerName || entry?.details?.sellerId || 'unknown-seller');
+    const itemSummary = Array.isArray(entry?.details?.items) && entry.details.items.length
+      ? entry.details.items.map((item) => `${item.quantity}x ${item.itemName || item.itemId}`).join(', ')
+      : `article ${entry.articleId}`;
+    return `${sellerName}: ${itemSummary} (missing ${entry.missingQuantity})`;
+  }).join(' | ');
+
+  const suffix = shortages.length > 6 ? ` | +${shortages.length - 6} more` : '';
+  return `Cardmarket still missing ${shortages.length} offer row(s), ${missingUnits} unit(s). ${preview}${suffix}`;
+}
+
+function buildCartFillFailureMessage(result) {
+  const parts = [];
+  const serverMessage = textOf(result?.serverMessage);
+  const shortageMessage = formatCartShortageMessage(result);
+
+  if (serverMessage) parts.push(serverMessage);
+  if (shortageMessage) parts.push(shortageMessage);
+  return parts.filter(Boolean).join(' | ');
+}
+
 async function handleFillCart() {
   if (!hasOptimizedCart()) {
     appendStatus('No optimal cart ready yet. Run optimizer first.', 'bad');
@@ -2022,6 +2251,14 @@ async function handleFillCart() {
     const payload = buildCartFillPayload(latestOptimizationResult);
     appendStatus(`Posting ${payload.articleCount} articles and ${payload.unitCount} units to Cardmarket cart.`);
     const result = await submitOptimizedCartInTab(payload);
+    if (textOf(result?.serverResultType) === 'error'
+      || (Array.isArray(result?.shortages) && result.shortages.length)
+      || Number(result?.missingSummaryUnits || 0) > 0) {
+      throw new Error(buildCartFillFailureMessage(result) || 'Cardmarket rejected one or more cart rows.');
+    }
+    if (!result?.cartVerified) {
+      appendStatus('Cardmarket cart posted, but extension could not verify final cart contents.', 'warn');
+    }
     appendStatus(`Cardmarket cart updated: ${result.articleCount} articles, ${result.unitCount} units.`, 'good');
     finishRun('Optimized cart pushed to Cardmarket.', 'good');
   } catch (error) {
@@ -4379,6 +4616,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
       let addedThisPage = 0;
       rowEls.forEach((el) => {
         const seller = parseSellerRow(el);
+        if (seller.buyBlocked) return;
         if (!seller.articleId || seen.has(seller.articleId)) return;
         seen.add(seller.articleId);
         sellers.push(seller);
@@ -4819,6 +5057,17 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     const row = {};
     const idMatch = (el.id || '').match(/articleRow(\d+)/);
     row.articleId = idMatch ? idMatch[1] : '';
+    const actionButton = el.querySelector('.btn.btn-grey, .btn[title], .btn[aria-label], button[title], button[aria-label]');
+    const actionTitle = textOf(
+      actionButton?.getAttribute('title')
+      || actionButton?.getAttribute('aria-label')
+      || ''
+    );
+    row.buyBlockedReason = actionTitle;
+    row.buyBlocked = /you cannot buy the offered item|does not ship to your country|blacklist/i.test(actionTitle)
+      || actionButton?.classList?.contains('btn-grey')
+      || false;
+
     const sellerColumn = el.querySelector('.col-seller') || el;
     const sellerLink = sellerColumn.querySelector('a[href*="/Users/"]') || el.querySelector('a[href*="/Users/"]');
     row.sellerName = textOf(sellerLink?.textContent);

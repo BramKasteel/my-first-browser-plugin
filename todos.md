@@ -2,6 +2,11 @@ get as little permissions as necessary
 
 ------------
 
+seller hagra has no option for letters --> only a 15euro parcel
+How to deal with these weird situations? Blacklist these sellers?
+
+------------------
+
 get a better url name
 
 ------------
