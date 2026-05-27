@@ -18,7 +18,7 @@ from app.solver import (
     MISSING_ROUTE_DATA_PENALTY_CENTS,
     WARM_START_MAX_TIME_SECONDS,
     _build_route_min_shipping_warm_start,
-    _prune_dominated_offers,
+    _prune_dominated_offers_per_seller,
     _prune_dominated_single_item_sellers,
     optimize_order,
 )
@@ -460,7 +460,7 @@ def test_prune_dominated_offers_drops_more_expensive_duplicate() -> None:
 
     item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=1)}
 
-    pruned = _prune_dominated_offers(offers, item_map)
+    pruned = _prune_dominated_offers_per_seller(offers, item_map)
 
     assert [offer.offer_id for offer in pruned] == ["offer-1"]
 
@@ -498,7 +498,7 @@ def test_prune_dominated_offers_keeps_cheapest_n_per_seller_item() -> None:
 
     item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=2)}
 
-    pruned = _prune_dominated_offers(offers, item_map)
+    pruned = _prune_dominated_offers_per_seller(offers, item_map)
 
     assert [offer.offer_id for offer in pruned] == ["offer-2", "offer-3"]
 
@@ -539,7 +539,7 @@ def test_prune_dominated_offers_keeps_n_cheapest_even_when_input_order_is_scramb
 
     item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=2)}
 
-    pruned = _prune_dominated_offers(offers, item_map)
+    pruned = _prune_dominated_offers_per_seller(offers, item_map)
 
     assert sorted(offer.offer_id for offer in pruned) == ["offer-1", "offer-2"]
 
@@ -564,7 +564,7 @@ def test_prune_dominated_offers_prefers_higher_quantity_on_price_tie() -> None:
 
     item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=1)}
 
-    pruned = _prune_dominated_offers(offers, item_map)
+    pruned = _prune_dominated_offers_per_seller(offers, item_map)
 
     assert [offer.offer_id for offer in pruned] == ["offer-2"]
 
@@ -591,7 +591,7 @@ def test_prune_dominated_offers_keeps_all_options_when_wanted_quantity_exceeds_b
 
     item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=3)}
 
-    pruned = _prune_dominated_offers(offers, item_map)
+    pruned = _prune_dominated_offers_per_seller(offers, item_map)
 
     assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2"]
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from heapq import nsmallest
 
 from . import shipping
 from .models import (
@@ -153,25 +152,6 @@ def _prune_dominated_shipping_tiers(
     return kept
 
 
-def _prune_dominated_offers(
-    offers: list[Offer], item_map: dict[str, WantedItem]
-) -> list[Offer]:
-    offers_by_bucket: dict[tuple[str, str], list[Offer]] = defaultdict(list)
-    for offer in offers:
-        offers_by_bucket[(offer.seller_id, offer.item_id)].append(offer)
-
-    chosen_offer_ids: set[str] = set()
-    for (seller_id, item_id), bucket_offers in offers_by_bucket.items():
-        del seller_id
-        keep_count = item_map[item_id].quantity
-        chosen_offer_ids.update(
-            offer.offer_id
-            for offer in nsmallest(keep_count, bucket_offers, key=_offer_prune_rank)
-        )
-
-    return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
-
-
 def _selection_shipping_cost_cents(
     *,
     seller_country: str,
@@ -231,187 +211,6 @@ def _selection_shipping_cost_cents(
         seller_country=seller_country,
         buyer_country=buyer_country,
     )
-
-
-def _prune_dominated_single_item_sellers(
-    *,
-    offers: list[Offer],
-    item_map: dict[str, WantedItem],
-    seller_map: dict[str, object],
-    buyer_country: str,
-    route_book: shipping.ShippingRouteBook | None,
-    use_explicit_weights: bool,
-) -> list[Offer]:
-    seller_offers: dict[str, list[Offer]] = defaultdict(list)
-    item_offers: dict[str, list[Offer]] = defaultdict(list)
-    seller_item_offers: dict[str, dict[str, list[Offer]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-    for offer in offers:
-        seller_offers[offer.seller_id].append(offer)
-        item_offers[offer.item_id].append(offer)
-        seller_item_offers[offer.seller_id][offer.item_id].append(offer)
-
-    item_sellers = {
-        item_id: {offer.seller_id for offer in bucket_offers}
-        for item_id, bucket_offers in item_offers.items()
-    }
-
-    seller_country_keys = {
-        seller_id: seller.country.strip().casefold()
-        for seller_id, seller in seller_map.items()
-    }
-
-    prefix_cost_cache: dict[tuple[str, str], list[int]] = {}
-
-    def prefix_costs(seller_id: str, item_id: str) -> list[int]:
-        cache_key = (seller_id, item_id)
-        if cache_key in prefix_cost_cache:
-            return prefix_cost_cache[cache_key]
-
-        running_cost_cents = 0
-        prefixes: list[int] = []
-        sorted_offers = sorted(
-            seller_item_offers[seller_id][item_id],
-            key=_offer_prune_rank,
-        )
-        for item_offer in sorted_offers:
-            capped_quantity = _capped_offer_quantity(item_offer, item_map)
-            unit_price_cents = _to_cents(item_offer.unit_price)
-            for _ in range(capped_quantity):
-                running_cost_cents += unit_price_cents
-                prefixes.append(running_cost_cents)
-
-        prefix_cost_cache[cache_key] = prefixes
-        return prefixes
-
-    def alternative_dominates_subject_items(
-        *,
-        subject_seller_id: str,
-        alternative_seller_id: str,
-        item_ids: tuple[str, ...],
-    ) -> bool:
-        strictly_better = False
-        for item_id in item_ids:
-            subject_prefixes = prefix_costs(subject_seller_id, item_id)
-            alternative_prefixes = prefix_costs(alternative_seller_id, item_id)
-            if len(alternative_prefixes) < len(subject_prefixes):
-                return False
-            for prefix_index, subject_cost_cents in enumerate(subject_prefixes):
-                alternative_cost_cents = alternative_prefixes[prefix_index]
-                if alternative_cost_cents > subject_cost_cents:
-                    return False
-                if alternative_cost_cents < subject_cost_cents:
-                    strictly_better = True
-
-        return strictly_better or alternative_seller_id < subject_seller_id
-
-    dropped_seller_ids: set[str] = set()
-    for seller_id, seller_bucket in seller_offers.items():
-        if len(seller_bucket) != 1:
-            continue
-
-        offer = seller_bucket[0]
-        quantity = _capped_offer_quantity(offer, item_map)
-        if quantity <= 0:
-            continue
-
-        seller = seller_map[seller_id]
-        subject_shipping_cost = _selection_shipping_cost_cents(
-            seller_country=seller.country,
-            buyer_country=buyer_country,
-            selections=[(offer, quantity)],
-            item_map=item_map,
-            route_book=route_book,
-            use_explicit_weights=use_explicit_weights,
-        )
-        if subject_shipping_cost is None:
-            dropped_seller_ids.add(seller_id)
-            continue
-
-        subject_total_cents = (
-            _to_cents(offer.unit_price) * quantity + subject_shipping_cost
-        )
-
-        for alternative in item_offers[offer.item_id]:
-            if alternative.seller_id == seller_id:
-                continue
-            if len(seller_offers[alternative.seller_id]) <= 1:
-                continue
-
-            alternative_quantity = _capped_offer_quantity(alternative, item_map)
-            if alternative_quantity < quantity:
-                continue
-
-            alternative_seller = seller_map[alternative.seller_id]
-            alternative_shipping_cost = _selection_shipping_cost_cents(
-                seller_country=alternative_seller.country,
-                buyer_country=buyer_country,
-                selections=[(alternative, quantity)],
-                item_map=item_map,
-                route_book=route_book,
-                use_explicit_weights=use_explicit_weights,
-            )
-            if alternative_shipping_cost is None:
-                continue
-
-            alternative_total_cents = (
-                _to_cents(alternative.unit_price) * quantity + alternative_shipping_cost
-            )
-            if alternative_total_cents <= subject_total_cents:
-                dropped_seller_ids.add(seller_id)
-                break
-
-    for seller_id, item_offer_buckets in seller_item_offers.items():
-        if seller_id in dropped_seller_ids:
-            continue
-
-        seller_item_ids = tuple(
-            sorted(
-                item_id
-                for item_id, bucket_offers in item_offer_buckets.items()
-                if sum(
-                    _capped_offer_quantity(offer, item_map) for offer in bucket_offers
-                )
-                > 0
-            )
-        )
-        if len(seller_item_ids) < 2:
-            continue
-        if len(seller_item_ids) > SELLER_DOMINANCE_MAX_DISTINCT_ITEMS:
-            continue
-
-        candidate_seller_ids: set[str] | None = None
-        for item_id in seller_item_ids:
-            candidate_bucket = item_sellers.get(item_id, set())
-            candidate_seller_ids = (
-                set(candidate_bucket)
-                if candidate_seller_ids is None
-                else candidate_seller_ids & candidate_bucket
-            )
-
-        if not candidate_seller_ids:
-            continue
-
-        subject_country_key = seller_country_keys[seller_id]
-        for alternative_seller_id in sorted(candidate_seller_ids):
-            if alternative_seller_id == seller_id:
-                continue
-            if alternative_seller_id in dropped_seller_ids:
-                continue
-            if seller_country_keys[alternative_seller_id] != subject_country_key:
-                continue
-            if not alternative_dominates_subject_items(
-                subject_seller_id=seller_id,
-                alternative_seller_id=alternative_seller_id,
-                item_ids=seller_item_ids,
-            ):
-                continue
-
-            dropped_seller_ids.add(seller_id)
-            break
-
-    return [offer for offer in offers if offer.seller_id not in dropped_seller_ids]
 
 
 def _build_route_min_shipping_warm_start(
@@ -850,11 +649,214 @@ def _solve_exact_shipping_order(
     return solution_status, selected_offer_quantities, warm_start_status
 
 
+def _prune_dominated_offers_per_seller(
+    offers: list[Offer], item_map: dict[str, WantedItem]
+) -> list[Offer]:
+    offers_by_bucket: dict[tuple[str, str], list[Offer]] = defaultdict(list)
+    for offer in offers:
+        offers_by_bucket[(offer.seller_id, offer.item_id)].append(offer)
+
+    chosen_offer_ids: set[str] = set()
+    for (seller_id, item_id), bucket_offers in offers_by_bucket.items():
+        keep_count = item_map[item_id].quantity
+        sorted_offers = sorted(bucket_offers, key=_offer_prune_rank)
+        total = 0
+        for offer in sorted_offers:
+            chosen_offer_ids.add(offer.offer_id)
+            total += offer.available_quantity
+            if total >= keep_count:
+                offer.available_quantity = offer.available_quantity - total + keep_count
+                break
+
+    return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
+
+
+def _prune_dominated_single_item_sellers(
+    *,
+    offers: list[Offer],
+    item_map: dict[str, WantedItem],
+    seller_map: dict[str, object],
+    buyer_country: str,
+    route_book: shipping.ShippingRouteBook | None,
+    use_explicit_weights: bool,
+) -> list[Offer]:
+    seller_offers: dict[str, list[Offer]] = defaultdict(list)
+    item_offers: dict[str, list[Offer]] = defaultdict(list)
+    seller_item_offers: dict[str, dict[str, list[Offer]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for offer in offers:
+        seller_offers[offer.seller_id].append(offer)
+        item_offers[offer.item_id].append(offer)
+        seller_item_offers[offer.seller_id][offer.item_id].append(offer)
+
+    item_sellers = {
+        item_id: {offer.seller_id for offer in bucket_offers}
+        for item_id, bucket_offers in item_offers.items()
+    }
+
+    seller_country_keys = {
+        seller_id: seller.country.strip().casefold()
+        for seller_id, seller in seller_map.items()
+    }
+
+    prefix_cost_cache: dict[tuple[str, str], list[int]] = {}
+
+    def prefix_costs(seller_id: str, item_id: str) -> list[int]:
+        cache_key = (seller_id, item_id)
+        if cache_key in prefix_cost_cache:
+            return prefix_cost_cache[cache_key]
+
+        running_cost_cents = 0
+        prefixes: list[int] = []
+        sorted_offers = sorted(
+            seller_item_offers[seller_id][item_id],
+            key=_offer_prune_rank,
+        )
+        for item_offer in sorted_offers:
+            capped_quantity = _capped_offer_quantity(item_offer, item_map)
+            unit_price_cents = _to_cents(item_offer.unit_price)
+            for _ in range(capped_quantity):
+                running_cost_cents += unit_price_cents
+                prefixes.append(running_cost_cents)
+
+        prefix_cost_cache[cache_key] = prefixes
+        return prefixes
+
+    def alternative_dominates_subject_items(
+        *,
+        subject_seller_id: str,
+        alternative_seller_id: str,
+        item_ids: tuple[str, ...],
+    ) -> bool:
+        strictly_better = False
+        for item_id in item_ids:
+            subject_prefixes = prefix_costs(subject_seller_id, item_id)
+            alternative_prefixes = prefix_costs(alternative_seller_id, item_id)
+            if len(alternative_prefixes) < len(subject_prefixes):
+                return False
+            for prefix_index, subject_cost_cents in enumerate(subject_prefixes):
+                alternative_cost_cents = alternative_prefixes[prefix_index]
+                if alternative_cost_cents > subject_cost_cents:
+                    return False
+                if alternative_cost_cents < subject_cost_cents:
+                    strictly_better = True
+
+        return strictly_better or alternative_seller_id < subject_seller_id
+
+    dropped_seller_ids: set[str] = set()
+    for seller_id, seller_bucket in seller_offers.items():
+        if len(seller_bucket) != 1:
+            continue
+
+        offer = seller_bucket[0]
+        quantity = _capped_offer_quantity(offer, item_map)
+        if quantity <= 0:
+            continue
+
+        seller = seller_map[seller_id]
+        subject_shipping_cost = _selection_shipping_cost_cents(
+            seller_country=seller.country,
+            buyer_country=buyer_country,
+            selections=[(offer, quantity)],
+            item_map=item_map,
+            route_book=route_book,
+            use_explicit_weights=use_explicit_weights,
+        )
+        if subject_shipping_cost is None:
+            dropped_seller_ids.add(seller_id)
+            continue
+
+        subject_total_cents = (
+            _to_cents(offer.unit_price) * quantity + subject_shipping_cost
+        )
+
+        for alternative in item_offers[offer.item_id]:
+            if alternative.seller_id == seller_id:
+                continue
+            if len(seller_offers[alternative.seller_id]) <= 1:
+                continue
+
+            alternative_quantity = _capped_offer_quantity(alternative, item_map)
+            if alternative_quantity < quantity:
+                continue
+
+            alternative_seller = seller_map[alternative.seller_id]
+            alternative_shipping_cost = _selection_shipping_cost_cents(
+                seller_country=alternative_seller.country,
+                buyer_country=buyer_country,
+                selections=[(alternative, quantity)],
+                item_map=item_map,
+                route_book=route_book,
+                use_explicit_weights=use_explicit_weights,
+            )
+            if alternative_shipping_cost is None:
+                continue
+
+            alternative_total_cents = (
+                _to_cents(alternative.unit_price) * quantity + alternative_shipping_cost
+            )
+            if alternative_total_cents <= subject_total_cents:
+                dropped_seller_ids.add(seller_id)
+                break
+
+    for seller_id, item_offer_buckets in seller_item_offers.items():
+        if seller_id in dropped_seller_ids:
+            continue
+
+        seller_item_ids = tuple(
+            sorted(
+                item_id
+                for item_id, bucket_offers in item_offer_buckets.items()
+                if sum(
+                    _capped_offer_quantity(offer, item_map) for offer in bucket_offers
+                )
+                > 0
+            )
+        )
+        if len(seller_item_ids) < 2:
+            continue
+        if len(seller_item_ids) > SELLER_DOMINANCE_MAX_DISTINCT_ITEMS:
+            continue
+
+        candidate_seller_ids: set[str] | None = None
+        for item_id in seller_item_ids:
+            candidate_bucket = item_sellers.get(item_id, set())
+            candidate_seller_ids = (
+                set(candidate_bucket)
+                if candidate_seller_ids is None
+                else candidate_seller_ids & candidate_bucket
+            )
+
+        if not candidate_seller_ids:
+            continue
+
+        subject_country_key = seller_country_keys[seller_id]
+        for alternative_seller_id in sorted(candidate_seller_ids):
+            if alternative_seller_id == seller_id:
+                continue
+            if alternative_seller_id in dropped_seller_ids:
+                continue
+            if seller_country_keys[alternative_seller_id] != subject_country_key:
+                continue
+            if not alternative_dominates_subject_items(
+                subject_seller_id=seller_id,
+                alternative_seller_id=alternative_seller_id,
+                item_ids=seller_item_ids,
+            ):
+                continue
+
+            dropped_seller_ids.add(seller_id)
+            break
+
+    return [offer for offer in offers if offer.seller_id not in dropped_seller_ids]
+
+
 def prune_all(request: OptimizationRequest):
     seller_map = request.seller_map()
     item_map = request.item_map()
 
-    usable_offers = _prune_dominated_offers(request.offers, item_map)
+    usable_offers = _prune_dominated_offers_per_seller(request.offers, item_map)
 
     route_book = shipping.load_shipping_route_book()
     use_explicit_weights = _has_explicit_item_weights(request)

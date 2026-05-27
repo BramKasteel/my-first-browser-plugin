@@ -96,15 +96,14 @@ def test_pruning_offers_by_quantity(fixture_path: Path) -> None:
     request = OptimizationRequest.model_validate(payload)
 
     usable_offers = prune_all(request=request)
-    inspect = defaultdict(lambda: defaultdict(int))
+    inspect = defaultdict(lambda: defaultdict(list))
     for offer in usable_offers:
-        inspect[offer.seller_id][offer.item_id] += offer.available_quantity
+        inspect[offer.seller_id][offer.item_id].append(offer)
 
-    fail_count = 0
     for seller, items in inspect.items():
-        for item, available_quantity in items.items():
+        for item, offers in items.items():
+            available_quantity = sum(offer.available_quantity for offer in offers)
             if available_quantity > request.item_map()[item].quantity:
-                fail_count += 1
                 raise ValueError(
                     "Per seller we only need to keep at most the wanted amount of items"
                 )
