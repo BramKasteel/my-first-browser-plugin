@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from ortools.sat.python import cp_model
+
 from . import shipping
 from .models import (
     AllocationResult,
@@ -94,6 +96,7 @@ def _shipping_tier_capacity(
     return _method_card_capacity(tier.max_weight_grams)
 
 
+# TODO this function seems duplicated with _normalize_card_order_methods from shipping.py
 def _shipping_tier_dominates(
     existing: tuple[bool, shipping.ShippingTier],
     candidate: tuple[bool, shipping.ShippingTier],
@@ -388,10 +391,9 @@ def _solve_exact_shipping_order(
     seller_offers = defaultdict(list)
     for offer in usable_offers:
         seller_offers[offer.seller_id].append(offer)
-        capped_quantity = _capped_offer_quantity(offer, item_map)
         offer_vars[offer.offer_id] = _new_quantity_var(
             model,
-            upper_bound=capped_quantity,
+            upper_bound=offer.available_quantity,
             name=f"qty_{offer.offer_id}",
         )
 
@@ -414,6 +416,7 @@ def _solve_exact_shipping_order(
         seller_tier_candidates[seller_id] = tier_candidates
 
         if len(tier_candidates) <= 1:
+            # TODO: how can we only have one tier available!? Something wrong with pruning?
             seller_active_vars[seller_id] = model.NewBoolVar(
                 f"seller_active_{seller_id}"
             )
@@ -768,13 +771,6 @@ def prune_all(request: OptimizationRequest):
 
 
 def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
-    try:
-        from ortools.sat.python import cp_model
-    except ImportError as exc:
-        raise RuntimeError(
-            "OR-Tools not installed. Run `pip install -e .` inside optimizer-api first."
-        ) from exc
-
     usable_offers = prune_all(request)
     item_map = request.item_map()
     seller_map = request.seller_map()
