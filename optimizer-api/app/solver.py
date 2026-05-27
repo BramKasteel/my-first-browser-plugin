@@ -850,38 +850,11 @@ def _solve_exact_shipping_order(
     return solution_status, selected_offer_quantities, warm_start_status
 
 
-def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
-    try:
-        from ortools.sat.python import cp_model
-    except ImportError as exc:
-        raise RuntimeError(
-            "OR-Tools not installed. Run `pip install -e .` inside optimizer-api first."
-        ) from exc
+def prune_all(request: OptimizationRequest):
+    seller_map = request.seller_map()
+    item_map = request.item_map()
 
-    seller_map = {seller.seller_id: seller for seller in request.sellers}
-    item_map = {item.item_id: item for item in request.items}
-
-    allowed_countries = set(
-        country.strip().casefold()
-        for country in request.preferences.allowed_countries
-        if country.strip()
-    )
-    blocked_sellers = set(request.preferences.blocked_seller_ids)
-
-    usable_offers = []
-    filtered_sellers = set()
-    for offer in request.offers:
-        seller = seller_map[offer.seller_id]
-        seller_country = seller.country.strip().casefold()
-        if offer.seller_id in blocked_sellers:
-            filtered_sellers.add(offer.seller_id)
-            continue
-        if allowed_countries and seller_country not in allowed_countries:
-            filtered_sellers.add(offer.seller_id)
-            continue
-        usable_offers.append(offer)
-
-    usable_offers = _prune_dominated_offers(usable_offers, item_map)
+    usable_offers = _prune_dominated_offers(request.offers, item_map)
 
     route_book = shipping.load_shipping_route_book()
     use_explicit_weights = _has_explicit_item_weights(request)
@@ -893,6 +866,20 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         route_book=route_book,
         use_explicit_weights=use_explicit_weights,
     )
+    return usable_offers
+
+
+def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
+    try:
+        from ortools.sat.python import cp_model
+    except ImportError as exc:
+        raise RuntimeError(
+            "OR-Tools not installed. Run `pip install -e .` inside optimizer-api first."
+        ) from exc
+
+    usable_offers = prune_all(request)
+    item_map = request.item_map()
+    seller_map = request.seller_map()
 
     coverage = defaultdict(int)
     for offer in usable_offers:
@@ -906,8 +893,6 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             "No feasible solution under current seller filters.",
             f"Uncovered items: {', '.join(uncovered_items)}",
         ]
-        if filtered_sellers:
-            notes.append(f"Filtered sellers: {', '.join(sorted(filtered_sellers))}")
         return OptimizationResponse(
             status="infeasible",
             currency=request.currency,
@@ -915,6 +900,9 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             cart=OptimizationCart(),
             notes=notes,
         )
+
+    use_explicit_weights = _has_explicit_item_weights(request)
+    route_book = shipping.load_shipping_route_book()
 
     solution = _solve_exact_shipping_order(
         cp_model=cp_model,
@@ -1092,10 +1080,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             notes.append(
                 "Imported shipping data unavailable. Run `uv run cm-import-shipping` to enable route-method pricing."
             )
-    if filtered_sellers:
-        notes.append(
-            f"Filtered sellers excluded before solve: {', '.join(sorted(filtered_sellers))}"
-        )
+
     if solution_status == "feasible":
         notes.append(
             "Solver hit time limit before proving optimality. Returning best known feasible order."

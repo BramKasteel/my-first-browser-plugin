@@ -108,6 +108,12 @@ class OptimizationRequest(BaseModel):
         default_factory=OptimizationPreferences
     )
 
+    def seller_map(self) -> dict[BoundedId, Seller]:
+        return {seller.seller_id: seller for seller in self.sellers}
+
+    def item_map(self) -> dict[BoundedId, WantedItem]:
+        return {item.item_id: item for item in self.items}
+
     @model_validator(mode="after")
     def validate_references(self) -> "OptimizationRequest":
         duplicate_item_ids = _find_duplicates([item.item_id for item in self.items])

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from pathlib import Path
 
 import pytest
 from app.main import app
+from app.models import OptimizationRequest
+from app.solver import prune_all
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,6 +65,49 @@ def test_health(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    "fixture_path", real_request_fixture_paths(), ids=lambda path: path.stem
+)
+@pytest.mark.fixture_case
+def test_pruning_sellers_with_single_item(fixture_path: Path) -> None:
+    payload = load_json(fixture_path)
+    request = OptimizationRequest.model_validate(payload)
+
+    usable_offers = prune_all(request=request)
+    inspect = defaultdict(lambda: defaultdict(int))
+    for offer in usable_offers:
+        inspect[offer.seller_id][offer.item_id] += offer.available_quantity
+
+    n_single_item_sellers = sum(
+        [1 for seller, items in inspect.items() if len(items) == 1]
+    )
+
+    assert n_single_item_sellers <= len(request.items)
+
+
+@pytest.mark.parametrize(
+    "fixture_path", real_request_fixture_paths(), ids=lambda path: path.stem
+)
+@pytest.mark.fixture_case
+def test_pruning_offers_by_quantity(fixture_path: Path) -> None:
+    payload = load_json(fixture_path)
+    request = OptimizationRequest.model_validate(payload)
+
+    usable_offers = prune_all(request=request)
+    inspect = defaultdict(lambda: defaultdict(int))
+    for offer in usable_offers:
+        inspect[offer.seller_id][offer.item_id] += offer.available_quantity
+
+    fail_count = 0
+    for seller, items in inspect.items():
+        for item, available_quantity in items.items():
+            if available_quantity > request.item_map()[item].quantity:
+                fail_count += 1
+                raise ValueError(
+                    "Per seller we only need to keep at most the wanted amount of items"
+                )
 
 
 @pytest.mark.parametrize(
