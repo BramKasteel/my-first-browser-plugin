@@ -80,11 +80,17 @@ def test_pruning_sellers_with_single_item(fixture_path: Path) -> None:
     for offer in usable_offers:
         inspect[offer.seller_id][offer.item_id] += offer.available_quantity
 
-    n_single_item_sellers = sum(
-        [1 for seller, items in inspect.items() if len(items) == 1]
-    )
+    for wanted_item in request.items:
+        if wanted_item.quantity == 1:
+            n_single_item_sellers = sum(
+                [
+                    1
+                    for seller, items in inspect.items()
+                    if len(items) == 1 and items[wanted_item.item_id] > 0
+                ]
+            )
 
-    assert n_single_item_sellers <= len(request.items)
+            assert n_single_item_sellers <= 1
 
 
 @pytest.mark.parametrize(
