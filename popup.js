@@ -43,6 +43,8 @@ const fillStepBadgeEl = document.getElementById('fillStepBadge');
 const optimizerSettingsBodyEl = document.getElementById('optimizerSettingsBody');
 const optimizerInputContextEl = document.getElementById('optimizerInputContext');
 const optimizerInputMetaEl = document.getElementById('optimizerInputMeta');
+const optimizerInputFiltersEl = document.getElementById('optimizerInputFilters');
+const optimizerInputItemsEl = document.getElementById('optimizerInputItems');
 const buyerCountryFieldEl = document.getElementById('buyerCountryField');
 const mainCartSummaryEl = document.getElementById('mainCartSummary');
 const mainCartSummaryGrandTotalEl = document.getElementById('mainCartSummaryGrandTotal');
@@ -1629,7 +1631,7 @@ function renderFrontendPayload(payload) {
 }
 
 function renderOptimizerInputContext() {
-  if (!optimizerInputContextEl || !optimizerInputMetaEl) {
+  if (!optimizerInputContextEl || !optimizerInputMetaEl || !optimizerInputFiltersEl || !optimizerInputItemsEl) {
     return;
   }
 
@@ -1637,6 +1639,8 @@ function renderOptimizerInputContext() {
   if (!context) {
     optimizerInputContextEl.hidden = true;
     optimizerInputMetaEl.textContent = 'No seller scrape summary yet.';
+    optimizerInputFiltersEl.textContent = '';
+    optimizerInputItemsEl.replaceChildren();
     return;
   }
 
@@ -1645,7 +1649,26 @@ function renderOptimizerInputContext() {
   const totals = context.totals || {};
   const itemCount = Number.isFinite(totals.extractedItems) ? totals.extractedItems : context.itemNames.length;
   const sellerCount = Number.isFinite(context.totalSellers) ? context.totalSellers : 0;
+  const requestSettings = context.requestSettings || {};
+  const sellerCountries = Array.isArray(requestSettings.sellerCountries)
+    ? requestSettings.sellerCountries.filter(Boolean)
+    : [];
+  const filterParts = [
+    requestSettings.buyerCountry ? `Buyer country: ${requestSettings.buyerCountry}` : null,
+    sellerCountries.length ? `Seller countries: ${sellerCountries.join(', ')}` : null,
+    requestSettings.sellerReputation ? `Seller reputation: ${requestSettings.sellerReputation}` : null,
+    requestSettings.maxShippingTime ? `Max shipping time: ${requestSettings.maxShippingTime}` : null,
+  ].filter(Boolean);
+
   optimizerInputMetaEl.textContent = `${itemCount} item${itemCount === 1 ? '' : 's'} scraped, ${sellerCount} seller${sellerCount === 1 ? '' : 's'} found.`;
+  optimizerInputFiltersEl.textContent = filterParts.join(' | ');
+
+  optimizerInputItemsEl.replaceChildren();
+  context.itemNames.forEach((itemName) => {
+    const itemEl = document.createElement('li');
+    itemEl.textContent = itemName;
+    optimizerInputItemsEl.appendChild(itemEl);
+  });
 }
 
 function renderSummary(rows) {
