@@ -80,38 +80,32 @@ def _selection_shipping_cost_cents(
     seller_country: str,
     buyer_country: str,
     selections: list[tuple[Offer, int]],
-    route_book: shipping.ShippingRouteBook | None,
+    route_book: shipping.ShippingRouteBook,
 ) -> int | None:
-    if route_book is not None:
-        route_tiers = route_book.lookup_tiers(
-            seller_country=seller_country,
-            buyer_country=buyer_country,
-        )
-        tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
-            (False, tier) for tier in route_tiers.parcel_tiers
-        ]
-        if tier_candidates:
-            total_value_cents = sum(
-                _to_cents(offer.unit_price) * quantity for offer, quantity in selections
-            )
-            total_cards = sum(quantity for _, quantity in selections)
-
-            valid_tier_costs = []
-            for _, tier in tier_candidates:
-                if total_value_cents > tier.max_value_cents:
-                    continue
-                if total_cards > shipping.method_card_capacity(tier.max_weight_grams):
-                    continue
-                valid_tier_costs.append(tier.total_price_cents)
-
-            return min(valid_tier_costs) if valid_tier_costs else None
-
-        return MISSING_ROUTE_DATA_PENALTY_CENTS
-
-    return shipping.legacy_shipping_cost_cents(
+    route_tiers = route_book.lookup_tiers(
         seller_country=seller_country,
         buyer_country=buyer_country,
     )
+    tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
+        (False, tier) for tier in route_tiers.parcel_tiers
+    ]
+    if tier_candidates:
+        total_value_cents = sum(
+            _to_cents(offer.unit_price) * quantity for offer, quantity in selections
+        )
+        total_cards = sum(quantity for _, quantity in selections)
+
+        valid_tier_costs = []
+        for _, tier in tier_candidates:
+            if total_value_cents > tier.max_value_cents:
+                continue
+            if total_cards > shipping.method_card_capacity(tier.max_weight_grams):
+                continue
+            valid_tier_costs.append(tier.total_price_cents)
+
+        return min(valid_tier_costs) if valid_tier_costs else None
+
+    return MISSING_ROUTE_DATA_PENALTY_CENTS
 
 
 def _build_route_min_shipping_warm_start(
@@ -121,7 +115,7 @@ def _build_route_min_shipping_warm_start(
     usable_offers: list[Offer],
     item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
-    route_book: shipping.ShippingRouteBook | None,
+    route_book: shipping.ShippingRouteBook,
 ) -> tuple[dict[str, int], dict[str, int], str]:
     if not usable_offers:
         return {}, {}, "skipped"
@@ -209,7 +203,7 @@ def _assignment_total_cost_cents(
     offer_by_id: dict[str, Offer],
     seller_map: dict[str, object],
     buyer_country: str,
-    route_book: shipping.ShippingRouteBook | None,
+    route_book: shipping.ShippingRouteBook,
 ) -> int | None:
     seller_shipping_costs = _selected_seller_shipping_costs_cents(
         offer_quantities=offer_quantities,
@@ -237,7 +231,7 @@ def _selected_seller_shipping_costs_cents(
     offer_by_id: dict[str, Offer],
     seller_map: dict[str, object],
     buyer_country: str,
-    route_book: shipping.ShippingRouteBook | None,
+    route_book: shipping.ShippingRouteBook,
 ) -> dict[str, int] | None:
     selections_by_seller: dict[str, list[tuple[Offer, int]]] = defaultdict(list)
     for offer_id, quantity in offer_quantities.items():
@@ -268,7 +262,7 @@ def _solve_exact_shipping_order(
     usable_offers: list[Offer],
     item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
-    route_book: shipping.ShippingRouteBook | None,
+    route_book: shipping.ShippingRouteBook,
 ) -> tuple[str, dict[str, int]] | None:
     model = cp_model.CpModel()
 
@@ -286,14 +280,11 @@ def _solve_exact_shipping_order(
             name=f"qty_{offer.offer_id}",
         )
 
-    use_rich_shipping = route_book is not None
     for seller_id in seller_offers:
-        route_tiers = shipping.ShippingRouteTiers(letter_tiers=(), parcel_tiers=())
-        if use_rich_shipping and route_book is not None:
-            route_tiers = route_book.lookup_tiers(
-                seller_country=seller_map[seller_id].country,
-                buyer_country=request.buyer_country,
-            )
+        route_tiers = route_book.lookup_tiers(
+            seller_country=seller_map[seller_id].country,
+            buyer_country=request.buyer_country,
+        )
 
         tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
             (False, tier) for tier in route_tiers.parcel_tiers
@@ -390,13 +381,9 @@ def _solve_exact_shipping_order(
             )
             continue
 
-        fallback_cost = MISSING_ROUTE_DATA_PENALTY_CENTS
-        if not use_rich_shipping:
-            fallback_cost = shipping.legacy_shipping_cost_cents(
-                seller_country=seller_map[seller_id].country,
-                buyer_country=request.buyer_country,
-            )
-        objective_terms.append(fallback_cost * active)
+        objective_terms.append(
+            MISSING_ROUTE_DATA_PENALTY_CENTS * active
+        )  # If no tier candidates
 
     for seller_id, offers in seller_offers.items():
         active = seller_active_exprs[seller_id]
@@ -514,7 +501,7 @@ def _prune_cheapest_single_item_sellers(
     item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
     buyer_country: str,
-    route_book: shipping.ShippingRouteBook | None,
+    route_book: shipping.ShippingRouteBook,
 ) -> list[Offer]:
     # Map seller_id to their offers
     seller_offers: dict[str, list[Offer]] = defaultdict(list)
@@ -737,63 +724,38 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     total_units = sum(seller_unit_totals.values())
 
     notes = []
-    use_rich_shipping = route_book is not None
-    if use_rich_shipping:
+    notes.append(
+        "Solve uses two phases: warm start with cheapest per-seller route floor, then main solve with exact imported shipping tiers."
+    )
+    if warm_start_status == "optimal":
         notes.append(
-            "Solve uses two phases: warm start with cheapest per-seller route floor, then main solve with exact imported shipping tiers."
+            "Warm-start floor solve proved optimal and seeded hints for exact solve."
         )
-        if warm_start_status == "optimal":
-            notes.append(
-                "Warm-start floor solve proved optimal and seeded hints for exact solve."
-            )
-        elif warm_start_status == "feasible":
-            notes.append(
-                "Warm-start floor solve found feasible solution before proof of optimality and seeded hints for exact solve."
-            )
-        else:
-            notes.append(
-                f"Warm-start floor solve status: {warm_start_status}. Exact solve ran without warm-start hints."
-            )
+    elif warm_start_status == "feasible":
         notes.append(
-            "Exact shipping costs use selected item value and card-count letter thresholds (4/17/40 cards)."
+            "Warm-start floor solve found feasible solution before proof of optimality and seeded hints for exact solve."
         )
-        if any(
-            not route_book.lookup_tiers(
-                seller_country=seller_map[seller.seller_id].country,
-                buyer_country=request.buyer_country,
-            ).letter_tiers
-            and not route_book.lookup_tiers(
-                seller_country=seller_map[seller.seller_id].country,
-                buyer_country=request.buyer_country,
-            ).parcel_tiers
-            for seller in chosen_sellers
-        ):
-            notes.append(
-                f"Missing imported route data gets penalty shipping cost of {_from_cents(MISSING_ROUTE_DATA_PENALTY_CENTS):.2f} {request.currency} per seller."
-            )
     else:
-        notes.extend(
-            [
-                "Shipping proxy uses seller-country to buyer-country route costs when known.",
-                "Current route table: Germany -> Netherlands = 1.55 EUR, Netherlands -> Netherlands = 1.70 EUR, fallback = 1.00 EUR.",
-            ]
+        notes.append(
+            f"Warm-start floor solve status: {warm_start_status}. Exact solve ran without warm-start hints."
         )
-        if warm_start_status == "optimal":
-            notes.append(
-                "Warm-start proxy solve proved optimal and seeded hints for main solve."
-            )
-        elif warm_start_status == "feasible":
-            notes.append(
-                "Warm-start proxy solve found feasible solution before proof of optimality and seeded hints for main solve."
-            )
-        else:
-            notes.append(
-                f"Warm-start proxy solve status: {warm_start_status}. Main solve ran without warm-start hints."
-            )
-        if route_book is None:
-            notes.append(
-                "Imported shipping data unavailable. Run `uv run cm-import-shipping` to enable route-method pricing."
-            )
+    notes.append(
+        "Exact shipping costs use selected item value and card-count letter thresholds (4/17/40 cards)."
+    )
+    if any(
+        not route_book.lookup_tiers(
+            seller_country=seller_map[seller.seller_id].country,
+            buyer_country=request.buyer_country,
+        ).letter_tiers
+        and not route_book.lookup_tiers(
+            seller_country=seller_map[seller.seller_id].country,
+            buyer_country=request.buyer_country,
+        ).parcel_tiers
+        for seller in chosen_sellers
+    ):
+        notes.append(
+            f"Missing imported route data gets penalty shipping cost of {_from_cents(MISSING_ROUTE_DATA_PENALTY_CENTS):.2f} {request.currency} per seller."
+        )
 
     if solution_status == "feasible":
         notes.append(
