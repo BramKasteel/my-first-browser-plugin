@@ -7,7 +7,6 @@ from functools import lru_cache
 from pathlib import Path
 
 SHIPPING_DATA_PATH = Path(__file__).with_name("data") / "shipping_costs.json"
-CARD_ORDER_MAX_WEIGHT_GRAMS = 1_000
 LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
 APPROX_GRAMS_PER_CARD = 2.5
 
@@ -97,19 +96,93 @@ class ShippingRouteBook:
         return self.country_ids.get(normalize_country_name(country))
 
     def lookup_tiers(
-        self, *, seller_country: str, buyer_country: str
+        self,
+        *,
+        seller_country: str,
+        buyer_country: str,
+        seller_value_upper_bound: int | None = None,
+        seller_card_upper_bound: int | None = None,
     ) -> ShippingRouteTiers:
-        return self.tiers_by_route.get(
+        route_tiers = self.tiers_by_route.get(
             (
                 normalize_country_name(seller_country),
                 normalize_country_name(buyer_country),
             ),
             ShippingRouteTiers(letter_tiers=(), parcel_tiers=()),
         )
+        if seller_value_upper_bound is None or seller_card_upper_bound is None:
+            return route_tiers
+        return prune_route_tiers_for_order_bounds(
+            route_tiers=route_tiers,
+            seller_value_upper_bound=seller_value_upper_bound,
+            seller_card_upper_bound=seller_card_upper_bound,
+        )
 
 
 def _shipping_tier_capacity(tier: ShippingTier) -> int:
     return max_cards_based_on_weight(tier.max_weight_grams)
+
+
+def _shipping_tier_sort_capacity(*, is_letter: bool, tier: ShippingTier) -> int:
+    card_limit = shipping_tier_card_limit(is_letter=is_letter, tier=tier)
+    return card_limit if card_limit is not None else 1_000_000_000
+
+
+def shipping_tier_card_limit(*, is_letter: bool, tier: ShippingTier) -> int | None:
+    if not is_letter:
+        return None
+    return _shipping_tier_capacity(tier)
+
+
+def _effective_tier_card_limit(
+    *,
+    is_letter: bool,
+    tier: ShippingTier,
+    seller_card_upper_bound: int,
+) -> int | None:
+    card_limit = shipping_tier_card_limit(is_letter=is_letter, tier=tier)
+    if card_limit is None:
+        return None
+    return min(card_limit, seller_card_upper_bound)
+
+
+def prune_route_tiers_for_order_bounds(
+    *,
+    route_tiers: ShippingRouteTiers,
+    seller_value_upper_bound: int,
+    seller_card_upper_bound: int,
+) -> ShippingRouteTiers:
+    tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
+        (False, tier) for tier in route_tiers.parcel_tiers
+    ]
+
+    pruned = _prune_dominated_candidates(
+        tier_candidates,
+        sort_key=lambda candidate: (
+            candidate[1].total_price_cents,
+            -min(candidate[1].max_value_cents, seller_value_upper_bound),
+            -(
+                _effective_tier_card_limit(
+                    is_letter=candidate[0],
+                    tier=candidate[1],
+                    seller_card_upper_bound=seller_card_upper_bound,
+                )
+                or seller_card_upper_bound
+            ),
+            candidate[0],
+        ),
+        dominates=lambda existing, candidate: _shipping_tier_dominates_for_order_bounds(
+            existing=existing,
+            candidate=candidate,
+            seller_value_upper_bound=seller_value_upper_bound,
+            seller_card_upper_bound=seller_card_upper_bound,
+        ),
+    )
+
+    return ShippingRouteTiers(
+        letter_tiers=tuple(tier for is_letter, tier in pruned if is_letter),
+        parcel_tiers=tuple(tier for is_letter, tier in pruned if not is_letter),
+    )
 
 
 def _prune_dominated_candidates(
@@ -146,9 +219,7 @@ def _normalize_route_tiers(
                 bool(method["isLetter"]),
                 ShippingTier(
                     max_value_cents=parse_eur_to_cents(method["maxValue"]),
-                    max_weight_grams=min(
-                        int(method["maxWeight"]), CARD_ORDER_MAX_WEIGHT_GRAMS
-                    ),
+                    max_weight_grams=int(method["maxWeight"]),
                     total_price_cents=parse_eur_to_cents(method["price"]),
                 ),
             )
@@ -159,7 +230,7 @@ def _normalize_route_tiers(
         sort_key=lambda candidate: (
             candidate[1].total_price_cents,
             -candidate[1].max_value_cents,
-            -_shipping_tier_capacity(candidate[1]),
+            -_shipping_tier_sort_capacity(is_letter=candidate[0], tier=candidate[1]),
             candidate[0],
         ),
         dominates=_shipping_tier_dominates,
@@ -180,13 +251,63 @@ def _shipping_tier_dominates(
     existing_is_letter, existing_tier = existing
     candidate_is_letter, candidate_tier = candidate
 
+    existing_card_limit = shipping_tier_card_limit(
+        is_letter=existing_is_letter,
+        tier=existing_tier,
+    )
+    candidate_card_limit = shipping_tier_card_limit(
+        is_letter=candidate_is_letter,
+        tier=candidate_tier,
+    )
+
+    capacity_dominates = True
+    if existing_card_limit is not None and candidate_card_limit is not None:
+        capacity_dominates = existing_card_limit >= candidate_card_limit
+
     return (
         not (existing_is_letter and not candidate_is_letter)
         and existing_tier.total_price_cents <= candidate_tier.total_price_cents
         and existing_tier.max_value_cents >= candidate_tier.max_value_cents
-        and _shipping_tier_capacity(existing_tier)
-        >= _shipping_tier_capacity(candidate_tier)
+        and capacity_dominates
     )
+
+
+def _shipping_tier_dominates_for_order_bounds(
+    *,
+    existing: tuple[bool, ShippingTier],
+    candidate: tuple[bool, ShippingTier],
+    seller_value_upper_bound: int,
+    seller_card_upper_bound: int,
+) -> bool:
+    existing_is_letter, existing_tier = existing
+    candidate_is_letter, candidate_tier = candidate
+
+    if existing_is_letter and not candidate_is_letter:
+        return False
+
+    if existing_tier.total_price_cents > candidate_tier.total_price_cents:
+        return False
+
+    if min(existing_tier.max_value_cents, seller_value_upper_bound) < min(
+        candidate_tier.max_value_cents,
+        seller_value_upper_bound,
+    ):
+        return False
+
+    existing_card_cap = _effective_tier_card_limit(
+        is_letter=existing_is_letter,
+        tier=existing_tier,
+        seller_card_upper_bound=seller_card_upper_bound,
+    )
+    candidate_card_cap = _effective_tier_card_limit(
+        is_letter=candidate_is_letter,
+        tier=candidate_tier,
+        seller_card_upper_bound=seller_card_upper_bound,
+    )
+    if existing_card_cap is not None and candidate_card_cap is not None:
+        return existing_card_cap >= candidate_card_cap
+
+    return True
 
 
 def _route_key(from_country: str, to_country: str) -> tuple[str, str]:

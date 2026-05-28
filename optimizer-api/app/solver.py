@@ -96,10 +96,14 @@ def _selection_shipping_cost_cents(
         total_cards = sum(quantity for _, quantity in selections)
 
         valid_tier_costs = []
-        for _, tier in tier_candidates:
+        for is_letter, tier in tier_candidates:
             if total_value_cents > tier.max_value_cents:
                 continue
-            if total_cards > shipping.max_cards_based_on_weight(tier.max_weight_grams):
+            card_limit = shipping.shipping_tier_card_limit(
+                is_letter=is_letter,
+                tier=tier,
+            )
+            if card_limit is not None and total_cards > card_limit:
                 continue
             valid_tier_costs.append(tier.total_price_cents)
 
@@ -270,6 +274,8 @@ def _solve_exact_shipping_order(
     seller_active_vars = {}
     seller_active_exprs = {}
     seller_tier_candidates = {}
+    seller_value_upper_bounds = {}
+    seller_card_upper_bounds = {}
 
     seller_offers = defaultdict(list)
     for offer in usable_offers:
@@ -280,10 +286,21 @@ def _solve_exact_shipping_order(
             name=f"qty_{offer.offer_id}",
         )
 
+    for seller_id, offers in seller_offers.items():
+        seller_value_upper_bounds[seller_id] = sum(
+            _to_cents(offer.unit_price) * _capped_offer_quantity(offer, item_map)
+            for offer in offers
+        )
+        seller_card_upper_bounds[seller_id] = sum(
+            _capped_offer_quantity(offer, item_map) for offer in offers
+        )
+
     for seller_id in seller_offers:
         route_tiers = route_book.lookup_tiers(
             seller_country=seller_map[seller_id].country,
             buyer_country=request.buyer_country,
+            seller_value_upper_bound=seller_value_upper_bounds[seller_id],
+            seller_card_upper_bound=seller_card_upper_bounds[seller_id],
         )
 
         tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
@@ -313,17 +330,6 @@ def _solve_exact_shipping_order(
     ]
 
     seller_shipping_tier_choice_vars = {}
-    seller_value_upper_bounds = {}
-    seller_card_upper_bounds = {}
-
-    for seller_id, offers in seller_offers.items():
-        seller_value_upper_bounds[seller_id] = sum(
-            _to_cents(offer.unit_price) * _capped_offer_quantity(offer, item_map)
-            for offer in offers
-        )
-        seller_card_upper_bounds[seller_id] = sum(
-            _capped_offer_quantity(offer, item_map) for offer in offers
-        )
 
     for seller_id, offers in seller_offers.items():
         active = seller_active_exprs.get(seller_id)
@@ -337,24 +343,29 @@ def _solve_exact_shipping_order(
             total_card_expr = sum(offer_vars[offer.offer_id] for offer in offers)
 
             if len(tier_candidates) == 1:
-                _, tier = tier_candidates[0]
+                is_letter, tier = tier_candidates[0]
                 model.Add(
                     total_value_expr
                     <= tier.max_value_cents
                     + seller_value_upper_bounds[seller_id] * (1 - active)
                 )
-                model.Add(
-                    total_card_expr
-                    <= shipping.max_cards_based_on_weight(tier.max_weight_grams)
-                    + seller_card_upper_bounds[seller_id] * (1 - active)
+                card_limit = shipping.shipping_tier_card_limit(
+                    is_letter=is_letter,
+                    tier=tier,
                 )
+                if card_limit is not None:
+                    model.Add(
+                        total_card_expr
+                        <= card_limit
+                        + seller_card_upper_bounds[seller_id] * (1 - active)
+                    )
 
                 objective_terms.append(tier.total_price_cents * active)
                 continue
 
             seller_shipping_tier_choice_vars[seller_id] = []
 
-            for tier_index, (_, tier) in enumerate(tier_candidates):
+            for tier_index, (is_letter, tier) in enumerate(tier_candidates):
                 tier_var = model.NewBoolVar(f"ship_{seller_id}_{tier_index}")
                 seller_shipping_tier_choice_vars[seller_id].append((tier, tier_var))
                 model.Add(
@@ -362,11 +373,16 @@ def _solve_exact_shipping_order(
                     <= tier.max_value_cents
                     + seller_value_upper_bounds[seller_id] * (1 - tier_var)
                 )
-                model.Add(
-                    total_card_expr
-                    <= shipping.max_cards_based_on_weight(tier.max_weight_grams)
-                    + seller_card_upper_bounds[seller_id] * (1 - tier_var)
+                card_limit = shipping.shipping_tier_card_limit(
+                    is_letter=is_letter,
+                    tier=tier,
                 )
+                if card_limit is not None:
+                    model.Add(
+                        total_card_expr
+                        <= card_limit
+                        + seller_card_upper_bounds[seller_id] * (1 - tier_var)
+                    )
 
             active = sum(
                 tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]

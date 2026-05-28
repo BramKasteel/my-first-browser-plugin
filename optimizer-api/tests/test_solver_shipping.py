@@ -227,6 +227,28 @@ def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
     assert response.totals.shipping_total == 2.0
 
 
+def test_optimize_ignores_parcel_weight_limit_for_simple_card_orders(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(
+                letter=[],
+                parcel=[(799, 50000, 20)],
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    response = optimize_order(_request(unit_price=1.0, quantity=10))
+
+    assert response.status == "optimal"
+    assert response.totals.shipping_total == 7.99
+
+
 def test_optimize_uses_exact_shipping_objective_for_final_choice(
     monkeypatch,
 ) -> None:

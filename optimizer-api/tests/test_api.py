@@ -30,16 +30,16 @@ EXPECTED_FIXTURE_RESULTS = {
 
 EXPECTED_FIXTURE_MODEL_SIZES = {
     "big_list": {
-        "warm_start": {"variables": 17675, "constraints": 5131},
-        "exact": {"variables": 20211, "constraints": 15261},
+        "warm_start": {"variables": 17649, "constraints": 5105},
+        "exact": {"variables": 20685, "constraints": 13595},
     },
     "ob_nixilis_improvements": {
         "warm_start": {"variables": 3982, "constraints": 1893},
-        "exact": {"variables": 5218, "constraints": 6241},
+        "exact": {"variables": 5001, "constraints": 4867},
     },
     "small_wantslist": {
         "warm_start": {"variables": 644, "constraints": 598},
-        "exact": {"variables": 880, "constraints": 1666},
+        "exact": {"variables": 943, "constraints": 1493},
     },
 }
 
@@ -193,11 +193,11 @@ def test_real_request_fixture_warm_start_model_size_ceiling(fixture_path: Path) 
     actual = model_sizes_for_request(request)["warm_start"]
     expected = EXPECTED_FIXTURE_MODEL_SIZES[fixture_path.stem]["warm_start"]
 
-    assert actual["variables"] >= expected["variables"], (
+    assert actual["variables"] <= expected["variables"], (
         f"Warm-start variables grew for {fixture_path.stem}: "
         f"{actual['variables']} > {expected['variables']}"
     )
-    assert actual["constraints"] >= expected["constraints"], (
+    assert actual["constraints"] <= expected["constraints"], (
         f"Warm-start constraints grew for {fixture_path.stem}: "
         f"{actual['constraints']} > {expected['constraints']}"
     )
@@ -214,11 +214,11 @@ def test_real_request_fixture_exact_model_size_ceiling(fixture_path: Path) -> No
     actual = model_sizes_for_request(request)["exact"]
     expected = EXPECTED_FIXTURE_MODEL_SIZES[fixture_path.stem]["exact"]
 
-    assert actual["variables"] >= expected["variables"], (
+    assert actual["variables"] <= expected["variables"], (
         f"Exact variables grew for {fixture_path.stem}: "
         f"{actual['variables']} > {expected['variables']}"
     )
-    assert actual["constraints"] >= expected["constraints"], (
+    assert actual["constraints"] <= expected["constraints"], (
         f"Exact constraints grew for {fixture_path.stem}: "
         f"{actual['constraints']} > {expected['constraints']}"
     )

@@ -8,6 +8,7 @@ from app.shipping import (
     _normalize_route_tiers,
     max_cards_based_on_weight,
     parse_eur_to_cents,
+    prune_route_tiers_for_order_bounds,
 )
 
 
@@ -114,6 +115,132 @@ def test_load_shipping_route_book_normalizes_countries(tmp_path) -> None:
     assert len(tiers.letter_tiers) == 1
     assert tiers.letter_tiers[0].total_price_cents == 155
     assert tiers.letter_tiers[0].max_value_cents == 2500
+
+
+def test_lookup_tiers_can_apply_seller_specific_pruning(tmp_path) -> None:
+    fixture_path = tmp_path / "shipping_costs.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "countries": [
+                    {"name": "Germany", "externalId": 7},
+                    {"name": "Netherlands", "externalId": 23},
+                ],
+                "routes": [
+                    {
+                        "from_country": "Germany",
+                        "to_country": "Netherlands",
+                        "methods": [
+                            {
+                                "name": "Letter 20g",
+                                "isTracked": False,
+                                "maxValue": "25,00 €",
+                                "maxWeight": 20,
+                                "stampPrice": "1,25 €",
+                                "price": "1,55 €",
+                                "isLetter": True,
+                                "isVirtual": False,
+                            },
+                            {
+                                "name": "Letter 50g",
+                                "isTracked": False,
+                                "maxValue": "25,00 €",
+                                "maxWeight": 50,
+                                "stampPrice": "1,70 €",
+                                "price": "2,00 €",
+                                "isLetter": True,
+                                "isVirtual": False,
+                            },
+                            {
+                                "name": "Parcel",
+                                "isTracked": False,
+                                "maxValue": "500,00 €",
+                                "maxWeight": 5000,
+                                "stampPrice": "6,99 €",
+                                "price": "7,99 €",
+                                "isLetter": False,
+                                "isVirtual": False,
+                            },
+                            {
+                                "name": "Registered Parcel",
+                                "isTracked": True,
+                                "maxValue": "500,00 €",
+                                "maxWeight": 5000,
+                                "stampPrice": "14,49 €",
+                                "price": "15,49 €",
+                                "isLetter": False,
+                                "isVirtual": False,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    route_book = _load_shipping_route_book(fixture_path)
+
+    tiers = route_book.lookup_tiers(
+        seller_country="Germany",
+        buyer_country="Netherlands",
+        seller_value_upper_bound=2500,
+        seller_card_upper_bound=4,
+    )
+
+    assert tiers.letter_tiers == (
+        ShippingTier(
+            total_price_cents=155,
+            max_value_cents=2500,
+            max_weight_grams=20,
+        ),
+    )
+    assert tiers.parcel_tiers == (
+        ShippingTier(
+            total_price_cents=799,
+            max_value_cents=50000,
+            max_weight_grams=5000,
+        ),
+    )
+
+
+def test_prune_route_tiers_for_order_bounds_drops_redundant_letters() -> None:
+    pruned = prune_route_tiers_for_order_bounds(
+        route_tiers=_normalize_route_tiers(
+            [
+                {
+                    "name": "Letter 20g",
+                    "isTracked": False,
+                    "maxValue": "25,00 €",
+                    "maxWeight": 20,
+                    "stampPrice": "1,25 €",
+                    "price": "1,55 €",
+                    "isLetter": True,
+                    "isVirtual": False,
+                },
+                {
+                    "name": "Letter 50g",
+                    "isTracked": False,
+                    "maxValue": "25,00 €",
+                    "maxWeight": 50,
+                    "stampPrice": "1,70 €",
+                    "price": "2,00 €",
+                    "isLetter": True,
+                    "isVirtual": False,
+                },
+            ]
+        ),
+        seller_value_upper_bound=2500,
+        seller_card_upper_bound=4,
+    )
+
+    assert pruned.letter_tiers == (
+        ShippingTier(
+            total_price_cents=155,
+            max_value_cents=2500,
+            max_weight_grams=20,
+        ),
+    )
 
 
 def test_load_shipping_route_book_skips_estimation_methods(tmp_path) -> None:
@@ -260,8 +387,8 @@ def test_load_shipping_route_book_prunes_insured_express_and_heavy_duplicates(
         (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
         for tier in tiers.parcel_tiers
     ] == [
-        (799, 2500, 1000),
-        (1549, 50000, 1000),
+        (799, 2500, 2000),
+        (1549, 50000, 2000),
     ]
 
 
@@ -355,9 +482,44 @@ def test_load_shipping_route_book_keeps_letters_and_non_dominated_parcels(
         (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
         for tier in tiers.parcel_tiers
     ] == [
-        (799, 2500, 1000),
-        (1549, 50000, 1000),
+        (799, 2500, 2000),
+        (1549, 50000, 2000),
     ]
+
+
+def test_normalize_route_tiers_keeps_smallest_non_dominated_parcel_weight() -> None:
+    tiers = _normalize_route_tiers(
+        [
+            {
+                "name": "Parcel Small",
+                "isTracked": False,
+                "maxValue": "25,00 €",
+                "maxWeight": 2000,
+                "stampPrice": "6,99 €",
+                "price": "7,99 €",
+                "isLetter": False,
+                "isVirtual": False,
+            },
+            {
+                "name": "Parcel Heavy Duplicate",
+                "isTracked": False,
+                "maxValue": "25,00 €",
+                "maxWeight": 5000,
+                "stampPrice": "8,99 €",
+                "price": "7,99 €",
+                "isLetter": False,
+                "isVirtual": False,
+            },
+        ],
+    )
+
+    assert tiers.parcel_tiers == (
+        ShippingTier(
+            total_price_cents=799,
+            max_value_cents=2500,
+            max_weight_grams=2000,
+        ),
+    )
 
 
 def test_load_shipping_route_book_prunes_tracked_letter_duplicate_when_no_better(
