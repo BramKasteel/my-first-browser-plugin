@@ -18,8 +18,8 @@ from app.solver import (
     MISSING_ROUTE_DATA_PENALTY_CENTS,
     WARM_START_MAX_TIME_SECONDS,
     _build_route_min_shipping_warm_start,
+    _prune_cheapest_single_item_sellers,
     _prune_dominated_offers_per_seller,
-    _prune_dominated_single_item_sellers,
     optimize_order,
 )
 from ortools.sat.python import cp_model
@@ -465,44 +465,6 @@ def test_prune_dominated_offers_drops_more_expensive_duplicate() -> None:
     assert [offer.offer_id for offer in pruned] == ["offer-1"]
 
 
-def test_prune_dominated_offers_keeps_cheapest_n_per_seller_item() -> None:
-    offers = [
-        Offer(
-            offer_id="offer-1",
-            item_id="item-1",
-            seller_id="seller-1",
-            unit_price=1.0,
-            available_quantity=2,
-            condition="Near Mint",
-            language="English",
-        ),
-        Offer(
-            offer_id="offer-2",
-            item_id="item-1",
-            seller_id="seller-1",
-            unit_price=0.9,
-            available_quantity=2,
-            condition="Excellent",
-            language="English",
-        ),
-        Offer(
-            offer_id="offer-3",
-            item_id="item-1",
-            seller_id="seller-1",
-            unit_price=0.8,
-            available_quantity=2,
-            condition="Near Mint",
-            language="German",
-        ),
-    ]
-
-    item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=2)}
-
-    pruned = _prune_dominated_offers_per_seller(offers, item_map)
-
-    assert [offer.offer_id for offer in pruned] == ["offer-2", "offer-3"]
-
-
 def test_prune_dominated_offers_keeps_n_cheapest_even_when_input_order_is_scrambled() -> (
     None
 ):
@@ -596,53 +558,6 @@ def test_prune_dominated_offers_keeps_all_options_when_wanted_quantity_exceeds_b
     assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2"]
 
 
-def test_prune_single_item_sellers_drops_when_alternative_standalone_total_is_no_worse(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr("app.solver.shipping.load_shipping_route_book", lambda: None)
-
-    sellers = {
-        "seller-1": Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
-        "seller-2": Seller(seller_id="seller-2", name="Seller 2", country="Germany"),
-    }
-    item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=1)}
-    offers = [
-        Offer(
-            offer_id="offer-1",
-            item_id="item-1",
-            seller_id="seller-1",
-            unit_price=0.5,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-2",
-            item_id="item-1",
-            seller_id="seller-2",
-            unit_price=0.5,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-3",
-            item_id="item-2",
-            seller_id="seller-2",
-            unit_price=0.2,
-            available_quantity=1,
-        ),
-    ]
-
-    pruned = _prune_dominated_single_item_sellers(
-        offers=offers,
-        item_map=item_map
-        | {"item-2": WantedItem(item_id="item-2", name="Other", quantity=1)},
-        seller_map=sellers,
-        buyer_country="Netherlands",
-        route_book=None,
-        use_explicit_weights=False,
-    )
-
-    assert [offer.offer_id for offer in pruned] == ["offer-2", "offer-3"]
-
-
 def test_prune_single_item_sellers_keeps_when_higher_shipping_would_outweigh_item_replacement(
     monkeypatch,
 ) -> None:
@@ -689,7 +604,7 @@ def test_prune_single_item_sellers_keeps_when_higher_shipping_would_outweigh_ite
         ),
     ]
 
-    pruned = _prune_dominated_single_item_sellers(
+    pruned = _prune_cheapest_single_item_sellers(
         offers=offers,
         item_map=item_map
         | {"item-2": WantedItem(item_id="item-2", name="Other", quantity=1)},
@@ -751,158 +666,13 @@ def test_prune_single_item_sellers_keeps_when_no_single_alternative_covers_quant
         ),
     ]
 
-    pruned = _prune_dominated_single_item_sellers(
+    pruned = _prune_cheapest_single_item_sellers(
         offers=offers,
         item_map=item_map
         | {
             "item-2": WantedItem(item_id="item-2", name="Other 2", quantity=1),
             "item-3": WantedItem(item_id="item-3", name="Other 3", quantity=1),
         },
-        seller_map=sellers,
-        buyer_country="Netherlands",
-        route_book=None,
-        use_explicit_weights=False,
-    )
-
-    assert [offer.offer_id for offer in pruned] == [
-        "offer-1",
-        "offer-2",
-        "offer-3",
-        "offer-4",
-        "offer-5",
-    ]
-
-
-def test_prune_single_item_sellers_drops_two_item_seller_when_same_country_alternative_dominates(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr("app.solver.shipping.load_shipping_route_book", lambda: None)
-
-    sellers = {
-        "seller-1": Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
-        "seller-2": Seller(seller_id="seller-2", name="Seller 2", country="Germany"),
-    }
-    item_map = {
-        "item-1": WantedItem(item_id="item-1", name="Card 1", quantity=2),
-        "item-2": WantedItem(item_id="item-2", name="Card 2", quantity=1),
-        "item-3": WantedItem(item_id="item-3", name="Extra", quantity=1),
-    }
-    offers = [
-        Offer(
-            offer_id="offer-1",
-            item_id="item-1",
-            seller_id="seller-1",
-            unit_price=0.5,
-            available_quantity=2,
-        ),
-        Offer(
-            offer_id="offer-2",
-            item_id="item-2",
-            seller_id="seller-1",
-            unit_price=0.4,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-3",
-            item_id="item-1",
-            seller_id="seller-2",
-            unit_price=0.4,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-4",
-            item_id="item-1",
-            seller_id="seller-2",
-            unit_price=0.5,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-5",
-            item_id="item-2",
-            seller_id="seller-2",
-            unit_price=0.4,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-6",
-            item_id="item-3",
-            seller_id="seller-2",
-            unit_price=0.2,
-            available_quantity=1,
-        ),
-    ]
-
-    pruned = _prune_dominated_single_item_sellers(
-        offers=offers,
-        item_map=item_map,
-        seller_map=sellers,
-        buyer_country="Netherlands",
-        route_book=None,
-        use_explicit_weights=False,
-    )
-
-    assert [offer.offer_id for offer in pruned] == [
-        "offer-3",
-        "offer-4",
-        "offer-5",
-        "offer-6",
-    ]
-
-
-def test_prune_single_item_sellers_keeps_two_item_seller_when_alternative_frontier_turns_worse(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr("app.solver.shipping.load_shipping_route_book", lambda: None)
-
-    sellers = {
-        "seller-1": Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
-        "seller-2": Seller(seller_id="seller-2", name="Seller 2", country="Germany"),
-    }
-    item_map = {
-        "item-1": WantedItem(item_id="item-1", name="Card 1", quantity=2),
-        "item-2": WantedItem(item_id="item-2", name="Card 2", quantity=1),
-    }
-    offers = [
-        Offer(
-            offer_id="offer-1",
-            item_id="item-1",
-            seller_id="seller-1",
-            unit_price=0.5,
-            available_quantity=2,
-        ),
-        Offer(
-            offer_id="offer-2",
-            item_id="item-2",
-            seller_id="seller-1",
-            unit_price=0.4,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-3",
-            item_id="item-1",
-            seller_id="seller-2",
-            unit_price=0.4,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-4",
-            item_id="item-1",
-            seller_id="seller-2",
-            unit_price=0.7,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-5",
-            item_id="item-2",
-            seller_id="seller-2",
-            unit_price=0.4,
-            available_quantity=1,
-        ),
-    ]
-
-    pruned = _prune_dominated_single_item_sellers(
-        offers=offers,
-        item_map=item_map,
         seller_map=sellers,
         buyer_country="Netherlands",
         route_book=None,
