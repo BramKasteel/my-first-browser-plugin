@@ -165,9 +165,7 @@ def _normalize_route_tiers(
         dominates=_shipping_tier_dominates,
     )
     letter_tiers = tuple(tier for is_letter, tier in pruned_candidates if is_letter)
-    parcel_tiers = tuple(
-        tier for is_letter, tier in pruned_candidates if not is_letter
-    )[:1]
+    parcel_tiers = tuple(tier for is_letter, tier in pruned_candidates if not is_letter)
 
     return ShippingRouteTiers(
         letter_tiers=letter_tiers,

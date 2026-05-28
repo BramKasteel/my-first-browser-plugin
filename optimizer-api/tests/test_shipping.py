@@ -261,10 +261,11 @@ def test_load_shipping_route_book_prunes_insured_express_and_heavy_duplicates(
         for tier in tiers.parcel_tiers
     ] == [
         (799, 2500, 1000),
+        (1549, 50000, 1000),
     ]
 
 
-def test_load_shipping_route_book_keeps_letters_and_one_cheapest_parcel(
+def test_load_shipping_route_book_keeps_letters_and_non_dominated_parcels(
     tmp_path,
 ) -> None:
     fixture_path = tmp_path / "shipping_costs.json"
@@ -311,6 +312,16 @@ def test_load_shipping_route_book_keeps_letters_and_one_cheapest_parcel(
                                 "isVirtual": False,
                             },
                             {
+                                "name": "Parcel Dominated",
+                                "isTracked": False,
+                                "maxValue": "25,00 €",
+                                "maxWeight": 1000,
+                                "stampPrice": "8,49 €",
+                                "price": "8,99 €",
+                                "isLetter": False,
+                                "isVirtual": False,
+                            },
+                            {
                                 "name": "Parcel Expensive",
                                 "isTracked": True,
                                 "maxValue": "500,00 €",
@@ -345,6 +356,7 @@ def test_load_shipping_route_book_keeps_letters_and_one_cheapest_parcel(
         for tier in tiers.parcel_tiers
     ] == [
         (799, 2500, 1000),
+        (1549, 50000, 1000),
     ]
 
 
