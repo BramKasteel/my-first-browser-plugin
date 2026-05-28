@@ -8,7 +8,6 @@ from app.models import (
     WantedItem,
 )
 from app.shipping import (
-    ShippingMethod,
     ShippingRouteBook,
     ShippingRouteTiers,
     ShippingTier,
@@ -77,28 +76,6 @@ def test_optimize_uses_imported_letter_shipping_when_weight_and_value_fit(
 ) -> None:
     route_book = ShippingRouteBook(
         country_ids={"germany": 7, "netherlands": 23},
-        methods_by_route={
-            ("germany", "netherlands"): (
-                ShippingMethod(
-                    name="Letter",
-                    is_tracked=False,
-                    max_value_cents=2500,
-                    max_weight_grams=20,
-                    stamp_price_cents=125,
-                    total_price_cents=155,
-                    is_letter=True,
-                ),
-                ShippingMethod(
-                    name="Registered Parcel",
-                    is_tracked=True,
-                    max_value_cents=50000,
-                    max_weight_grams=5000,
-                    stamp_price_cents=749,
-                    total_price_cents=799,
-                    is_letter=False,
-                ),
-            )
-        },
         tiers_by_route={
             ("germany", "netherlands"): _tiers(
                 letter=[(155, 2500, 20)],
@@ -121,28 +98,6 @@ def test_optimize_uses_more_expensive_method_when_value_exceeds_letter_limit(
 ) -> None:
     route_book = ShippingRouteBook(
         country_ids={"germany": 7, "netherlands": 23},
-        methods_by_route={
-            ("germany", "netherlands"): (
-                ShippingMethod(
-                    name="Letter",
-                    is_tracked=False,
-                    max_value_cents=2500,
-                    max_weight_grams=20,
-                    stamp_price_cents=125,
-                    total_price_cents=155,
-                    is_letter=True,
-                ),
-                ShippingMethod(
-                    name="Registered Parcel",
-                    is_tracked=True,
-                    max_value_cents=50000,
-                    max_weight_grams=5000,
-                    stamp_price_cents=749,
-                    total_price_cents=799,
-                    is_letter=False,
-                ),
-            )
-        },
         tiers_by_route={
             ("germany", "netherlands"): _tiers(
                 letter=[(155, 2500, 20)],
@@ -163,7 +118,6 @@ def test_optimize_uses_more_expensive_method_when_value_exceeds_letter_limit(
 def test_optimize_uses_penalty_shipping_for_missing_imported_route(monkeypatch) -> None:
     route_book = ShippingRouteBook(
         country_ids={"germany": 7, "netherlands": 23},
-        methods_by_route={},
         tiers_by_route={},
     )
     monkeypatch.setattr(
@@ -192,21 +146,14 @@ def test_optimize_uses_penalty_shipping_for_missing_imported_route(monkeypatch) 
     assert response.totals.shipping_total == MISSING_ROUTE_DATA_PENALTY_CENTS / 100
 
 
-def test_optimize_uses_legacy_shipping_when_imported_data_unavailable(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr("app.solver.shipping.load_shipping_route_book", lambda: None)
-
-    response = optimize_order(_request(unit_price=1.0, quantity=1))
-
-    assert response.status == "optimal"
-    assert response.totals.shipping_total == 1.55
-
-
 def test_warm_start_keeps_feasible_solution(monkeypatch) -> None:
     request = _request(unit_price=1.0, quantity=1)
     seller_map = {seller.seller_id: seller for seller in request.sellers}
     item_map = {item.item_id: item for item in request.items}
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={},
+    )
 
     original_solve = cp_model.CpSolver.Solve
 
@@ -223,7 +170,7 @@ def test_warm_start_keeps_feasible_solution(monkeypatch) -> None:
             usable_offers=request.offers,
             item_map=item_map,
             seller_map=seller_map,
-            route_book=None,
+            route_book=route_book,
         )
     )
 
@@ -233,7 +180,13 @@ def test_warm_start_keeps_feasible_solution(monkeypatch) -> None:
 
 
 def test_optimize_uses_configured_improvement_budget(monkeypatch) -> None:
-    monkeypatch.setattr("app.solver.shipping.load_shipping_route_book", lambda: None)
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={},
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
 
     original_solve = cp_model.CpSolver.Solve
     seen_time_limits: list[float] = []
@@ -257,28 +210,6 @@ def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
 ) -> None:
     route_book = ShippingRouteBook(
         country_ids={"germany": 7, "netherlands": 23},
-        methods_by_route={
-            ("germany", "netherlands"): (
-                ShippingMethod(
-                    name="Letter 20g",
-                    is_tracked=False,
-                    max_value_cents=2500,
-                    max_weight_grams=20,
-                    stamp_price_cents=125,
-                    total_price_cents=155,
-                    is_letter=True,
-                ),
-                ShippingMethod(
-                    name="Letter 50g",
-                    is_tracked=False,
-                    max_value_cents=2500,
-                    max_weight_grams=50,
-                    stamp_price_cents=170,
-                    total_price_cents=200,
-                    is_letter=True,
-                ),
-            )
-        },
         tiers_by_route={
             ("germany", "netherlands"): _tiers(
                 letter=[(155, 2500, 20), (200, 2500, 50)],
@@ -301,7 +232,6 @@ def test_optimize_uses_exact_shipping_objective_for_final_choice(
 ) -> None:
     route_book = ShippingRouteBook(
         country_ids={"germany": 7, "netherlands": 23},
-        methods_by_route={},
         tiers_by_route={
             ("germany", "netherlands"): _tiers(
                 letter=[(100, 1000, 20)],
@@ -508,7 +438,6 @@ def test_prune_single_item_sellers_keeps_when_higher_shipping_would_outweigh_ite
 ) -> None:
     route_book = ShippingRouteBook(
         country_ids={"germany": 7, "netherlands": 23},
-        methods_by_route={},
         tiers_by_route={
             ("germany", "netherlands"): _tiers(letter=[(155, 2500, 20)], parcel=[]),
             ("netherlands", "netherlands"): _tiers(letter=[(170, 2500, 20)], parcel=[]),
@@ -564,7 +493,13 @@ def test_prune_single_item_sellers_keeps_when_higher_shipping_would_outweigh_ite
 def test_prune_single_item_sellers_keeps_when_no_single_alternative_covers_quantity(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("app.solver.shipping.load_shipping_route_book", lambda: None)
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={},
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
 
     sellers = {
         "seller-1": Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
@@ -619,7 +554,7 @@ def test_prune_single_item_sellers_keeps_when_no_single_alternative_covers_quant
         },
         seller_map=sellers,
         buyer_country="Netherlands",
-        route_book=None,
+        route_book=route_book,
     )
 
     assert [offer.offer_id for offer in pruned] == [
