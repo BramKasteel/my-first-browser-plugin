@@ -1,55 +1,91 @@
-## Plan: Cardmarket Wants Scraper MVP
+## Plan: Solver Convergence Options
 
-Build the extension in thin vertical slices instead of broad feature buckets: first bootstrap a minimal popup-only Chrome extension, then prove page access on a Cardmarket want-list page, then extract one normalized want-list item, then fetch seller rows for one item with the example extension's pacing/retry patterns, and only then scale to all items with batching, progress reporting, and abort support. This reduces risk around Cloudflare/rate limiting and makes each milestone independently testable.
+Analyze current CP-SAT model in /home/bram/repos/my-first-browser-plugin/optimizer-api/app/solver.py, identify true convergence and build-time bottlenecks from current fixtures, and prioritize solver changes that improve solution quality and wall time without widening scope beyond optimizer-api/. Recommended path: first tighten current formulation and Python build path, then add staged seller shortlisting, then only if needed try structural decomposition.
+
+**Current findings**
+- Exact model growth is driven mainly by per-seller shipping tier choice variables and their bound constraints. Fixture ceilings in /home/bram/repos/my-first-browser-plugin/optimizer-api/tests/test_api.py show warm-start at 17649 vars / 5105 constraints and exact at 20685 vars / 13595 constraints for big_list.
+- Python/model-build overhead is also likely material: solver.py repeatedly rescans offer lists per item and per seller, recomputes cents and capped quantities, and rebuilds maps during warm start, exact solve, and response assembly.
+- Warm start exists but is relatively weak as search guidance. It optimizes item cost plus per-seller minimum shipping floor, then tier hints are inferred by matching exact shipping price; if no tier price matches, all hints for that seller go to zero.
+- Current exact tier logic appears to rely on objective discouragement rather than an explicit per-seller at-most-one-tier constraint, which may weaken propagation.
+- big_list appears to have wanted quantity 1 throughout or almost throughout, which means same-seller same-item duplicate offers are likely already mostly eliminated after existing dominated-offer pruning. This reduces priority of seller-item compression unless measured otherwise.
 
 **Steps**
-1. Phase 1: Extension bootstrap and skeleton UI. Create a fresh Manifest v3 extension at the repository root using the example extension as structural reference, but keep the first version minimal: manifest, popup HTML, popup JS, icons/placeholders, and host permissions for Cardmarket. The popup should expose only the controls needed for the next slice: status area, current-page detection, and one primary action button. This phase is independent and should not copy the example's large multi-tab surface wholesale.
-2. Phase 2: Want-list page detection and extraction probe. Reuse the example's `chrome.scripting.executeScript()` pattern from `/home/bram/repos/my-first-browser-plugin/example/popup.js` to inject a self-contained scraper into the active Cardmarket tab. Validate that the current page is a supported Cardmarket want-list page, then extract a minimal normalized data shape from the DOM for the visible want list. The first success criterion is not completeness; it is stable page detection plus reproducible extraction of key identifiers for at least one wanted item.
-3. Phase 3: Normalized want-list model and local preview. Expand the page scraper to return all wanted items from the active want list in a normalized structure suitable for later seller scraping and optimizer submission. Include only fields that are stable and needed downstream, such as want-list identifier, product/article identifiers if available, product name, expansion, quantity, language, condition, foil/reverse-holo style flags, and any user price constraints. Show the result in the popup as counts and a compact preview before any seller requests are made. This depends on step 2.
-4. Phase 4: Single-item seller scraping vertical slice. Pick one normalized want-list item and fetch its seller/market data using a self-contained injected fetch routine modeled on the example's pacing and retry handling in `/home/bram/repos/my-first-browser-plugin/example/popup.js`, especially the 429/Cloudflare backoff patterns and progress reporting conventions. The goal is to prove the end-to-end path for one item only: source item -> market request(s) -> parsed seller rows -> popup preview. This depends on step 3.
-5. Phase 5: Seller row normalization and result schema. Define the result structure for seller rows before scaling up. Capture seller name, seller URL or id if discoverable, item price, quantity, language/condition variant details, country if available, and the source want-list item reference. Separate raw scrape payloads from normalized records so debugging remains possible when Cardmarket markup changes. This phase can be implemented together with step 4 but should be treated as a distinct design checkpoint because it determines the API payload later.
-6. Phase 6: Multi-item scraping orchestration. Generalize the single-item workflow into a queue over all want-list items with explicit pacing, retry, abort, partial progress, and resumable UI state. Reuse the example's ideas for delay controls, long-running progress updates, and defensive handling of empty/blocked responses. Start with sequential processing; do not introduce concurrency in the first implementation because Cardmarket rate limits are the controlling constraint. This depends on steps 4 and 5.
-7. Phase 7: Export and API handoff preparation. Once scraping is stable, add a serialization boundary for the optimizer API: either JSON preview/download or a dedicated request payload builder in the popup. Do not integrate the live Python API yet, but finalize a payload contract based on the normalized want-list items plus normalized seller rows. This depends on step 6.
-8. Phase 8: Hardening and operator UX. Add practical controls needed for real use: configurable request delay, clear unsupported-page messaging, structured error display, last-run summary, and an abort/reset path. Consider a detached-window mode only if the popup becomes cramped; it is not required for the MVP. This is parallel with late step 6 and before live API integration.
-9. Later phase deliberately excluded from the current MVP: shipping-cost discovery/modeling and total-order optimization. Treat this as a separate project phase after scraper reliability is proven, because the example extension does not solve shipping extraction and Cardmarket likely calculates shipping deeper in checkout/cart flows.
+1. Instrument current solver split into prune time, model-build time, solve time, and response assembly time using optimize_order in /home/bram/repos/my-first-browser-plugin/optimizer-api/app/solver.py. This establishes whether current pain is search, Python overhead, or both.
+2. Tighten current formulation with safe low-risk changes: explicit tier exclusivity, capped exact quantity domains, stronger tier hints based on feasibility rather than price equality, and cached per-offer cents/capped quantities. These changes preserve current semantics and should be cheap to validate.
+3. Remove avoidable Python overhead by pre-indexing offers once into offers_by_item, offers_by_seller, and optionally offers_by_seller_item. Replace repeated full-list scans in warm-start build, exact model build, and result assembly.
+4. Measure impact on model size, build time, first feasible time, and final objective for big_list, ob_nixilis_improvements, and small_wantslist. If this materially improves runtime, stop there.
+5. If exact solve still struggles, add staged seller shortlisting / iterative deepening. First solve on warm-start sellers plus top-k alternatives per item, then expand neighborhood only if result quality is weak. This matches user preference for strong heuristics that beat Cardmarket without one-shot irreversible pruning.
+6. If seller shortlisting works but loses quality on some fixtures, evolve it into expanding neighborhoods or LNS-style repair rather than jumping straight to full decomposition.
+7. Only after the above, evaluate structural changes such as tier shortlisting, seller-item compression, two-stage item-vs-shipping repair, or master/subproblem decomposition.
+
+**Ranked options**
+1. Add explicit `sum(tier_vars) <= 1` for each seller with multiple tier choices. Cheap, safe, and likely improves propagation and branching.
+2. Cap exact `qty` variable upper bounds with `_capped_offer_quantity(...)` instead of raw `available_quantity`. Same feasible set, smaller domains.
+3. Pre-index offers and stop rescanning full offer list for each item and seller in /home/bram/repos/my-first-browser-plugin/optimizer-api/app/solver.py. Targets user suspicion that build/preprocessing is major pain.
+4. Improve tier hints: for each warm-selected seller, compute warm total value and card count and hint cheapest feasible tier, not only exact shipping-price match. Stronger incumbent guidance.
+5. Cache `_to_cents(offer.unit_price)` and capped quantities once per offer. Minor code change, likely meaningful on big_list.
+6. Add timing instrumentation and maybe solver log hooks so future work can distinguish build slowdown from CP-SAT search slowdown.
+7. Introduce staged seller shortlist: warm-start sellers plus top-k cheapest alternatives per item, expanding only when needed. Highest heuristic upside without permanent pruning.
+8. Extend pruning ideas from single-item sellers to small sellers with 2-3 wanted items, but only inside staged search. Avoid one-shot deletion of globally optimal combinations.
+9. Keep only 1-2 tier candidates per seller when safe after order-bound pruning, e.g. cheapest tier plus cheapest tier that materially expands value/card capacity. Could cut exact constraints a lot if many sellers still have multiple tiers.
+10. Seed solver with a greedy incumbent outside CP-SAT: cheapest per item, then merge onto overlapping sellers when shipping improves. Better anytime behavior than floor-only warm start.
+11. Skip warm-start on instances where it adds overhead but little guidance. Requires measurement first.
+12. Strengthen lower bounds in warm-start objective using more informative shipping floors than pure minimum-shipping cost.
+13. Apply LNS-style repair around incumbent neighborhoods if exact solve improves slowly after finding a feasible solution.
+14. Consider seller-item compression only if post-prune analysis shows many same-seller same-item duplicate buckets still survive. Current expectation is low priority for big_list because wanted quantities are mostly 1.
+15. Consider master/subproblem decomposition only if lighter-weight heuristics fail. High complexity, harder to validate, not first move.
+
+**Options by category**
+- Stronger warm starts:
+	- Feasibility-based tier hints instead of price-match hints.
+	- Greedy incumbent before CP-SAT.
+	- Better lower-bound shipping proxy in warm-start objective.
+	- Conditional skip of warm-start when its overhead outweighs value.
+- Fewer variables:
+	- Cap exact quantity domains.
+	- Seller shortlisting / iterative deepening.
+	- Tier shortlisting per seller after safe pruning.
+	- Seller-item compression only if duplicate buckets persist post-prune.
+- Fewer constraints:
+	- Explicit tier exclusivity to strengthen propagation.
+	- Reduce number of tier candidates per seller.
+	- Two-stage or neighborhood exact solve on fewer sellers.
+- Smart structural ideas:
+	- Iterative deepening on shortlisted sellers.
+	- LNS / repair around incumbent.
+	- Two-stage item selection then exact shipping repair.
+	- Master/subproblem decomposition only as late option.
+
+**Assumptions and simplifications worth testing**
+- Most sellers may effectively have only one relevant shipping tier after route-bound pruning and warm-start totals. If true, exact model can shrink a lot.
+- Many sellers are likely non-competitive once shipping is considered. If true, staged seller shortlisting can cut both build time and search time heavily.
+- big_list likely contains mostly quantity-1 wanted items. If true, current dominated-offer pruning already collapses most same-seller same-item duplicates, reducing value of seller-item compression.
+- High-quality heuristic output that beats Cardmarket is more important than proof of optimality. This favors staged search and incumbent-driven methods.
 
 **Relevant files**
-- `/home/bram/repos/my-first-browser-plugin/README.md` — repository-level scope for the new extension.
-- `/home/bram/repos/my-first-browser-plugin/example/manifest.json` — reference for Chrome extension manifest shape and Cardmarket host permissions.
-- `/home/bram/repos/my-first-browser-plugin/example/popup.html` — reference for popup structure, lightweight status/progress areas, and control grouping.
-- `/home/bram/repos/my-first-browser-plugin/example/popup.js` — reference for injected-script execution, long-running progress polling, pacing, retry, 429 handling, and Cardmarket-specific scraping patterns.
-- `/home/bram/repos/my-first-browser-plugin/example/i18n.js` — optional later reference if UI localization is needed; not required for the first milestones.
+- /home/bram/repos/my-first-browser-plugin/optimizer-api/app/solver.py — main CP-SAT model, warm-start build, hint seeding, prune passes, objective, result assembly.
+- /home/bram/repos/my-first-browser-plugin/optimizer-api/app/shipping.py — route-tier pruning, dominance logic, card-limit abstraction, and shipping floors.
+- /home/bram/repos/my-first-browser-plugin/optimizer-api/app/models.py — request size limits and existing knobs like max_sellers.
+- /home/bram/repos/my-first-browser-plugin/optimizer-api/tests/test_api.py — fixture-driven model-size ceilings and fixture acceptance tests.
+- /home/bram/repos/my-first-browser-plugin/optimizer-api/tests/test_solver_shipping.py — correctness expectations for tier choice and warm-start behavior.
+- /home/bram/repos/my-first-browser-plugin/optimizer-api/tests/fixtures/requests/big_list.json — large-scale representative fixture for build-time and convergence experiments.
 
 **Verification**
-1. Load the unpacked extension from the repository root in Chrome developer mode and confirm the popup opens with no manifest errors.
-2. On a Cardmarket non-want-list page, verify the popup reports "unsupported page" and does not inject scraping logic.
-3. On a Cardmarket want-list page, verify the popup can detect the page and return at least one normalized wanted item with stable identifiers.
-4. Run the single-item seller scrape against one known want-list item and verify parsed seller rows match what is visible on Cardmarket for that item.
-5. Run the all-items queue on a very small want list first (1-3 items), then a medium one, and confirm progress, delay pacing, retry behavior, and abort handling behave correctly under normal conditions.
-6. Manually test rate-limit behavior by using a deliberately low delay only in development to confirm 429/Cloudflare paths surface actionable errors instead of silent failure.
-7. Validate the final normalized payload shape against the expected future Python optimizer input before beginning API integration.
-
-**Development Workflow**
-1. Keep Chrome extension reloads cheap. Load the unpacked extension from the repository root once in Chrome developer mode, keep the Cardmarket tab and popup/detached window open during development, and use Chrome's reload button for the unpacked extension instead of reinstalling anything. The execution loop should assume "edit -> reload extension -> rerun one narrow check".
-2. Build explicit debug entry points into the popup from the start. Add narrow buttons or modes for "check page", "extract first item", "extract all items", and "scrape one item" so each milestone can be exercised independently. Avoid one large "run everything" action until late.
-3. Separate pure parsing from browser wiring wherever possible. Put DOM-to-data normalization and HTML/JSON parsing logic into small pure functions that can be exercised from sample inputs without opening Chrome. Keep only the tab lookup, script injection, and storage wiring tied to Chrome APIs.
-4. Create reusable fixtures early. Save a few sanitized want-list HTML fragments and seller-market HTML fragments in a local test fixture folder once selectors are known. Use those fixtures to validate parsing behavior offline when selectors or normalization logic change.
-5. Log structured debug output, not just human text. During development, emit machine-readable objects for extracted items, seller rows, retry state, and parse failures so the next debugging step is obvious from one run.
-6. Maintain a small manual test matrix instead of ad-hoc clicking. At minimum, keep one unsupported page, one small want list, one want list with edge-case variants, and one item known to produce multiple sellers. Re-run only the smallest case affected by the current change.
-7. Use gated milestones for validation. A change is only considered complete when it passes one focused check: page detection, first-item extraction, all-item extraction, one-item seller scrape, then all-items queue. Do not validate a later milestone to infer an earlier one.
-8. Delay full end-to-end tests. Most edits should be proven either by fixture-based parser checks or by one narrow popup action in Chrome. Reserve full all-items scraping runs for milestone boundaries because they are slower and more likely to trigger rate limits.
-9. Capture expected output shapes in the repo as living examples. Keep one example normalized want-list payload and one example normalized seller payload so future changes can be compared against a stable target before API integration begins.
-10. Use me as a verification partner by bringing back concrete artifacts rather than narrative feedback. The most useful artifacts are copied console errors, saved JSON output from the popup, screenshots of the DOM segment being parsed, and raw HTML snippets for failed selectors. That lets me reason from evidence instead of subjective reports.
-
+1. Add timing instrumentation around prune, build, solve, and response phases and capture results on big_list, ob_nixilis_improvements, and small_wantslist.
+2. Compare model sizes before and after changes using current test pattern in /home/bram/repos/my-first-browser-plugin/optimizer-api/tests/test_api.py.
+3. For safe formulation changes, confirm exact totals and allocations remain unchanged on existing solver correctness tests.
+4. For heuristic shortlist / staged-search changes, compare grand total and seller count against current solver and against Cardmarket baseline where available.
+5. Track not only final wall time but also time to first feasible solution and objective quality at timeout.
 
 **Decisions**
-- Input method for the first MVP: scrape the currently open Cardmarket want-list page.
-- Optimizer API integration is excluded from the early phases and starts only after scraping is stable.
-- Shipping-cost collection/modeling is explicitly excluded from the MVP plan.
-- Prefer a narrow popup-first implementation over copying the full example UI; reuse the example mainly for extension structure and Cardmarket-safe request behavior.
-- Prefer sequential seller scraping first; parallelism is excluded initially to reduce Cloudflare/rate-limit risk.
+- Included: solver-only convergence ideas, pruning ideas, warm-start ideas, staged-search heuristics, and structural simplifications worth validating.
+- Excluded for now: browser extension scraping changes, API contract changes, infra changes, and broad product-scope work.
+- User prefers high-quality heuristic output that reliably beats Cardmarket website over strict proof of optimality.
+- User allows iterative deepening and more aggressive seller pruning, including possibly sellers with 2-3 wanted items, but is wary of one-shot heuristic pruning that could permanently remove true optimum.
+- User suspects current pain is model build / preprocessing on large instances similar to big_list.json.
 
-**Further Considerations**
-1. Normalize identifiers early. Recommendation: define one internal item key on first extraction, even if Cardmarket exposes multiple ids, so later seller rows and API payloads can join reliably.
-2. Preserve raw scrape fragments alongside normalized data during development. Recommendation: keep a debug view or console logging path until the DOM selectors prove stable.
-3. Treat seller scraping for one item as the gate milestone. Recommendation: do not start all-items orchestration until one-item parsing is repeatable across a few different products.
+**Open questions**
+1. After current dominated-offer pruning, how many same-seller same-item duplicate buckets actually survive on big_list? If near zero, seller-item compression should stay low priority.
+2. For real scraped requests beyond big_list, do wanted quantities usually stay at 1, or are multi-copy items common enough to change pruning value?
+3. Does current solver typically find a feasible solution quickly and then stall, or is first feasible itself slow once instrumentation is added?
+4. After shipping tier dominance pruning in /home/bram/repos/my-first-browser-plugin/optimizer-api/app/shipping.py, how many sellers still have multiple tier options on big_list? This determines whether tier shortlisting is major lever or marginal lever.
