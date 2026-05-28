@@ -50,8 +50,7 @@ def _dominates_card_order_method(
     )
 
 
-# TODO: rename to card limit something
-def method_card_capacity(max_weight_grams: int) -> int:
+def max_cards_based_on_weight(max_weight_grams: int) -> int:
     for weight_limit, card_limit in LETTER_CARD_LIMITS:
         if max_weight_grams <= weight_limit:
             return card_limit
@@ -66,6 +65,10 @@ def _normalize_card_order_methods(
         name = str(method.get("name", ""))
         if _is_card_order_excluded_method(name):
             continue
+
+        if bool(method["isVirtual"]):
+            continue
+
         methods.append(
             ShippingMethod(
                 name=name,
@@ -77,7 +80,6 @@ def _normalize_card_order_methods(
                 stamp_price_cents=parse_eur_to_cents(method["stampPrice"]),
                 total_price_cents=parse_eur_to_cents(method["price"]),
                 is_letter=bool(method["isLetter"]),
-                is_virtual=bool(method["isVirtual"]),
             )
         )
 
@@ -147,7 +149,6 @@ class ShippingMethod:
     stamp_price_cents: int
     total_price_cents: int
     is_letter: bool
-    is_virtual: bool
 
 
 @dataclass(frozen=True)
@@ -215,6 +216,10 @@ def _dominates_by_limits(
     )
 
 
+def _shipping_tier_capacity(tier: ShippingTier) -> int:
+    return max_cards_based_on_weight(tier.max_weight_grams)
+
+
 def _prune_dominated_candidates(
     candidates: list[object],
     *,
@@ -230,10 +235,6 @@ def _prune_dominated_candidates(
         kept.append(candidate)
 
     return kept
-
-
-def _shipping_tier_capacity(tier: ShippingTier) -> int:
-    return method_card_capacity(tier.max_weight_grams)
 
 
 def _shipping_tier_dominates(
@@ -285,7 +286,6 @@ def _canonicalize_route_tiers(
                 ),
             )
             for method in methods
-            if not method.is_virtual
         ]
     )
     return ShippingRouteTiers(

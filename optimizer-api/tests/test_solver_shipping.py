@@ -87,7 +87,6 @@ def test_optimize_uses_imported_letter_shipping_when_weight_and_value_fit(
                     stamp_price_cents=125,
                     total_price_cents=155,
                     is_letter=True,
-                    is_virtual=False,
                 ),
                 ShippingMethod(
                     name="Registered Parcel",
@@ -97,7 +96,6 @@ def test_optimize_uses_imported_letter_shipping_when_weight_and_value_fit(
                     stamp_price_cents=749,
                     total_price_cents=799,
                     is_letter=False,
-                    is_virtual=False,
                 ),
             )
         },
@@ -133,7 +131,6 @@ def test_optimize_uses_more_expensive_method_when_value_exceeds_letter_limit(
                     stamp_price_cents=125,
                     total_price_cents=155,
                     is_letter=True,
-                    is_virtual=False,
                 ),
                 ShippingMethod(
                     name="Registered Parcel",
@@ -143,7 +140,6 @@ def test_optimize_uses_more_expensive_method_when_value_exceeds_letter_limit(
                     stamp_price_cents=749,
                     total_price_cents=799,
                     is_letter=False,
-                    is_virtual=False,
                 ),
             )
         },
@@ -271,7 +267,6 @@ def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
                     stamp_price_cents=125,
                     total_price_cents=155,
                     is_letter=True,
-                    is_virtual=False,
                 ),
                 ShippingMethod(
                     name="Letter 50g",
@@ -281,7 +276,6 @@ def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
                     stamp_price_cents=170,
                     total_price_cents=200,
                     is_letter=True,
-                    is_virtual=False,
                 ),
             )
         },

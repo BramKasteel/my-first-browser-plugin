@@ -5,7 +5,7 @@ import json
 from app.shipping import (
     ShippingTier,
     _load_shipping_route_book,
-    method_card_capacity,
+    max_cards_based_on_weight,
     parse_eur_to_cents,
     prune_dominated_shipping_tiers,
 )
@@ -19,10 +19,10 @@ def test_parse_eur_to_cents_handles_cardmarket_format() -> None:
 
 
 def test_method_card_capacity_uses_letter_breakpoints() -> None:
-    assert method_card_capacity(20) == 4
-    assert method_card_capacity(50) == 17
-    assert method_card_capacity(100) == 40
-    assert method_card_capacity(250) == 100
+    assert max_cards_based_on_weight(20) == 4
+    assert max_cards_based_on_weight(50) == 17
+    assert max_cards_based_on_weight(100) == 40
+    assert max_cards_based_on_weight(250) == 100
 
 
 def test_prune_dominated_shipping_tiers_uses_card_capacity_for_letters() -> None:

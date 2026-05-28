@@ -99,7 +99,7 @@ def _selection_shipping_cost_cents(
         for _, tier in tier_candidates:
             if total_value_cents > tier.max_value_cents:
                 continue
-            if total_cards > shipping.method_card_capacity(tier.max_weight_grams):
+            if total_cards > shipping.max_cards_based_on_weight(tier.max_weight_grams):
                 continue
             valid_tier_costs.append(tier.total_price_cents)
 
@@ -292,7 +292,6 @@ def _solve_exact_shipping_order(
         seller_tier_candidates[seller_id] = tier_candidates
 
         if len(tier_candidates) <= 1:
-            # TODO: how can we only have one tier available!? Something wrong with pruning?
             seller_active_vars[seller_id] = model.NewBoolVar(
                 f"seller_active_{seller_id}"
             )
@@ -346,7 +345,7 @@ def _solve_exact_shipping_order(
                 )
                 model.Add(
                     total_card_expr
-                    <= shipping.method_card_capacity(tier.max_weight_grams)
+                    <= shipping.max_cards_based_on_weight(tier.max_weight_grams)
                     + seller_card_upper_bounds[seller_id] * (1 - active)
                 )
 
@@ -365,7 +364,7 @@ def _solve_exact_shipping_order(
                 )
                 model.Add(
                     total_card_expr
-                    <= shipping.method_card_capacity(tier.max_weight_grams)
+                    <= shipping.max_cards_based_on_weight(tier.max_weight_grams)
                     + seller_card_upper_bounds[seller_id] * (1 - tier_var)
                 )
 
