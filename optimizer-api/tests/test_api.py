@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from app.main import app
 from app.models import OptimizationRequest
-from app.solver import prune_all
+from app.solver import optimize_order, prune_all
 from fastapi.testclient import TestClient
+from ortools.sat.python import cp_model
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_REQUESTS_DIR = ROOT / "tests" / "fixtures" / "requests"
@@ -46,6 +48,21 @@ EXPECTED_FIXTURE_RESULTS = {
     },
 }
 
+EXPECTED_FIXTURE_MODEL_SIZES = {
+    "big_list": {
+        "warm_start": {"variables": 17675, "constraints": 5131},
+        "exact": {"variables": 20211, "constraints": 15261},
+    },
+    "ob_nixilis_improvements": {
+        "warm_start": {"variables": 3982, "constraints": 1893},
+        "exact": {"variables": 5218, "constraints": 6241},
+    },
+    "small_wantslist": {
+        "warm_start": {"variables": 644, "constraints": 598},
+        "exact": {"variables": 880, "constraints": 1666},
+    },
+}
+
 
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -53,6 +70,27 @@ def load_json(path: Path) -> dict:
 
 def real_request_fixture_paths() -> list[Path]:
     return sorted(FIXTURE_REQUESTS_DIR.glob("*.json"))
+
+
+def model_sizes_for_request(request: OptimizationRequest) -> dict[str, dict[str, int]]:
+    captures: list[dict[str, int]] = []
+    original_solve = cp_model.CpSolver.Solve
+
+    def wrapped_solve(self, model, *args, **kwargs):
+        proto = model.Proto()
+        captures.append(
+            {
+                "variables": len(proto.variables),
+                "constraints": len(proto.constraints),
+            }
+        )
+        return original_solve(self, model, *args, **kwargs)
+
+    with patch.object(cp_model.CpSolver, "Solve", wrapped_solve):
+        optimize_order(request)
+
+    assert len(captures) == 2, "Expected warm-start and exact solve model captures"
+    return {"warm_start": captures[0], "exact": captures[1]}
 
 
 @pytest.fixture
@@ -187,6 +225,48 @@ def test_real_request_fixtures_acceptance(
 
 def test_real_request_fixture_directory_exists() -> None:
     assert FIXTURE_REQUESTS_DIR.is_dir()
+
+
+@pytest.mark.parametrize(
+    "fixture_path", real_request_fixture_paths(), ids=lambda path: path.stem
+)
+@pytest.mark.fixture_case
+def test_real_request_fixture_warm_start_model_size_ceiling(fixture_path: Path) -> None:
+    payload = load_json(fixture_path)
+    request = OptimizationRequest.model_validate(payload)
+
+    actual = model_sizes_for_request(request)["warm_start"]
+    expected = EXPECTED_FIXTURE_MODEL_SIZES[fixture_path.stem]["warm_start"]
+
+    assert actual["variables"] >= expected["variables"], (
+        f"Warm-start variables grew for {fixture_path.stem}: "
+        f"{actual['variables']} > {expected['variables']}"
+    )
+    assert actual["constraints"] >= expected["constraints"], (
+        f"Warm-start constraints grew for {fixture_path.stem}: "
+        f"{actual['constraints']} > {expected['constraints']}"
+    )
+
+
+@pytest.mark.parametrize(
+    "fixture_path", real_request_fixture_paths(), ids=lambda path: path.stem
+)
+@pytest.mark.fixture_case
+def test_real_request_fixture_exact_model_size_ceiling(fixture_path: Path) -> None:
+    payload = load_json(fixture_path)
+    request = OptimizationRequest.model_validate(payload)
+
+    actual = model_sizes_for_request(request)["exact"]
+    expected = EXPECTED_FIXTURE_MODEL_SIZES[fixture_path.stem]["exact"]
+
+    assert actual["variables"] >= expected["variables"], (
+        f"Exact variables grew for {fixture_path.stem}: "
+        f"{actual['variables']} > {expected['variables']}"
+    )
+    assert actual["constraints"] >= expected["constraints"], (
+        f"Exact constraints grew for {fixture_path.stem}: "
+        f"{actual['constraints']} > {expected['constraints']}"
+    )
 
 
 def test_optimize_rejects_duplicate_ids(client: TestClient) -> None:
