@@ -48,9 +48,7 @@ def _tiers(
     )
 
 
-def _request(
-    *, unit_price: float, quantity: int, unit_weight_grams: int | None = None
-) -> OptimizationRequest:
+def _request(*, unit_price: float, quantity: int) -> OptimizationRequest:
     return OptimizationRequest(
         buyer_country="Netherlands",
         items=[
@@ -58,8 +56,6 @@ def _request(
                 item_id="item-1",
                 name="Card",
                 quantity=quantity,
-                cards_per_unit=1,
-                unit_weight_grams=unit_weight_grams,
             )
         ],
         sellers=[Seller(seller_id="seller-1", name="Seller", country="Germany")],
@@ -304,51 +300,6 @@ def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
 
     assert response.status == "optimal"
     assert response.totals.shipping_total == 2.0
-
-
-def test_optimize_uses_parcel_tier_for_parcel_only_items(monkeypatch) -> None:
-    route_book = ShippingRouteBook(
-        country_ids={"germany": 7, "netherlands": 23},
-        methods_by_route={},
-        tiers_by_route={
-            ("germany", "netherlands"): _tiers(
-                letter=[(155, 2500, 20)],
-                parcel=[(799, 50000, 5000)],
-            )
-        },
-    )
-    monkeypatch.setattr(
-        "app.solver.shipping.load_shipping_route_book", lambda: route_book
-    )
-
-    request = OptimizationRequest(
-        buyer_country="Netherlands",
-        items=[
-            WantedItem(
-                item_id="item-1",
-                name="Binder",
-                quantity=1,
-                cards_per_unit=0,
-                requires_parcel=True,
-            )
-        ],
-        sellers=[Seller(seller_id="seller-1", name="Seller", country="Germany")],
-        offers=[
-            Offer(
-                offer_id="offer-1",
-                item_id="item-1",
-                seller_id="seller-1",
-                unit_price=1.0,
-                available_quantity=1,
-            )
-        ],
-        preferences=OptimizationPreferences(),
-    )
-
-    response = optimize_order(request)
-
-    assert response.status == "optimal"
-    assert response.totals.shipping_total == 7.99
 
 
 def test_optimize_uses_exact_shipping_objective_for_final_choice(
@@ -611,7 +562,6 @@ def test_prune_single_item_sellers_keeps_when_higher_shipping_would_outweigh_ite
         seller_map=sellers,
         buyer_country="Netherlands",
         route_book=route_book,
-        use_explicit_weights=False,
     )
 
     assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2", "offer-3"]
@@ -676,7 +626,6 @@ def test_prune_single_item_sellers_keeps_when_no_single_alternative_covers_quant
         seller_map=sellers,
         buyer_country="Netherlands",
         route_book=None,
-        use_explicit_weights=False,
     )
 
     assert [offer.offer_id for offer in pruned] == [

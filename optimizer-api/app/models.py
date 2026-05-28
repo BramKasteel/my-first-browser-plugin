@@ -58,9 +58,6 @@ class WantedItem(BaseModel):
     preferred_languages: list[BoundedDescriptor] = Field(
         default_factory=list, max_length=MAX_LANGUAGE_PREFERENCES
     )
-    cards_per_unit: int = Field(default=1, ge=0)
-    unit_weight_grams: int | None = Field(default=None, ge=0)
-    requires_parcel: bool = False
 
 
 class Seller(BaseModel):

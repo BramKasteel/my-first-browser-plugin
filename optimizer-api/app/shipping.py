@@ -13,6 +13,8 @@ LEGACY_ROUTE_SHIPPING_EUR = {
 }
 SHIPPING_DATA_PATH = Path(__file__).with_name("data") / "shipping_costs.json"
 CARD_ORDER_MAX_WEIGHT_GRAMS = 1_000
+LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
+APPROX_GRAMS_PER_CARD = 2.5
 
 
 def _is_estimation_method(name: str) -> bool:
@@ -37,12 +39,23 @@ def _is_card_order_excluded_method(name: str) -> bool:
 def _dominates_card_order_method(
     existing: "ShippingMethod", candidate: "ShippingMethod"
 ) -> bool:
-    return (
-        existing.is_letter == candidate.is_letter
-        and existing.total_price_cents <= candidate.total_price_cents
-        and existing.max_value_cents >= candidate.max_value_cents
-        and existing.max_weight_grams >= candidate.max_weight_grams
+    return _dominates_by_limits(
+        existing_price_cents=existing.total_price_cents,
+        candidate_price_cents=candidate.total_price_cents,
+        existing_max_value_cents=existing.max_value_cents,
+        candidate_max_value_cents=candidate.max_value_cents,
+        existing_capacity=existing.max_weight_grams,
+        candidate_capacity=candidate.max_weight_grams,
+        allows_cross_class_domination=existing.is_letter == candidate.is_letter,
     )
+
+
+# TODO: rename to card limit something
+def method_card_capacity(max_weight_grams: int) -> int:
+    for weight_limit, card_limit in LETTER_CARD_LIMITS:
+        if max_weight_grams <= weight_limit:
+            return card_limit
+    return int(max_weight_grams / APPROX_GRAMS_PER_CARD)
 
 
 def _normalize_card_order_methods(
@@ -68,20 +81,16 @@ def _normalize_card_order_methods(
             )
         )
 
-    methods.sort(
-        key=lambda method: (
+    kept = _prune_dominated_candidates(
+        methods,
+        sort_key=lambda method: (
             method.total_price_cents,
             -method.max_value_cents,
             -method.max_weight_grams,
             method.name,
-        )
+        ),
+        dominates=_dominates_card_order_method,
     )
-
-    kept: list[ShippingMethod] = []
-    for method in methods:
-        if any(_dominates_card_order_method(existing, method) for existing in kept):
-            continue
-        kept.append(method)
 
     letters = [method for method in kept if method.is_letter]
     parcels = [method for method in kept if not method.is_letter]
@@ -188,30 +197,102 @@ class ShippingRouteBook:
         )
 
 
+def _dominates_by_limits(
+    *,
+    existing_price_cents: int,
+    candidate_price_cents: int,
+    existing_max_value_cents: int,
+    candidate_max_value_cents: int,
+    existing_capacity: int,
+    candidate_capacity: int,
+    allows_cross_class_domination: bool,
+) -> bool:
+    return (
+        allows_cross_class_domination
+        and existing_price_cents <= candidate_price_cents
+        and existing_max_value_cents >= candidate_max_value_cents
+        and existing_capacity >= candidate_capacity
+    )
+
+
+def _prune_dominated_candidates(
+    candidates: list[object],
+    *,
+    sort_key,
+    dominates,
+) -> list[object]:
+    sorted_candidates = sorted(candidates, key=sort_key)
+
+    kept: list[object] = []
+    for candidate in sorted_candidates:
+        if any(dominates(existing, candidate) for existing in kept):
+            continue
+        kept.append(candidate)
+
+    return kept
+
+
+def _shipping_tier_capacity(tier: ShippingTier) -> int:
+    return method_card_capacity(tier.max_weight_grams)
+
+
+def _shipping_tier_dominates(
+    existing: tuple[bool, ShippingTier],
+    candidate: tuple[bool, ShippingTier],
+) -> bool:
+    existing_is_letter, existing_tier = existing
+    candidate_is_letter, candidate_tier = candidate
+
+    return _dominates_by_limits(
+        existing_price_cents=existing_tier.total_price_cents,
+        candidate_price_cents=candidate_tier.total_price_cents,
+        existing_max_value_cents=existing_tier.max_value_cents,
+        candidate_max_value_cents=candidate_tier.max_value_cents,
+        existing_capacity=_shipping_tier_capacity(existing_tier),
+        candidate_capacity=_shipping_tier_capacity(candidate_tier),
+        allows_cross_class_domination=not (
+            existing_is_letter and not candidate_is_letter
+        ),
+    )
+
+
+def prune_dominated_shipping_tiers(
+    tier_candidates: list[tuple[bool, ShippingTier]],
+) -> list[tuple[bool, ShippingTier]]:
+    return _prune_dominated_candidates(
+        tier_candidates,
+        sort_key=lambda candidate: (
+            candidate[1].total_price_cents,
+            -candidate[1].max_value_cents,
+            -_shipping_tier_capacity(candidate[1]),
+            candidate[0],
+        ),
+        dominates=_shipping_tier_dominates,
+    )
+
+
 def _canonicalize_route_tiers(
     methods: tuple[ShippingMethod, ...],
 ) -> ShippingRouteTiers:
-    letter_tiers = tuple(
-        ShippingTier(
-            max_value_cents=method.max_value_cents,
-            max_weight_grams=method.max_weight_grams,
-            total_price_cents=method.total_price_cents,
-        )
-        for method in methods
-        if not method.is_virtual and method.is_letter
-    )
-    parcel_tiers = tuple(
-        ShippingTier(
-            max_value_cents=method.max_value_cents,
-            max_weight_grams=method.max_weight_grams,
-            total_price_cents=method.total_price_cents,
-        )
-        for method in methods
-        if not method.is_virtual and not method.is_letter
+    tier_candidates = prune_dominated_shipping_tiers(
+        [
+            (
+                method.is_letter,
+                ShippingTier(
+                    max_value_cents=method.max_value_cents,
+                    max_weight_grams=method.max_weight_grams,
+                    total_price_cents=method.total_price_cents,
+                ),
+            )
+            for method in methods
+            if not method.is_virtual
+        ]
     )
     return ShippingRouteTiers(
-        letter_tiers=letter_tiers,
-        parcel_tiers=parcel_tiers,
+        letter_tiers=tuple(tier for is_letter, tier in tier_candidates if is_letter),
+        parcel_tiers=tuple(
+            tier for is_letter, tier in tier_candidates if not is_letter
+        ),
     )
 
 
@@ -245,6 +326,7 @@ def _load_shipping_route_book(path: Path) -> ShippingRouteBook:
     )
 
 
+# TODO: remove the None option
 @lru_cache(maxsize=1)
 def load_shipping_route_book() -> ShippingRouteBook | None:
     if not SHIPPING_DATA_PATH.is_file():

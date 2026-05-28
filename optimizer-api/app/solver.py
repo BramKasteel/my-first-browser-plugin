@@ -18,8 +18,6 @@ from .models import (
     WantedItem,
 )
 
-LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
-APPROX_GRAMS_PER_CARD = 2.5
 MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
 WARM_START_MAX_TIME_SECONDS = 6
 IMPROVEMENT_MAX_TIME_SECONDS = 9
@@ -34,17 +32,6 @@ def _to_cents(amount: float) -> int:
 
 def _from_cents(amount: int) -> float:
     return round(amount / 100, 2)
-
-
-def _method_card_capacity(max_weight_grams: int) -> int:
-    for weight_limit, card_limit in LETTER_CARD_LIMITS:
-        if max_weight_grams <= weight_limit:
-            return card_limit
-    return int(max_weight_grams / APPROX_GRAMS_PER_CARD)
-
-
-def _has_explicit_item_weights(request: OptimizationRequest) -> bool:
-    return all(item.unit_weight_grams is not None for item in request.items)
 
 
 def _capped_offer_quantity(offer: Offer, item_map: dict[str, WantedItem]) -> int:
@@ -88,81 +75,12 @@ def _offer_prune_rank(offer: Offer) -> tuple[float, int, str]:
     )
 
 
-def _shipping_tier_capacity(
-    tier: shipping.ShippingTier, *, use_explicit_weights: bool
-) -> int:
-    if use_explicit_weights:
-        return tier.max_weight_grams
-    return _method_card_capacity(tier.max_weight_grams)
-
-
-# TODO this function seems duplicated with _normalize_card_order_methods from shipping.py
-def _shipping_tier_dominates(
-    existing: tuple[bool, shipping.ShippingTier],
-    candidate: tuple[bool, shipping.ShippingTier],
-    *,
-    use_explicit_weights: bool,
-) -> bool:
-    existing_is_letter, existing_tier = existing
-    candidate_is_letter, candidate_tier = candidate
-
-    if existing_tier.total_price_cents > candidate_tier.total_price_cents:
-        return False
-    if existing_tier.max_value_cents < candidate_tier.max_value_cents:
-        return False
-    if _shipping_tier_capacity(
-        existing_tier, use_explicit_weights=use_explicit_weights
-    ) < _shipping_tier_capacity(
-        candidate_tier, use_explicit_weights=use_explicit_weights
-    ):
-        return False
-    if existing_is_letter and not candidate_is_letter:
-        return False
-
-    return True
-
-
-def _prune_dominated_shipping_tiers(
-    tier_candidates: list[tuple[bool, shipping.ShippingTier]],
-    *,
-    use_explicit_weights: bool,
-) -> list[tuple[bool, shipping.ShippingTier]]:
-    sorted_candidates = sorted(
-        tier_candidates,
-        key=lambda candidate: (
-            candidate[1].total_price_cents,
-            -candidate[1].max_value_cents,
-            -_shipping_tier_capacity(
-                candidate[1], use_explicit_weights=use_explicit_weights
-            ),
-            candidate[0],
-        ),
-    )
-
-    kept: list[tuple[bool, shipping.ShippingTier]] = []
-    for candidate in sorted_candidates:
-        if any(
-            _shipping_tier_dominates(
-                existing,
-                candidate,
-                use_explicit_weights=use_explicit_weights,
-            )
-            for existing in kept
-        ):
-            continue
-        kept.append(candidate)
-
-    return kept
-
-
 def _selection_shipping_cost_cents(
     *,
     seller_country: str,
     buyer_country: str,
     selections: list[tuple[Offer, int]],
-    item_map: dict[str, WantedItem],
     route_book: shipping.ShippingRouteBook | None,
-    use_explicit_weights: bool,
 ) -> int | None:
     if route_book is not None:
         route_tiers = route_book.lookup_tiers(
@@ -172,37 +90,17 @@ def _selection_shipping_cost_cents(
         tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
             (False, tier) for tier in route_tiers.parcel_tiers
         ]
-        tier_candidates = _prune_dominated_shipping_tiers(
-            tier_candidates,
-            use_explicit_weights=use_explicit_weights,
-        )
         if tier_candidates:
             total_value_cents = sum(
                 _to_cents(offer.unit_price) * quantity for offer, quantity in selections
             )
-            total_weight_grams = sum(
-                (item_map[offer.item_id].unit_weight_grams or 0) * quantity
-                for offer, quantity in selections
-            )
-            total_cards = sum(
-                item_map[offer.item_id].cards_per_unit * quantity
-                for offer, quantity in selections
-            )
-            has_parcel_only_item = any(
-                item_map[offer.item_id].requires_parcel and quantity > 0
-                for offer, quantity in selections
-            )
+            total_cards = sum(quantity for _, quantity in selections)
 
             valid_tier_costs = []
-            for is_letter_tier, tier in tier_candidates:
+            for _, tier in tier_candidates:
                 if total_value_cents > tier.max_value_cents:
                     continue
-                if use_explicit_weights:
-                    if total_weight_grams > tier.max_weight_grams:
-                        continue
-                elif total_cards > _method_card_capacity(tier.max_weight_grams):
-                    continue
-                if is_letter_tier and has_parcel_only_item:
+                if total_cards > shipping.method_card_capacity(tier.max_weight_grams):
                     continue
                 valid_tier_costs.append(tier.total_price_cents)
 
@@ -309,20 +207,16 @@ def _assignment_total_cost_cents(
     *,
     offer_quantities: dict[str, int],
     offer_by_id: dict[str, Offer],
-    item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
     buyer_country: str,
     route_book: shipping.ShippingRouteBook | None,
-    use_explicit_weights: bool,
 ) -> int | None:
     seller_shipping_costs = _selected_seller_shipping_costs_cents(
         offer_quantities=offer_quantities,
         offer_by_id=offer_by_id,
-        item_map=item_map,
         seller_map=seller_map,
         buyer_country=buyer_country,
         route_book=route_book,
-        use_explicit_weights=use_explicit_weights,
     )
     if seller_shipping_costs is None:
         return None
@@ -341,11 +235,9 @@ def _selected_seller_shipping_costs_cents(
     *,
     offer_quantities: dict[str, int],
     offer_by_id: dict[str, Offer],
-    item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
     buyer_country: str,
     route_book: shipping.ShippingRouteBook | None,
-    use_explicit_weights: bool,
 ) -> dict[str, int] | None:
     selections_by_seller: dict[str, list[tuple[Offer, int]]] = defaultdict(list)
     for offer_id, quantity in offer_quantities.items():
@@ -360,9 +252,7 @@ def _selected_seller_shipping_costs_cents(
             seller_country=seller_map[seller_id].country,
             buyer_country=buyer_country,
             selections=selections,
-            item_map=item_map,
             route_book=route_book,
-            use_explicit_weights=use_explicit_weights,
         )
         if shipping_cost_cents is None:
             return None
@@ -379,7 +269,6 @@ def _solve_exact_shipping_order(
     item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
     route_book: shipping.ShippingRouteBook | None,
-    use_explicit_weights: bool,
 ) -> tuple[str, dict[str, int]] | None:
     model = cp_model.CpModel()
 
@@ -409,10 +298,6 @@ def _solve_exact_shipping_order(
         tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
             (False, tier) for tier in route_tiers.parcel_tiers
         ]
-        tier_candidates = _prune_dominated_shipping_tiers(
-            tier_candidates,
-            use_explicit_weights=use_explicit_weights,
-        )
         seller_tier_candidates[seller_id] = tier_candidates
 
         if len(tier_candidates) <= 1:
@@ -439,26 +324,14 @@ def _solve_exact_shipping_order(
 
     seller_shipping_tier_choice_vars = {}
     seller_value_upper_bounds = {}
-    seller_weight_upper_bounds = {}
     seller_card_upper_bounds = {}
-    seller_unit_upper_bounds = {}
 
     for seller_id, offers in seller_offers.items():
         seller_value_upper_bounds[seller_id] = sum(
             _to_cents(offer.unit_price) * _capped_offer_quantity(offer, item_map)
             for offer in offers
         )
-        seller_weight_upper_bounds[seller_id] = sum(
-            (item_map[offer.item_id].unit_weight_grams or 0)
-            * _capped_offer_quantity(offer, item_map)
-            for offer in offers
-        )
         seller_card_upper_bounds[seller_id] = sum(
-            item_map[offer.item_id].cards_per_unit
-            * _capped_offer_quantity(offer, item_map)
-            for offer in offers
-        )
-        seller_unit_upper_bounds[seller_id] = sum(
             _capped_offer_quantity(offer, item_map) for offer in offers
         )
 
@@ -471,52 +344,27 @@ def _solve_exact_shipping_order(
                 _to_cents(offer.unit_price) * offer_vars[offer.offer_id]
                 for offer in offers
             )
-            total_weight_expr = sum(
-                (item_map[offer.item_id].unit_weight_grams or 0)
-                * offer_vars[offer.offer_id]
-                for offer in offers
-            )
-            total_card_expr = sum(
-                item_map[offer.item_id].cards_per_unit * offer_vars[offer.offer_id]
-                for offer in offers
-            )
-            parcel_only_units_expr = sum(
-                offer_vars[offer.offer_id]
-                for offer in offers
-                if item_map[offer.item_id].requires_parcel
-            )
+            total_card_expr = sum(offer_vars[offer.offer_id] for offer in offers)
 
             if len(tier_candidates) == 1:
-                is_letter_tier, tier = tier_candidates[0]
+                _, tier = tier_candidates[0]
                 model.Add(
                     total_value_expr
                     <= tier.max_value_cents
                     + seller_value_upper_bounds[seller_id] * (1 - active)
                 )
-                if use_explicit_weights:
-                    model.Add(
-                        total_weight_expr
-                        <= tier.max_weight_grams
-                        + seller_weight_upper_bounds[seller_id] * (1 - active)
-                    )
-                else:
-                    model.Add(
-                        total_card_expr
-                        <= _method_card_capacity(tier.max_weight_grams)
-                        + seller_card_upper_bounds[seller_id] * (1 - active)
-                    )
-                if is_letter_tier:
-                    model.Add(
-                        parcel_only_units_expr
-                        <= seller_unit_upper_bounds[seller_id] * (1 - active)
-                    )
+                model.Add(
+                    total_card_expr
+                    <= shipping.method_card_capacity(tier.max_weight_grams)
+                    + seller_card_upper_bounds[seller_id] * (1 - active)
+                )
 
                 objective_terms.append(tier.total_price_cents * active)
                 continue
 
             seller_shipping_tier_choice_vars[seller_id] = []
 
-            for tier_index, (is_letter_tier, tier) in enumerate(tier_candidates):
+            for tier_index, (_, tier) in enumerate(tier_candidates):
                 tier_var = model.NewBoolVar(f"ship_{seller_id}_{tier_index}")
                 seller_shipping_tier_choice_vars[seller_id].append((tier, tier_var))
                 model.Add(
@@ -524,23 +372,11 @@ def _solve_exact_shipping_order(
                     <= tier.max_value_cents
                     + seller_value_upper_bounds[seller_id] * (1 - tier_var)
                 )
-                if use_explicit_weights:
-                    model.Add(
-                        total_weight_expr
-                        <= tier.max_weight_grams
-                        + seller_weight_upper_bounds[seller_id] * (1 - tier_var)
-                    )
-                else:
-                    model.Add(
-                        total_card_expr
-                        <= _method_card_capacity(tier.max_weight_grams)
-                        + seller_card_upper_bounds[seller_id] * (1 - tier_var)
-                    )
-                if is_letter_tier:
-                    model.Add(
-                        parcel_only_units_expr
-                        <= seller_unit_upper_bounds[seller_id] * (1 - tier_var)
-                    )
+                model.Add(
+                    total_card_expr
+                    <= shipping.method_card_capacity(tier.max_weight_grams)
+                    + seller_card_upper_bounds[seller_id] * (1 - tier_var)
+                )
 
             active = sum(
                 tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
@@ -610,11 +446,9 @@ def _solve_exact_shipping_order(
         warm_total_cost_cents = _assignment_total_cost_cents(
             offer_quantities=warm_selected_offer_quantities,
             offer_by_id={offer.offer_id: offer for offer in seller_offers[seller_id]},
-            item_map=item_map,
             seller_map=seller_map,
             buyer_country=request.buyer_country,
             route_book=route_book,
-            use_explicit_weights=use_explicit_weights,
         )
         warm_item_cost_cents = sum(
             _to_cents(offer.unit_price) * quantity
@@ -681,7 +515,6 @@ def _prune_cheapest_single_item_sellers(
     seller_map: dict[str, object],
     buyer_country: str,
     route_book: shipping.ShippingRouteBook | None,
-    use_explicit_weights: bool,
 ) -> list[Offer]:
     # Map seller_id to their offers
     seller_offers: dict[str, list[Offer]] = defaultdict(list)
@@ -724,9 +557,7 @@ def _prune_cheapest_single_item_sellers(
                 seller_country=seller.country,
                 buyer_country=buyer_country,
                 selections=[(best_offer, 1)],
-                item_map=item_map,
                 route_book=route_book,
-                use_explicit_weights=use_explicit_weights,
             )
             if shipping_cost is None:
                 continue
@@ -758,14 +589,12 @@ def prune_all(request: OptimizationRequest):
     usable_offers = _prune_dominated_offers_per_seller(request.offers, item_map)
 
     route_book = shipping.load_shipping_route_book()
-    use_explicit_weights = _has_explicit_item_weights(request)
     usable_offers = _prune_cheapest_single_item_sellers(
         offers=usable_offers,
         item_map=item_map,
         seller_map=seller_map,
         buyer_country=request.buyer_country,
         route_book=route_book,
-        use_explicit_weights=use_explicit_weights,
     )
     return usable_offers
 
@@ -795,7 +624,6 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             notes=notes,
         )
 
-    use_explicit_weights = _has_explicit_item_weights(request)
     route_book = shipping.load_shipping_route_book()
 
     solution = _solve_exact_shipping_order(
@@ -805,7 +633,6 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         item_map=item_map,
         seller_map=seller_map,
         route_book=route_book,
-        use_explicit_weights=use_explicit_weights,
     )
     if solution is None:
         return OptimizationResponse(
@@ -829,11 +656,9 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     seller_shipping_totals = _selected_seller_shipping_costs_cents(
         offer_quantities=selected_offer_quantities,
         offer_by_id={offer.offer_id: offer for offer in usable_offers},
-        item_map=item_map,
         seller_map=seller_map,
         buyer_country=request.buyer_country,
         route_book=route_book,
-        use_explicit_weights=use_explicit_weights,
     )
     if seller_shipping_totals is None:
         raise RuntimeError(
@@ -929,14 +754,9 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             notes.append(
                 f"Warm-start floor solve status: {warm_start_status}. Exact solve ran without warm-start hints."
             )
-        if use_explicit_weights:
-            notes.append(
-                "Exact shipping costs use selected item value, summed item weight, and parcel-only item flags."
-            )
-        else:
-            notes.append(
-                "Exact shipping costs use selected item value, card-count letter thresholds (4/17/40 cards), and parcel-only item flags."
-            )
+        notes.append(
+            "Exact shipping costs use selected item value and card-count letter thresholds (4/17/40 cards)."
+        )
         if any(
             not route_book.lookup_tiers(
                 seller_country=seller_map[seller.seller_id].country,

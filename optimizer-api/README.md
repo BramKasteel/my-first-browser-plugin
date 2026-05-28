@@ -29,15 +29,14 @@ Seller reputation intentionally stays out of optimizer payload. Filter by reputa
 
 Current richer shipping path stays approximate:
 - import country-pair shipping methods from Cardmarket help API
-- choose valid method per seller based on selected item value and either card-count thresholds or explicit item weight overrides
-- block letter methods for items flagged `requires_parcel`
+- choose valid method per seller based on selected item value and fixed card-count thresholds
 
 Default card-count approximation uses Cardmarket help thresholds:
 - up to 4 cards => 20g letter
 - up to 17 cards => 50g letter
 - up to 40 cards => 100g letter
 
-Above 40 cards, solver treats parcel capacity with a simple card-count approximation unless explicit `unit_weight_grams` values are supplied.
+Above 40 cards, solver continues parcel capacity with simple 2.5-grams-per-card approximation.
 
 If imported route data is missing, solver falls back to legacy per-route proxy.
 
@@ -191,10 +190,7 @@ Basic health and version check.
 
 Accepts optimization payload from plugin fixture dumps in `tests/fixtures/requests/` and returns cheapest valid order under current model.
 
-Optional wanted-item shipping fields:
-- `cards_per_unit`: default `1`; use higher values if one wanted unit represents multiple cards
-- `unit_weight_grams`: optional override when you want explicit weight-based routing instead of card-count approximation
-- `requires_parcel`: blocks letter methods for that item
+Wanted items only need optimizer fields already produced by extension: item ID, name, quantity, optional condition, and optional language preferences.
 
 ## Extension boundary
 

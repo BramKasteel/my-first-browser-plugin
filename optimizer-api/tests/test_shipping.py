@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import json
 
-from app.shipping import _load_shipping_route_book, parse_eur_to_cents
+from app.shipping import (
+    ShippingTier,
+    _load_shipping_route_book,
+    method_card_capacity,
+    parse_eur_to_cents,
+    prune_dominated_shipping_tiers,
+)
 
 
 def test_parse_eur_to_cents_handles_cardmarket_format() -> None:
@@ -10,6 +16,47 @@ def test_parse_eur_to_cents_handles_cardmarket_format() -> None:
     assert parse_eur_to_cents("1.000,00 €") == 100000
     assert parse_eur_to_cents("4.10лв") == 410
     assert parse_eur_to_cents("46,00 kr") == 4600
+
+
+def test_method_card_capacity_uses_letter_breakpoints() -> None:
+    assert method_card_capacity(20) == 4
+    assert method_card_capacity(50) == 17
+    assert method_card_capacity(100) == 40
+    assert method_card_capacity(250) == 100
+
+
+def test_prune_dominated_shipping_tiers_uses_card_capacity_for_letters() -> None:
+    kept = prune_dominated_shipping_tiers(
+        [
+            (
+                True,
+                ShippingTier(
+                    total_price_cents=155, max_value_cents=2500, max_weight_grams=20
+                ),
+            ),
+            (
+                True,
+                ShippingTier(
+                    total_price_cents=155, max_value_cents=2500, max_weight_grams=17
+                ),
+            ),
+            (
+                False,
+                ShippingTier(
+                    total_price_cents=155, max_value_cents=2500, max_weight_grams=20
+                ),
+            ),
+        ],
+    )
+
+    assert kept == [
+        (
+            False,
+            ShippingTier(
+                total_price_cents=155, max_value_cents=2500, max_weight_grams=20
+            ),
+        ),
+    ]
 
 
 def test_load_shipping_route_book_normalizes_countries(tmp_path) -> None:
