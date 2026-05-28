@@ -411,9 +411,38 @@ function clampSellerCountriesToPolicy(countries, policy = getWantListSelectionPo
   return normalizedCountries.slice(0, Math.min(MAX_SELLER_COUNTRIES, policy.maxSellerCountries));
 }
 
+function getDefaultSellerCountries(policy = getWantListSelectionPolicy(), preferredCountries = []) {
+  if (policy.isBlocked || policy.maxSellerCountries <= 0) return [];
+
+  const preferred = clampSellerCountriesToPolicy(preferredCountries, policy);
+  if (preferred.length >= policy.maxSellerCountries) {
+    return preferred;
+  }
+
+  const seen = new Set(preferred);
+  const seeded = [...preferred];
+  for (const country of SELLER_COUNTRY_OPTIONS) {
+    const normalizedCountry = normalizeCountryName(country);
+    if (!normalizedCountry || seen.has(normalizedCountry)) continue;
+    seeded.push(normalizedCountry);
+    seen.add(normalizedCountry);
+    if (seeded.length >= policy.maxSellerCountries) break;
+  }
+
+  return seeded;
+}
+
+function getSellerCountriesForCurrentPolicy(countries, policy = getWantListSelectionPolicy()) {
+  const constrainedCountries = clampSellerCountriesToPolicy(countries, policy);
+  if (constrainedCountries.length || !policy.distinctItemCount) {
+    return constrainedCountries;
+  }
+  return getDefaultSellerCountries(policy, countries);
+}
+
 function enforceWantListSelectionPolicy({ persist = false, announce = false } = {}) {
   const policy = getWantListSelectionPolicy();
-  const constrainedCountries = clampSellerCountriesToPolicy(selectedSellerCountries, policy);
+  const constrainedCountries = getSellerCountriesForCurrentPolicy(selectedSellerCountries, policy);
   const changed = !areSameCountries(constrainedCountries, selectedSellerCountries);
 
   renderSellerCountryLimitHint(policy);
@@ -857,7 +886,7 @@ async function loadSellerSettings() {
   renderBuyerCountryOptions(settings.buyerCountry || inferBuyerCountry());
   selectedWantListId = textOf(settings.selectedWantListId);
   restoredWantListId = selectedWantListId;
-  setSelectedSellerCountries(DEFAULT_SELLER_COUNTRIES);
+  setSelectedSellerCountries(getStoredSellerCountries(settings));
 }
 
 async function loadDetachedBatchState() {
