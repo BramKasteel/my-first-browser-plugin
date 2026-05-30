@@ -19,11 +19,9 @@ from .models import (
 )
 
 MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
-WARM_START_MAX_TIME_SECONDS = 6
-IMPROVEMENT_MAX_TIME_SECONDS = 9
+MAX_TIME_SECONDS = 15
 SOLVER_ABSOLUTE_GAP_LIMIT = 10
 SOLVER_NUM_SEARCH_WORKERS = 8
-SELLER_DOMINANCE_MAX_DISTINCT_ITEMS = 2
 
 
 def _to_cents(amount: float) -> int:
@@ -110,95 +108,6 @@ def _selection_shipping_cost_cents(
         return min(valid_tier_costs) if valid_tier_costs else None
 
     return MISSING_ROUTE_DATA_PENALTY_CENTS
-
-
-def _build_route_min_shipping_warm_start(
-    *,
-    cp_model,
-    request: OptimizationRequest,
-    usable_offers: list[Offer],
-    item_map: dict[str, WantedItem],
-    seller_map: dict[str, object],
-    route_book: shipping.ShippingRouteBook,
-) -> tuple[dict[str, int], dict[str, int], str]:
-    if not usable_offers:
-        return {}, {}, "skipped"
-
-    hint_model = cp_model.CpModel()
-    hint_offer_vars = {}
-    hint_seller_active_vars = {}
-    seller_offers: dict[str, list[Offer]] = defaultdict(list)
-
-    for offer in usable_offers:
-        seller_offers[offer.seller_id].append(offer)
-        capped_quantity = _capped_offer_quantity(offer, item_map)
-        hint_offer_vars[offer.offer_id] = _new_quantity_var(
-            hint_model,
-            upper_bound=capped_quantity,
-            name=f"warm_qty_{offer.offer_id}",
-        )
-
-    for seller_id in seller_offers:
-        hint_seller_active_vars[seller_id] = hint_model.NewBoolVar(
-            f"warm_seller_active_{seller_id}"
-        )
-
-    for item in request.items:
-        hint_model.Add(
-            sum(
-                hint_offer_vars[offer.offer_id]
-                for offer in usable_offers
-                if offer.item_id == item.item_id
-            )
-            == item.quantity
-        )
-
-    for seller_id, offers in seller_offers.items():
-        active = hint_seller_active_vars[seller_id]
-        total_units = sum(hint_offer_vars[offer.offer_id] for offer in offers)
-        max_units = sum(_capped_offer_quantity(offer, item_map) for offer in offers)
-        hint_model.Add(total_units <= max_units * active)
-        hint_model.Add(total_units >= active)
-
-    if request.preferences.max_sellers is not None:
-        hint_model.Add(
-            sum(hint_seller_active_vars.values()) <= request.preferences.max_sellers
-        )
-
-    hint_model.Minimize(
-        sum(
-            _to_cents(offer.unit_price) * hint_offer_vars[offer.offer_id]
-            for offer in usable_offers
-        )
-        + sum(
-            shipping.minimum_shipping_cost_cents(
-                seller_country=seller_map[seller_id].country,
-                buyer_country=request.buyer_country,
-                route_book=route_book,
-                missing_route_cost_cents=MISSING_ROUTE_DATA_PENALTY_CENTS,
-            )
-            * hint_seller_active_vars[seller_id]
-            for seller_id in seller_offers
-        )
-    )
-
-    hint_solver = _new_solver(cp_model, max_time_seconds=WARM_START_MAX_TIME_SECONDS)
-    status = hint_solver.Solve(hint_model)
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return {}, {}, _cp_sat_status_name(cp_model, status)
-
-    return (
-        {
-            offer_id: hint_solver.Value(var)
-            for offer_id, var in hint_offer_vars.items()
-            if hint_solver.Value(var) > 0
-        },
-        {
-            seller_id: hint_solver.Value(var)
-            for seller_id, var in hint_seller_active_vars.items()
-        },
-        _cp_sat_status_name(cp_model, status),
-    )
 
 
 def _assignment_total_cost_cents(
@@ -410,70 +319,8 @@ def _solve_exact_shipping_order(
     if request.preferences.max_sellers is not None:
         model.Add(sum(seller_active_exprs.values()) <= request.preferences.max_sellers)
 
-    warm_start_offer_values, _, warm_start_status = (
-        _build_route_min_shipping_warm_start(
-            cp_model=cp_model,
-            request=request,
-            usable_offers=usable_offers,
-            item_map=item_map,
-            seller_map=seller_map,
-            route_book=route_book,
-        )
-    )
-    warm_start_seller_values = {
-        seller_id: int(
-            any(
-                offer.seller_id == seller_id
-                and warm_start_offer_values.get(offer.offer_id, 0) > 0
-                for offer in usable_offers
-            )
-        )
-        for seller_id in seller_active_vars
-    }
-    for offer_id, value in warm_start_offer_values.items():
-        model.AddHint(offer_vars[offer_id], value)
-    for seller_id, value in warm_start_seller_values.items():
-        model.AddHint(seller_active_vars[seller_id], value)
-    for seller_id, tier_choices in seller_shipping_tier_choice_vars.items():
-        warm_selected_offer_quantities = {
-            offer.offer_id: warm_start_offer_values.get(offer.offer_id, 0)
-            for offer in seller_offers[seller_id]
-            if warm_start_offer_values.get(offer.offer_id, 0) > 0
-        }
-        if not warm_selected_offer_quantities:
-            for _, tier_var in tier_choices:
-                model.AddHint(tier_var, 0)
-            continue
-
-        warm_total_cost_cents = _assignment_total_cost_cents(
-            offer_quantities=warm_selected_offer_quantities,
-            offer_by_id={offer.offer_id: offer for offer in seller_offers[seller_id]},
-            seller_map=seller_map,
-            buyer_country=request.buyer_country,
-            route_book=route_book,
-        )
-        warm_item_cost_cents = sum(
-            _to_cents(offer.unit_price) * quantity
-            for offer in seller_offers[seller_id]
-            if (quantity := warm_selected_offer_quantities.get(offer.offer_id, 0)) > 0
-        )
-        warm_shipping_cost_cents = None
-        if warm_total_cost_cents is not None:
-            warm_shipping_cost_cents = warm_total_cost_cents - warm_item_cost_cents
-
-        matched_tier = False
-        for tier, tier_var in tier_choices:
-            tier_selected = int(warm_shipping_cost_cents == tier.total_price_cents)
-            model.AddHint(tier_var, tier_selected)
-            matched_tier = matched_tier or bool(tier_selected)
-
-        if not matched_tier:
-            for _, tier_var in tier_choices:
-                model.AddHint(tier_var, 0)
-
     model.Minimize(sum(objective_terms))
-
-    solver = _new_solver(cp_model, max_time_seconds=IMPROVEMENT_MAX_TIME_SECONDS)
+    solver = _new_solver(cp_model, max_time_seconds=MAX_TIME_SECONDS)
     status = solver.Solve(model)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -485,7 +332,7 @@ def _solve_exact_shipping_order(
         for offer in usable_offers
         if solver.Value(offer_vars[offer.offer_id]) > 0
     }
-    return solution_status, selected_offer_quantities, warm_start_status
+    return solution_status, selected_offer_quantities
 
 
 def _prune_dominated_offers_per_seller(
@@ -645,7 +492,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
             notes=["Solver found no feasible solution."],
         )
 
-    solution_status, selected_offer_quantities, warm_start_status = solution
+    solution_status, selected_offer_quantities = solution
 
     allocations = []
     cart_items_by_seller = defaultdict(list)
@@ -739,47 +586,14 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
     total_units = sum(seller_unit_totals.values())
 
     notes = []
-    notes.append(
-        "Solve uses two phases: warm start with cheapest per-seller route floor, then main solve with exact imported shipping tiers."
-    )
-    if warm_start_status == "optimal":
-        notes.append(
-            "Warm-start floor solve proved optimal and seeded hints for exact solve."
-        )
-    elif warm_start_status == "feasible":
-        notes.append(
-            "Warm-start floor solve found feasible solution before proof of optimality and seeded hints for exact solve."
-        )
-    else:
-        notes.append(
-            f"Warm-start floor solve status: {warm_start_status}. Exact solve ran without warm-start hints."
-        )
-    notes.append(
-        "Exact shipping costs use selected item value and card-count letter thresholds (4/17/40 cards)."
-    )
-    if any(
-        not route_book.lookup_tiers(
-            seller_country=seller_map[seller.seller_id].country,
-            buyer_country=request.buyer_country,
-        ).letter_tiers
-        and not route_book.lookup_tiers(
-            seller_country=seller_map[seller.seller_id].country,
-            buyer_country=request.buyer_country,
-        ).parcel_tiers
-        for seller in chosen_sellers
-    ):
-        notes.append(
-            f"Missing imported route data gets penalty shipping cost of {_from_cents(MISSING_ROUTE_DATA_PENALTY_CENTS):.2f} {request.currency} per seller."
-        )
 
     if solution_status == "feasible":
         notes.append(
-            "Solver hit time limit before proving optimality. Returning best known feasible order."
+            "Solver hit time limit before proving optimality. Returning best known order."
         )
 
     return OptimizationResponse(
         status=solution_status,
-        warm_start_status=warm_start_status,
         currency=request.currency,
         totals=OptimizationTotals(
             item_subtotal=_from_cents(item_subtotal),

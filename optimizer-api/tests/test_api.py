@@ -30,15 +30,12 @@ EXPECTED_FIXTURE_RESULTS = {
 
 EXPECTED_FIXTURE_MODEL_SIZES = {
     "big_list": {
-        "warm_start": {"variables": 17649, "constraints": 5105},
         "exact": {"variables": 20685, "constraints": 13595},
     },
     "ob_nixilis_improvements": {
-        "warm_start": {"variables": 3982, "constraints": 1893},
         "exact": {"variables": 5001, "constraints": 4867},
     },
     "small_wantslist": {
-        "warm_start": {"variables": 644, "constraints": 598},
         "exact": {"variables": 943, "constraints": 1493},
     },
 }
@@ -71,8 +68,7 @@ def model_sizes_for_request(request: OptimizationRequest) -> dict[str, dict[str,
     with patch.object(cp_model.CpSolver, "Solve", wrapped_solve):
         optimize_order(request)
 
-    assert len(captures) == 2, "Expected warm-start and exact solve model captures"
-    return {"warm_start": captures[0], "exact": captures[1]}
+    return {"exact": captures[0]}
 
 
 @pytest.fixture
@@ -152,7 +148,6 @@ def test_real_request_fixtures_acceptance(
     assert body["status"] in {"optimal", "feasible", "infeasible"}
     assert set(body.keys()) == {
         "status",
-        "warm_start_status",
         "currency",
         "totals",
         "chosen_sellers",
@@ -176,31 +171,6 @@ def test_real_request_fixtures_acceptance(
                 expected["grand_total"], abs=MONEY_TOLERANCE
             )
         assert len(body["allocations"]) == expected["allocation_count"]
-
-
-def test_real_request_fixture_directory_exists() -> None:
-    assert FIXTURE_REQUESTS_DIR.is_dir()
-
-
-@pytest.mark.parametrize(
-    "fixture_path", real_request_fixture_paths(), ids=lambda path: path.stem
-)
-@pytest.mark.fixture_case
-def test_real_request_fixture_warm_start_model_size_ceiling(fixture_path: Path) -> None:
-    payload = load_json(fixture_path)
-    request = OptimizationRequest.model_validate(payload)
-
-    actual = model_sizes_for_request(request)["warm_start"]
-    expected = EXPECTED_FIXTURE_MODEL_SIZES[fixture_path.stem]["warm_start"]
-
-    assert actual["variables"] <= expected["variables"], (
-        f"Warm-start variables grew for {fixture_path.stem}: "
-        f"{actual['variables']} > {expected['variables']}"
-    )
-    assert actual["constraints"] <= expected["constraints"], (
-        f"Warm-start constraints grew for {fixture_path.stem}: "
-        f"{actual['constraints']} > {expected['constraints']}"
-    )
 
 
 @pytest.mark.parametrize(

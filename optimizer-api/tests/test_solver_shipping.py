@@ -13,15 +13,11 @@ from app.shipping import (
     ShippingTier,
 )
 from app.solver import (
-    IMPROVEMENT_MAX_TIME_SECONDS,
     MISSING_ROUTE_DATA_PENALTY_CENTS,
-    WARM_START_MAX_TIME_SECONDS,
-    _build_route_min_shipping_warm_start,
     _prune_cheapest_single_item_sellers,
     _prune_dominated_offers_per_seller,
     optimize_order,
 )
-from ortools.sat.python import cp_model
 
 
 def _tiers(
@@ -144,65 +140,6 @@ def test_optimize_uses_penalty_shipping_for_missing_imported_route(monkeypatch) 
 
     assert response.status == "optimal"
     assert response.totals.shipping_total == MISSING_ROUTE_DATA_PENALTY_CENTS / 100
-
-
-def test_warm_start_keeps_feasible_solution(monkeypatch) -> None:
-    request = _request(unit_price=1.0, quantity=1)
-    seller_map = {seller.seller_id: seller for seller in request.sellers}
-    item_map = {item.item_id: item for item in request.items}
-    route_book = ShippingRouteBook(
-        country_ids={"germany": 7, "netherlands": 23},
-        tiers_by_route={},
-    )
-
-    original_solve = cp_model.CpSolver.Solve
-
-    def wrapped_solve(self, model):
-        original_solve(self, model)
-        return cp_model.FEASIBLE
-
-    monkeypatch.setattr(cp_model.CpSolver, "Solve", wrapped_solve)
-
-    offer_values, seller_values, warm_start_status = (
-        _build_route_min_shipping_warm_start(
-            cp_model=cp_model,
-            request=request,
-            usable_offers=request.offers,
-            item_map=item_map,
-            seller_map=seller_map,
-            route_book=route_book,
-        )
-    )
-
-    assert offer_values == {"offer-1": 1}
-    assert seller_values == {"seller-1": 1}
-    assert warm_start_status == "feasible"
-
-
-def test_optimize_uses_configured_improvement_budget(monkeypatch) -> None:
-    route_book = ShippingRouteBook(
-        country_ids={"germany": 7, "netherlands": 23},
-        tiers_by_route={},
-    )
-    monkeypatch.setattr(
-        "app.solver.shipping.load_shipping_route_book", lambda: route_book
-    )
-
-    original_solve = cp_model.CpSolver.Solve
-    seen_time_limits: list[float] = []
-
-    def wrapped_solve(self, model):
-        seen_time_limits.append(self.parameters.max_time_in_seconds)
-        return original_solve(self, model)
-
-    monkeypatch.setattr(cp_model.CpSolver, "Solve", wrapped_solve)
-
-    response = optimize_order(_request(unit_price=1.0, quantity=1))
-
-    assert response.status == "optimal"
-    assert len(seen_time_limits) >= 2
-    assert seen_time_limits[0] == WARM_START_MAX_TIME_SECONDS
-    assert seen_time_limits[1] == IMPROVEMENT_MAX_TIME_SECONDS
 
 
 def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
