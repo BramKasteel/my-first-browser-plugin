@@ -22,6 +22,12 @@ MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
 MAX_TIME_SECONDS = 15
 SOLVER_ABSOLUTE_GAP_LIMIT = 10
 SOLVER_NUM_SEARCH_WORKERS = 8
+SELLER_POOL_MIN_SELLERS = 200
+SELLER_POOL_ITEM_CANDIDATES = 8
+SELLER_POOL_TOP_COVERAGE = 64
+SELLER_POOL_MAX_EXPANSION_SELLERS = 96
+SELLER_POOL_MAX_ROUNDS = 2
+SELLER_POOL_RESTRICTED_TIME_SECONDS = 3.0
 
 
 def _to_cents(amount: float) -> int:
@@ -105,6 +111,207 @@ def _selection_shipping_cost_cents(
     return MISSING_ROUTE_DATA_PENALTY_CENTS
 
 
+def _build_offer_indexes(
+    offers: list[Offer],
+) -> tuple[dict[str, list[Offer]], dict[str, list[Offer]]]:
+    offers_by_item: dict[str, list[Offer]] = defaultdict(list)
+    offers_by_seller: dict[str, list[Offer]] = defaultdict(list)
+    for offer in offers:
+        offers_by_item[offer.item_id].append(offer)
+        offers_by_seller[offer.seller_id].append(offer)
+    return dict(offers_by_item), dict(offers_by_seller)
+
+
+def _seller_minimum_shipping_costs_cents(
+    *,
+    seller_ids: set[str],
+    seller_map: dict[str, object],
+    buyer_country: str,
+    route_book: shipping.ShippingRouteBook,
+) -> dict[str, int]:
+    return {
+        seller_id: shipping.minimum_shipping_cost_cents(
+            seller_country=seller_map[seller_id].country,
+            buyer_country=buyer_country,
+            route_book=route_book,
+            missing_route_cost_cents=MISSING_ROUTE_DATA_PENALTY_CENTS,
+        )
+        for seller_id in seller_ids
+    }
+
+
+def _seller_pool_offer_rank(
+    *,
+    offer: Offer,
+    item_map: dict[str, WantedItem],
+    minimum_shipping_costs: dict[str, int],
+    distinct_item_counts: dict[str, int],
+) -> tuple[int, int, int, int, str, str]:
+    distinct_item_count = max(distinct_item_counts[offer.seller_id], 1)
+    amortized_shipping_cost = (
+        minimum_shipping_costs[offer.seller_id] + distinct_item_count - 1
+    ) // distinct_item_count
+    return (
+        offer.unit_price_cents * _capped_offer_quantity(offer, item_map)
+        + amortized_shipping_cost,
+        offer.unit_price_cents,
+        -distinct_item_count,
+        -offer.available_quantity,
+        offer.seller_id,
+        offer.offer_id,
+    )
+
+
+def _seed_seller_pool(
+    *,
+    request: OptimizationRequest,
+    item_map: dict[str, WantedItem],
+    offers_by_item: dict[str, list[Offer]],
+    offers_by_seller: dict[str, list[Offer]],
+    minimum_shipping_costs: dict[str, int],
+) -> set[str]:
+    seller_pool: set[str] = set()
+
+    distinct_item_counts: dict[str, int] = {
+        seller_id: len({offer.item_id for offer in offers})
+        for seller_id, offers in offers_by_seller.items()
+    }
+
+    top_coverage_sellers = sorted(
+        offers_by_seller,
+        key=lambda seller_id: (
+            -distinct_item_counts[seller_id],
+            minimum_shipping_costs[seller_id],
+            seller_id,
+        ),
+    )[:SELLER_POOL_TOP_COVERAGE]
+    seller_pool.update(top_coverage_sellers)
+
+    for item in request.items:
+        item_offers = offers_by_item.get(item.item_id, [])
+        if not item_offers:
+            continue
+
+        item_seller_ids = {offer.seller_id for offer in item_offers}
+        if len(item_seller_ids) == 1:
+            seller_pool.update(item_seller_ids)
+            continue
+
+        ranked_offers = sorted(
+            item_offers,
+            key=lambda offer: _seller_pool_offer_rank(
+                offer=offer,
+                item_map=item_map,
+                minimum_shipping_costs=minimum_shipping_costs,
+                distinct_item_counts=distinct_item_counts,
+            ),
+        )
+
+        added = 0
+        for offer in ranked_offers:
+            if offer.seller_id in seller_pool:
+                continue
+            seller_pool.add(offer.seller_id)
+            added += 1
+            if added >= SELLER_POOL_ITEM_CANDIDATES:
+                break
+
+    return seller_pool
+
+
+def _selected_item_price_caps_cents(
+    *,
+    offer_quantities: dict[str, int],
+    offer_by_id: dict[str, Offer],
+) -> dict[str, int]:
+    item_price_caps: dict[str, int] = {}
+    for offer_id, quantity in offer_quantities.items():
+        if quantity <= 0:
+            continue
+        offer = offer_by_id[offer_id]
+        item_price_caps[offer.item_id] = max(
+            item_price_caps.get(offer.item_id, 0),
+            offer.unit_price_cents,
+        )
+    return item_price_caps
+
+
+def _expand_seller_pool(
+    *,
+    request: OptimizationRequest,
+    item_map: dict[str, WantedItem],
+    offers_by_item: dict[str, list[Offer]],
+    distinct_item_counts: dict[str, int],
+    seller_pool: set[str],
+    minimum_shipping_costs: dict[str, int],
+    offer_quantities: dict[str, int] | None,
+    offer_by_id: dict[str, Offer],
+) -> set[str]:
+    seller_scores: dict[str, int] = defaultdict(int)
+    item_price_caps = (
+        _selected_item_price_caps_cents(
+            offer_quantities=offer_quantities,
+            offer_by_id=offer_by_id,
+        )
+        if offer_quantities
+        else {}
+    )
+
+    for item in request.items:
+        item_offers = offers_by_item.get(item.item_id, [])
+        if not item_offers:
+            continue
+
+        ranked_offers = sorted(
+            item_offers,
+            key=lambda offer: _seller_pool_offer_rank(
+                offer=offer,
+                item_map=item_map,
+                minimum_shipping_costs=minimum_shipping_costs,
+                distinct_item_counts=distinct_item_counts,
+            ),
+        )
+
+        incumbent_price_cap = item_price_caps.get(item.item_id)
+        item_candidates = 0
+        for offer in ranked_offers:
+            if offer.seller_id in seller_pool:
+                continue
+
+            if incumbent_price_cap is not None:
+                potential_delta = incumbent_price_cap - offer.unit_price_cents
+                if potential_delta <= 0:
+                    continue
+                seller_scores[offer.seller_id] += potential_delta * min(
+                    item.quantity,
+                    offer.available_quantity,
+                )
+            else:
+                seller_scores[offer.seller_id] += 1
+
+            item_candidates += 1
+            if item_candidates >= 2:
+                break
+
+    ranked_sellers = sorted(
+        (
+            (score - minimum_shipping_costs[seller_id], seller_id)
+            for seller_id, score in seller_scores.items()
+        ),
+        key=lambda candidate: (-candidate[0], candidate[1]),
+    )
+
+    expansion: set[str] = set()
+    for score, seller_id in ranked_sellers:
+        if score <= 0 and offer_quantities:
+            continue
+        expansion.add(seller_id)
+        if len(expansion) >= SELLER_POOL_MAX_EXPANSION_SELLERS:
+            break
+
+    return expansion
+
+
 def _assignment_total_cost_cents(
     *,
     offer_quantities: dict[str, int],
@@ -171,6 +378,10 @@ def _solve_exact_shipping_order(
     item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
     route_book: shipping.ShippingRouteBook,
+    offers_by_item: dict[str, list[Offer]] | None = None,
+    offers_by_seller: dict[str, list[Offer]] | None = None,
+    offer_quantity_hints: dict[str, int] | None = None,
+    max_time_seconds: float | None = MAX_TIME_SECONDS,
 ) -> tuple[str, dict[str, int]] | None:
     model = cp_model.CpModel()
 
@@ -181,14 +392,23 @@ def _solve_exact_shipping_order(
     seller_value_upper_bounds = {}
     seller_weight_upper_bounds = {}
 
-    seller_offers = defaultdict(list)
+    if offers_by_item is None or offers_by_seller is None:
+        offers_by_item, offers_by_seller = _build_offer_indexes(usable_offers)
+
+    seller_offers = offers_by_seller
     for offer in usable_offers:
-        seller_offers[offer.seller_id].append(offer)
         offer_vars[offer.offer_id] = _new_quantity_var(
             model,
             upper_bound=offer.available_quantity,
             name=f"qty_{offer.offer_id}",
         )
+
+    if offer_quantity_hints is not None:
+        for offer in usable_offers:
+            model.AddHint(
+                offer_vars[offer.offer_id],
+                offer_quantity_hints.get(offer.offer_id, 0),
+            )
 
     for seller_id, offers in seller_offers.items():
         seller_value_upper_bounds[seller_id] = sum(
@@ -220,8 +440,7 @@ def _solve_exact_shipping_order(
         model.Add(
             sum(
                 offer_vars[offer.offer_id]
-                for offer in usable_offers
-                if offer.item_id == item.item_id
+                for offer in offers_by_item.get(item.item_id, [])
             )
             == item.quantity
         )
@@ -304,7 +523,7 @@ def _solve_exact_shipping_order(
         model.Add(sum(seller_active_exprs.values()) <= request.preferences.max_sellers)
 
     model.Minimize(sum(objective_terms))
-    solver = _new_solver(cp_model, max_time_seconds=MAX_TIME_SECONDS)
+    solver = _new_solver(cp_model, max_time_seconds=max_time_seconds)
     status = solver.Solve(model)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -317,6 +536,107 @@ def _solve_exact_shipping_order(
         if solver.Value(offer_vars[offer.offer_id]) > 0
     }
     return solution_status, selected_offer_quantities
+
+
+def _solve_with_seller_pool_expansion(
+    *,
+    cp_model,
+    request: OptimizationRequest,
+    usable_offers: list[Offer],
+    item_map: dict[str, WantedItem],
+    seller_map: dict[str, object],
+    route_book: shipping.ShippingRouteBook,
+) -> tuple[str, dict[str, int]] | None:
+    offers_by_item, offers_by_seller = _build_offer_indexes(usable_offers)
+    seller_ids = set(offers_by_seller)
+    if len(seller_ids) < SELLER_POOL_MIN_SELLERS:
+        return _solve_exact_shipping_order(
+            cp_model=cp_model,
+            request=request,
+            usable_offers=usable_offers,
+            item_map=item_map,
+            seller_map=seller_map,
+            route_book=route_book,
+            offers_by_item=offers_by_item,
+            offers_by_seller=offers_by_seller,
+        )
+
+    minimum_shipping_costs = _seller_minimum_shipping_costs_cents(
+        seller_ids=seller_ids,
+        seller_map=seller_map,
+        buyer_country=request.buyer_country,
+        route_book=route_book,
+    )
+    distinct_item_counts: dict[str, int] = {
+        seller_id: len({offer.item_id for offer in offers})
+        for seller_id, offers in offers_by_seller.items()
+    }
+    seller_pool = _seed_seller_pool(
+        request=request,
+        item_map=item_map,
+        offers_by_item=offers_by_item,
+        offers_by_seller=offers_by_seller,
+        minimum_shipping_costs=minimum_shipping_costs,
+    )
+
+    incumbent_solution: tuple[str, dict[str, int]] | None = None
+    offer_by_id = {offer.offer_id: offer for offer in usable_offers}
+
+    for _ in range(SELLER_POOL_MAX_ROUNDS):
+        if seller_pool >= seller_ids:
+            break
+
+        restricted_offers = [
+            offer for offer in usable_offers if offer.seller_id in seller_pool
+        ]
+        restricted_offers_by_item, restricted_offers_by_seller = _build_offer_indexes(
+            restricted_offers
+        )
+        restricted_solution = _solve_exact_shipping_order(
+            cp_model=cp_model,
+            request=request,
+            usable_offers=restricted_offers,
+            item_map=item_map,
+            seller_map=seller_map,
+            route_book=route_book,
+            offers_by_item=restricted_offers_by_item,
+            offers_by_seller=restricted_offers_by_seller,
+            offer_quantity_hints=(
+                incumbent_solution[1] if incumbent_solution else None
+            ),
+            max_time_seconds=SELLER_POOL_RESTRICTED_TIME_SECONDS,
+        )
+        if restricted_solution is not None:
+            incumbent_solution = restricted_solution
+
+        expansion = _expand_seller_pool(
+            request=request,
+            item_map=item_map,
+            offers_by_item=offers_by_item,
+            distinct_item_counts=distinct_item_counts,
+            seller_pool=seller_pool,
+            minimum_shipping_costs=minimum_shipping_costs,
+            offer_quantities=(incumbent_solution[1] if incumbent_solution else None),
+            offer_by_id=offer_by_id,
+        )
+        if not expansion:
+            break
+        seller_pool.update(expansion)
+
+    if seller_pool >= seller_ids and incumbent_solution is not None:
+        return incumbent_solution
+
+    return _solve_exact_shipping_order(
+        cp_model=cp_model,
+        request=request,
+        usable_offers=usable_offers,
+        item_map=item_map,
+        seller_map=seller_map,
+        route_book=route_book,
+        offers_by_item=offers_by_item,
+        offers_by_seller=offers_by_seller,
+        offer_quantity_hints=(incumbent_solution[1] if incumbent_solution else None),
+    )
 
 
 def _prune_dominated_offers_per_seller(
@@ -459,7 +779,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
 
     route_book = shipping.load_shipping_route_book()
 
-    solution = _solve_exact_shipping_order(
+    solution = _solve_with_seller_pool_expansion(
         cp_model=cp_model,
         request=request,
         usable_offers=usable_offers,

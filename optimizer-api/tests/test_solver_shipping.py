@@ -14,8 +14,11 @@ from app.shipping import (
 )
 from app.solver import (
     MISSING_ROUTE_DATA_PENALTY_CENTS,
+    _build_offer_indexes,
     _prune_cheapest_single_item_sellers,
     _prune_dominated_offers_per_seller,
+    _seed_seller_pool,
+    _seller_minimum_shipping_costs_cents,
     optimize_order,
 )
 
@@ -227,6 +230,145 @@ def test_optimize_uses_exact_shipping_objective_for_final_choice(
     assert response.totals.item_subtotal == 12.0
     assert response.totals.shipping_total == 2.5
     assert response.totals.grand_total == 14.5
+
+
+def test_optimize_falls_back_to_full_seller_set_when_seed_misses_best_bundle(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(
+                values=[(150, 50000, 1000)],
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+    monkeypatch.setattr("app.solver.SELLER_POOL_MIN_SELLERS", 1)
+    monkeypatch.setattr("app.solver.SELLER_POOL_ITEM_CANDIDATES", 1)
+    monkeypatch.setattr("app.solver.SELLER_POOL_TOP_COVERAGE", 0)
+    monkeypatch.setattr("app.solver.SELLER_POOL_MAX_ROUNDS", 1)
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[
+            WantedItem(item_id="item-1", name="Card 1", quantity=1),
+            WantedItem(item_id="item-2", name="Card 2", quantity=1),
+        ],
+        sellers=[
+            Seller(seller_id="seller-a", name="Seller A", country="Germany"),
+            Seller(seller_id="seller-b", name="Seller B", country="Germany"),
+            Seller(seller_id="seller-c", name="Seller C", country="Germany"),
+        ],
+        offers=[
+            Offer(
+                offer_id="offer-a",
+                item_id="item-1",
+                seller_id="seller-a",
+                unit_price=1.0,
+                available_quantity=1,
+            ),
+            Offer(
+                offer_id="offer-b",
+                item_id="item-2",
+                seller_id="seller-b",
+                unit_price=1.0,
+                available_quantity=1,
+            ),
+            Offer(
+                offer_id="offer-c1",
+                item_id="item-1",
+                seller_id="seller-c",
+                unit_price=1.6,
+                available_quantity=1,
+            ),
+            Offer(
+                offer_id="offer-c2",
+                item_id="item-2",
+                seller_id="seller-c",
+                unit_price=1.6,
+                available_quantity=1,
+            ),
+        ],
+        preferences=OptimizationPreferences(),
+    )
+
+    response = optimize_order(request)
+
+    assert response.status == "optimal"
+    assert [seller.seller_id for seller in response.cart.sellers] == ["seller-c"]
+    assert response.totals.grand_total == 4.7
+
+
+def test_seed_seller_pool_prefers_multi_item_seller_when_shipping_can_be_shared(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(
+                values=[(155, 50000, 1000)],
+            )
+        },
+    )
+    monkeypatch.setattr("app.solver.SELLER_POOL_TOP_COVERAGE", 0)
+    monkeypatch.setattr("app.solver.SELLER_POOL_ITEM_CANDIDATES", 1)
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[
+            WantedItem(item_id="item-1", name="Card 1", quantity=1),
+            WantedItem(item_id="item-2", name="Card 2", quantity=1),
+        ],
+        sellers=[
+            Seller(seller_id="single", name="Single", country="Germany"),
+            Seller(seller_id="bundle", name="Bundle", country="Germany"),
+        ],
+        offers=[
+            Offer(
+                offer_id="offer-single",
+                item_id="item-1",
+                seller_id="single",
+                unit_price=2.0,
+                available_quantity=1,
+            ),
+            Offer(
+                offer_id="offer-bundle-1",
+                item_id="item-1",
+                seller_id="bundle",
+                unit_price=2.4,
+                available_quantity=1,
+            ),
+            Offer(
+                offer_id="offer-bundle-2",
+                item_id="item-2",
+                seller_id="bundle",
+                unit_price=2.4,
+                available_quantity=1,
+            ),
+        ],
+        preferences=OptimizationPreferences(),
+    )
+
+    offers_by_item, offers_by_seller = _build_offer_indexes(request.offers)
+    minimum_shipping_costs = _seller_minimum_shipping_costs_cents(
+        seller_ids=set(offers_by_seller),
+        seller_map=request.seller_map(),
+        buyer_country=request.buyer_country,
+        route_book=route_book,
+    )
+
+    seller_pool = _seed_seller_pool(
+        request=request,
+        item_map=request.item_map(),
+        offers_by_item=offers_by_item,
+        offers_by_seller=offers_by_seller,
+        minimum_shipping_costs=minimum_shipping_costs,
+    )
+
+    assert seller_pool == {"bundle"}
 
 
 def test_optimize_returns_empty_cart_summary_for_infeasible_request() -> None:
