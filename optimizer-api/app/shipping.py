@@ -9,6 +9,7 @@ from pathlib import Path
 SHIPPING_DATA_PATH = Path(__file__).with_name("data") / "shipping_costs.json"
 LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
 APPROX_GRAMS_PER_CARD = 2.5
+PARCEL_CARD_ORDER_MAX_WEIGHT_GRAMS = 1000
 
 
 def _is_card_order_excluded_method(name: str) -> bool:
@@ -81,8 +82,7 @@ class ShippingTier:
 
 @dataclass(frozen=True)
 class ShippingRouteTiers:
-    letter_tiers: tuple[ShippingTier, ...]
-    parcel_tiers: tuple[ShippingTier, ...]
+    tiers: tuple[ShippingTier, ...]
 
 
 @dataclass(frozen=True)
@@ -101,88 +101,59 @@ class ShippingRouteBook:
         seller_country: str,
         buyer_country: str,
         seller_value_upper_bound: int | None = None,
-        seller_card_upper_bound: int | None = None,
+        seller_weight_upper_bound: int | None = None,
     ) -> ShippingRouteTiers:
         route_tiers = self.tiers_by_route.get(
             (
                 normalize_country_name(seller_country),
                 normalize_country_name(buyer_country),
             ),
-            ShippingRouteTiers(letter_tiers=(), parcel_tiers=()),
+            ShippingRouteTiers(tiers=()),
         )
-        if seller_value_upper_bound is None or seller_card_upper_bound is None:
+        if seller_value_upper_bound is None or seller_weight_upper_bound is None:
             return route_tiers
         return prune_route_tiers_for_order_bounds(
             route_tiers=route_tiers,
             seller_value_upper_bound=seller_value_upper_bound,
-            seller_card_upper_bound=seller_card_upper_bound,
+            seller_weight_upper_bound=seller_weight_upper_bound,
         )
 
 
-def _shipping_tier_capacity(tier: ShippingTier) -> int:
-    return max_cards_based_on_weight(tier.max_weight_grams)
+@lru_cache(maxsize=64)
+def card_weight_grams_for_quantity(quantity: int) -> int:
+    return (quantity * 5 + 1) // 2
 
 
-def _shipping_tier_sort_capacity(*, is_letter: bool, tier: ShippingTier) -> int:
-    card_limit = shipping_tier_card_limit(is_letter=is_letter, tier=tier)
-    return card_limit if card_limit is not None else 1_000_000_000
-
-
-def shipping_tier_card_limit(*, is_letter: bool, tier: ShippingTier) -> int | None:
+def _normalized_tier_max_weight_grams(*, is_letter: bool, max_weight_grams: int) -> int:
     if not is_letter:
-        return None
-    return _shipping_tier_capacity(tier)
-
-
-def _effective_tier_card_limit(
-    *,
-    is_letter: bool,
-    tier: ShippingTier,
-    seller_card_upper_bound: int,
-) -> int | None:
-    card_limit = shipping_tier_card_limit(is_letter=is_letter, tier=tier)
-    if card_limit is None:
-        return None
-    return min(card_limit, seller_card_upper_bound)
+        return PARCEL_CARD_ORDER_MAX_WEIGHT_GRAMS
+    # This uses the estimates provided by cardmarket -> 20gr: 4 cards, etc
+    # even though a card weighs 2.5 grams only
+    return card_weight_grams_for_quantity(max_cards_based_on_weight(max_weight_grams))
 
 
 def prune_route_tiers_for_order_bounds(
     *,
     route_tiers: ShippingRouteTiers,
     seller_value_upper_bound: int,
-    seller_card_upper_bound: int,
+    seller_weight_upper_bound: int,
 ) -> ShippingRouteTiers:
-    tier_candidates = [(True, tier) for tier in route_tiers.letter_tiers] + [
-        (False, tier) for tier in route_tiers.parcel_tiers
-    ]
-
     pruned = _prune_dominated_candidates(
-        tier_candidates,
-        sort_key=lambda candidate: (
-            candidate[1].total_price_cents,
-            -min(candidate[1].max_value_cents, seller_value_upper_bound),
-            -(
-                _effective_tier_card_limit(
-                    is_letter=candidate[0],
-                    tier=candidate[1],
-                    seller_card_upper_bound=seller_card_upper_bound,
-                )
-                or seller_card_upper_bound
-            ),
-            candidate[0],
+        list(route_tiers.tiers),
+        sort_key=lambda tier: (
+            tier.total_price_cents,
+            -min(tier.max_value_cents, seller_value_upper_bound),
+            -min(tier.max_weight_grams, seller_weight_upper_bound),
         ),
         dominates=lambda existing, candidate: _shipping_tier_dominates_for_order_bounds(
             existing=existing,
             candidate=candidate,
             seller_value_upper_bound=seller_value_upper_bound,
-            seller_card_upper_bound=seller_card_upper_bound,
+            seller_weight_upper_bound=seller_weight_upper_bound,
         ),
     )
 
-    return ShippingRouteTiers(
-        letter_tiers=tuple(tier for is_letter, tier in pruned if is_letter),
-        parcel_tiers=tuple(tier for is_letter, tier in pruned if not is_letter),
-    )
+    return ShippingRouteTiers(tiers=tuple(pruned))
 
 
 def _prune_dominated_candidates(
@@ -205,7 +176,7 @@ def _prune_dominated_candidates(
 def _normalize_route_tiers(
     raw_methods: list[dict[str, object]],
 ) -> "ShippingRouteTiers":
-    tier_candidates: list[tuple[bool, ShippingTier]] = []
+    tier_candidates: list[ShippingTier] = []
     for method in raw_methods:
         name = str(method.get("name", ""))
         if _is_card_order_excluded_method(name):
@@ -215,99 +186,56 @@ def _normalize_route_tiers(
             continue
 
         tier_candidates.append(
-            (
-                bool(method["isLetter"]),
-                ShippingTier(
-                    max_value_cents=parse_eur_to_cents(method["maxValue"]),
+            ShippingTier(
+                max_value_cents=parse_eur_to_cents(method["maxValue"]),
+                max_weight_grams=_normalized_tier_max_weight_grams(
+                    is_letter=bool(method["isLetter"]),
                     max_weight_grams=int(method["maxWeight"]),
-                    total_price_cents=parse_eur_to_cents(method["price"]),
                 ),
+                total_price_cents=parse_eur_to_cents(method["price"]),
             )
         )
 
     pruned_candidates = _prune_dominated_candidates(
         tier_candidates,
-        sort_key=lambda candidate: (
-            candidate[1].total_price_cents,
-            -candidate[1].max_value_cents,
-            -_shipping_tier_sort_capacity(is_letter=candidate[0], tier=candidate[1]),
-            candidate[0],
+        sort_key=lambda tier: (
+            tier.total_price_cents,
+            -tier.max_value_cents,
+            -tier.max_weight_grams,
         ),
         dominates=_shipping_tier_dominates,
     )
-    letter_tiers = tuple(tier for is_letter, tier in pruned_candidates if is_letter)
-    parcel_tiers = tuple(tier for is_letter, tier in pruned_candidates if not is_letter)
-
-    return ShippingRouteTiers(
-        letter_tiers=letter_tiers,
-        parcel_tiers=parcel_tiers,
-    )
+    return ShippingRouteTiers(tiers=tuple(pruned_candidates))
 
 
-def _shipping_tier_dominates(
-    existing: tuple[bool, ShippingTier],
-    candidate: tuple[bool, ShippingTier],
-) -> bool:
-    existing_is_letter, existing_tier = existing
-    candidate_is_letter, candidate_tier = candidate
-
-    existing_card_limit = shipping_tier_card_limit(
-        is_letter=existing_is_letter,
-        tier=existing_tier,
-    )
-    candidate_card_limit = shipping_tier_card_limit(
-        is_letter=candidate_is_letter,
-        tier=candidate_tier,
-    )
-
-    capacity_dominates = True
-    if existing_card_limit is not None and candidate_card_limit is not None:
-        capacity_dominates = existing_card_limit >= candidate_card_limit
-
+def _shipping_tier_dominates(existing: ShippingTier, candidate: ShippingTier) -> bool:
     return (
-        not (existing_is_letter and not candidate_is_letter)
-        and existing_tier.total_price_cents <= candidate_tier.total_price_cents
-        and existing_tier.max_value_cents >= candidate_tier.max_value_cents
-        and capacity_dominates
+        existing.total_price_cents <= candidate.total_price_cents
+        and existing.max_value_cents >= candidate.max_value_cents
+        and existing.max_weight_grams >= candidate.max_weight_grams
     )
 
 
 def _shipping_tier_dominates_for_order_bounds(
     *,
-    existing: tuple[bool, ShippingTier],
-    candidate: tuple[bool, ShippingTier],
+    existing: ShippingTier,
+    candidate: ShippingTier,
     seller_value_upper_bound: int,
-    seller_card_upper_bound: int,
+    seller_weight_upper_bound: int,
 ) -> bool:
-    existing_is_letter, existing_tier = existing
-    candidate_is_letter, candidate_tier = candidate
-
-    if existing_is_letter and not candidate_is_letter:
+    if existing.total_price_cents > candidate.total_price_cents:
         return False
 
-    if existing_tier.total_price_cents > candidate_tier.total_price_cents:
-        return False
-
-    if min(existing_tier.max_value_cents, seller_value_upper_bound) < min(
-        candidate_tier.max_value_cents,
+    if min(existing.max_value_cents, seller_value_upper_bound) < min(
+        candidate.max_value_cents,
         seller_value_upper_bound,
     ):
         return False
 
-    existing_card_cap = _effective_tier_card_limit(
-        is_letter=existing_is_letter,
-        tier=existing_tier,
-        seller_card_upper_bound=seller_card_upper_bound,
+    return min(existing.max_weight_grams, seller_weight_upper_bound) >= min(
+        candidate.max_weight_grams,
+        seller_weight_upper_bound,
     )
-    candidate_card_cap = _effective_tier_card_limit(
-        is_letter=candidate_is_letter,
-        tier=candidate_tier,
-        seller_card_upper_bound=seller_card_upper_bound,
-    )
-    if existing_card_cap is not None and candidate_card_cap is not None:
-        return existing_card_cap >= candidate_card_cap
-
-    return True
 
 
 def _route_key(from_country: str, to_country: str) -> tuple[str, str]:
@@ -352,8 +280,5 @@ def minimum_shipping_cost_cents(
         seller_country=seller_country,
         buyer_country=buyer_country,
     )
-    tier_costs = [
-        *(tier.total_price_cents for tier in route_tiers.letter_tiers),
-        *(tier.total_price_cents for tier in route_tiers.parcel_tiers),
-    ]
+    tier_costs = [tier.total_price_cents for tier in route_tiers.tiers]
     return min(tier_costs) if tier_costs else missing_route_cost_cents

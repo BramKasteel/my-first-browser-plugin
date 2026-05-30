@@ -30,13 +30,13 @@ EXPECTED_FIXTURE_RESULTS = {
 
 EXPECTED_FIXTURE_MODEL_SIZES = {
     "big_list": {
-        "exact": {"variables": 20685, "constraints": 13595},
+        "exact": {"variables": 20685, "constraints": 16111},
     },
     "ob_nixilis_improvements": {
-        "exact": {"variables": 5001, "constraints": 4867},
+        "exact": {"variables": 5001, "constraints": 5805},
     },
     "small_wantslist": {
-        "exact": {"variables": 943, "constraints": 1493},
+        "exact": {"variables": 943, "constraints": 1791},
     },
 }
 
@@ -149,6 +149,7 @@ def test_real_request_fixtures_acceptance(
     assert set(body.keys()) == {
         "status",
         "currency",
+        "warm_start_status",
         "totals",
         "chosen_sellers",
         "allocations",

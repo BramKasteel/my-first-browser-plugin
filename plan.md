@@ -19,28 +19,15 @@ Analyze current CP-SAT model in /home/bram/repos/my-first-browser-plugin/optimiz
 7. Only after the above, evaluate structural changes such as tier shortlisting, seller-item compression, two-stage item-vs-shipping repair, or master/subproblem decomposition.
 
 **Ranked options**
-1. Add explicit `sum(tier_vars) <= 1` for each seller with multiple tier choices. Cheap, safe, and likely improves propagation and branching.
-2. Cap exact `qty` variable upper bounds with `_capped_offer_quantity(...)` instead of raw `available_quantity`. Same feasible set, smaller domains.
 3. Pre-index offers and stop rescanning full offer list for each item and seller in /home/bram/repos/my-first-browser-plugin/optimizer-api/app/solver.py. Targets user suspicion that build/preprocessing is major pain.
-4. Improve tier hints: for each warm-selected seller, compute warm total value and card count and hint cheapest feasible tier, not only exact shipping-price match. Stronger incumbent guidance.
-5. Cache `_to_cents(offer.unit_price)` and capped quantities once per offer. Minor code change, likely meaningful on big_list.
 6. Add timing instrumentation and maybe solver log hooks so future work can distinguish build slowdown from CP-SAT search slowdown.
-7. Introduce staged seller shortlist: warm-start sellers plus top-k cheapest alternatives per item, expanding only when needed. Highest heuristic upside without permanent pruning.
 8. Extend pruning ideas from single-item sellers to small sellers with 2-3 wanted items, but only inside staged search. Avoid one-shot deletion of globally optimal combinations.
 9. Keep only 1-2 tier candidates per seller when safe after order-bound pruning, e.g. cheapest tier plus cheapest tier that materially expands value/card capacity. Could cut exact constraints a lot if many sellers still have multiple tiers.
-10. Seed solver with a greedy incumbent outside CP-SAT: cheapest per item, then merge onto overlapping sellers when shipping improves. Better anytime behavior than floor-only warm start.
-11. Skip warm-start on instances where it adds overhead but little guidance. Requires measurement first.
-12. Strengthen lower bounds in warm-start objective using more informative shipping floors than pure minimum-shipping cost.
 13. Apply LNS-style repair around incumbent neighborhoods if exact solve improves slowly after finding a feasible solution.
 14. Consider seller-item compression only if post-prune analysis shows many same-seller same-item duplicate buckets still survive. Current expectation is low priority for big_list because wanted quantities are mostly 1.
 15. Consider master/subproblem decomposition only if lighter-weight heuristics fail. High complexity, harder to validate, not first move.
 
 **Options by category**
-- Stronger warm starts:
-	- Feasibility-based tier hints instead of price-match hints.
-	- Greedy incumbent before CP-SAT.
-	- Better lower-bound shipping proxy in warm-start objective.
-	- Conditional skip of warm-start when its overhead outweighs value.
 - Fewer variables:
 	- Cap exact quantity domains.
 	- Seller shortlisting / iterative deepening.
@@ -57,17 +44,14 @@ Analyze current CP-SAT model in /home/bram/repos/my-first-browser-plugin/optimiz
 	- Master/subproblem decomposition only as late option.
 
 **Assumptions and simplifications worth testing**
-- Most sellers may effectively have only one relevant shipping tier after route-bound pruning and warm-start totals. If true, exact model can shrink a lot.
 - Many sellers are likely non-competitive once shipping is considered. If true, staged seller shortlisting can cut both build time and search time heavily.
 - big_list likely contains mostly quantity-1 wanted items. If true, current dominated-offer pruning already collapses most same-seller same-item duplicates, reducing value of seller-item compression.
 - High-quality heuristic output that beats Cardmarket is more important than proof of optimality. This favors staged search and incumbent-driven methods.
 
 **Relevant files**
-- /home/bram/repos/my-first-browser-plugin/optimizer-api/app/solver.py — main CP-SAT model, warm-start build, hint seeding, prune passes, objective, result assembly.
 - /home/bram/repos/my-first-browser-plugin/optimizer-api/app/shipping.py — route-tier pruning, dominance logic, card-limit abstraction, and shipping floors.
 - /home/bram/repos/my-first-browser-plugin/optimizer-api/app/models.py — request size limits and existing knobs like max_sellers.
 - /home/bram/repos/my-first-browser-plugin/optimizer-api/tests/test_api.py — fixture-driven model-size ceilings and fixture acceptance tests.
-- /home/bram/repos/my-first-browser-plugin/optimizer-api/tests/test_solver_shipping.py — correctness expectations for tier choice and warm-start behavior.
 - /home/bram/repos/my-first-browser-plugin/optimizer-api/tests/fixtures/requests/big_list.json — large-scale representative fixture for build-time and convergence experiments.
 
 **Verification**
@@ -78,7 +62,6 @@ Analyze current CP-SAT model in /home/bram/repos/my-first-browser-plugin/optimiz
 5. Track not only final wall time but also time to first feasible solution and objective quality at timeout.
 
 **Decisions**
-- Included: solver-only convergence ideas, pruning ideas, warm-start ideas, staged-search heuristics, and structural simplifications worth validating.
 - Excluded for now: browser extension scraping changes, API contract changes, infra changes, and broad product-scope work.
 - User prefers high-quality heuristic output that reliably beats Cardmarket website over strict proof of optimality.
 - User allows iterative deepening and more aggressive seller pruning, including possibly sellers with 2-3 wanted items, but is wary of one-shot heuristic pruning that could permanently remove true optimum.

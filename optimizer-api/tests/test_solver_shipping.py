@@ -20,25 +20,15 @@ from app.solver import (
 )
 
 
-def _tiers(
-    *, letter: list[tuple[int, int, int]], parcel: list[tuple[int, int, int]]
-) -> ShippingRouteTiers:
+def _tiers(*, values: list[tuple[int, int, int]]) -> ShippingRouteTiers:
     return ShippingRouteTiers(
-        letter_tiers=tuple(
+        tiers=tuple(
             ShippingTier(
                 total_price_cents=total_price_cents,
                 max_value_cents=max_value_cents,
                 max_weight_grams=max_weight_grams,
             )
-            for total_price_cents, max_value_cents, max_weight_grams in letter
-        ),
-        parcel_tiers=tuple(
-            ShippingTier(
-                total_price_cents=total_price_cents,
-                max_value_cents=max_value_cents,
-                max_weight_grams=max_weight_grams,
-            )
-            for total_price_cents, max_value_cents, max_weight_grams in parcel
+            for total_price_cents, max_value_cents, max_weight_grams in values
         ),
     )
 
@@ -74,8 +64,7 @@ def test_optimize_uses_imported_letter_shipping_when_weight_and_value_fit(
         country_ids={"germany": 7, "netherlands": 23},
         tiers_by_route={
             ("germany", "netherlands"): _tiers(
-                letter=[(155, 2500, 20)],
-                parcel=[(799, 50000, 5000)],
+                values=[(155, 2500, 10), (799, 50000, 1000)],
             )
         },
     )
@@ -96,8 +85,7 @@ def test_optimize_uses_more_expensive_method_when_value_exceeds_letter_limit(
         country_ids={"germany": 7, "netherlands": 23},
         tiers_by_route={
             ("germany", "netherlands"): _tiers(
-                letter=[(155, 2500, 20)],
-                parcel=[(799, 50000, 5000)],
+                values=[(155, 2500, 10), (799, 50000, 1000)],
             )
         },
     )
@@ -149,8 +137,7 @@ def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
         country_ids={"germany": 7, "netherlands": 23},
         tiers_by_route={
             ("germany", "netherlands"): _tiers(
-                letter=[(155, 2500, 20), (200, 2500, 50)],
-                parcel=[],
+                values=[(155, 2500, 10), (200, 2500, 43)],
             )
         },
     )
@@ -171,8 +158,7 @@ def test_optimize_ignores_parcel_weight_limit_for_simple_card_orders(
         country_ids={"germany": 7, "netherlands": 23},
         tiers_by_route={
             ("germany", "netherlands"): _tiers(
-                letter=[],
-                parcel=[(799, 50000, 20)],
+                values=[(799, 50000, 1000)],
             )
         },
     )
@@ -193,12 +179,10 @@ def test_optimize_uses_exact_shipping_objective_for_final_choice(
         country_ids={"germany": 7, "netherlands": 23},
         tiers_by_route={
             ("germany", "netherlands"): _tiers(
-                letter=[(100, 1000, 20)],
-                parcel=[(1000, 50000, 5000)],
+                values=[(100, 1000, 10), (1000, 50000, 1000)],
             ),
             ("netherlands", "netherlands"): _tiers(
-                letter=[(250, 50000, 20)],
-                parcel=[],
+                values=[(250, 50000, 10)],
             ),
         },
     )
@@ -398,8 +382,8 @@ def test_prune_single_item_sellers_keeps_when_higher_shipping_would_outweigh_ite
     route_book = ShippingRouteBook(
         country_ids={"germany": 7, "netherlands": 23},
         tiers_by_route={
-            ("germany", "netherlands"): _tiers(letter=[(155, 2500, 20)], parcel=[]),
-            ("netherlands", "netherlands"): _tiers(letter=[(170, 2500, 20)], parcel=[]),
+            ("germany", "netherlands"): _tiers(values=[(155, 2500, 10)]),
+            ("netherlands", "netherlands"): _tiers(values=[(170, 2500, 10)]),
         },
     )
     monkeypatch.setattr(

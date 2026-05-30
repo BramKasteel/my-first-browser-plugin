@@ -62,12 +62,11 @@ def test_normalize_route_tiers_uses_card_capacity_for_letters() -> None:
         ],
     )
 
-    assert tiers.letter_tiers == ()
-    assert tiers.parcel_tiers == (
+    assert tiers.tiers == (
         ShippingTier(
             total_price_cents=155,
             max_value_cents=2500,
-            max_weight_grams=20,
+            max_weight_grams=1000,
         ),
     )
 
@@ -112,9 +111,10 @@ def test_load_shipping_route_book_normalizes_countries(tmp_path) -> None:
     tiers = route_book.lookup_tiers(
         seller_country="GERMANY", buyer_country="netherlands"
     )
-    assert len(tiers.letter_tiers) == 1
-    assert tiers.letter_tiers[0].total_price_cents == 155
-    assert tiers.letter_tiers[0].max_value_cents == 2500
+    assert len(tiers.tiers) == 1
+    assert tiers.tiers[0].total_price_cents == 155
+    assert tiers.tiers[0].max_value_cents == 2500
+    assert tiers.tiers[0].max_weight_grams == 10
 
 
 def test_lookup_tiers_can_apply_seller_specific_pruning(tmp_path) -> None:
@@ -185,21 +185,14 @@ def test_lookup_tiers_can_apply_seller_specific_pruning(tmp_path) -> None:
         seller_country="Germany",
         buyer_country="Netherlands",
         seller_value_upper_bound=2500,
-        seller_card_upper_bound=4,
+        seller_weight_upper_bound=10,
     )
 
-    assert tiers.letter_tiers == (
+    assert tiers.tiers == (
         ShippingTier(
             total_price_cents=155,
             max_value_cents=2500,
-            max_weight_grams=20,
-        ),
-    )
-    assert tiers.parcel_tiers == (
-        ShippingTier(
-            total_price_cents=799,
-            max_value_cents=50000,
-            max_weight_grams=5000,
+            max_weight_grams=10,
         ),
     )
 
@@ -231,14 +224,14 @@ def test_prune_route_tiers_for_order_bounds_drops_redundant_letters() -> None:
             ]
         ),
         seller_value_upper_bound=2500,
-        seller_card_upper_bound=4,
+        seller_weight_upper_bound=10,
     )
 
-    assert pruned.letter_tiers == (
+    assert pruned.tiers == (
         ShippingTier(
             total_price_cents=155,
             max_value_cents=2500,
-            max_weight_grams=20,
+            max_weight_grams=10,
         ),
     )
 
@@ -290,8 +283,7 @@ def test_load_shipping_route_book_skips_estimation_methods(tmp_path) -> None:
     tiers = route_book.lookup_tiers(
         seller_country="germany", buyer_country="netherlands"
     )
-    assert [tier.total_price_cents for tier in tiers.letter_tiers] == [155]
-    assert tiers.parcel_tiers == ()
+    assert [tier.total_price_cents for tier in tiers.tiers] == [155]
 
 
 def test_load_shipping_route_book_prunes_insured_express_and_heavy_duplicates(
@@ -385,10 +377,10 @@ def test_load_shipping_route_book_prunes_insured_express_and_heavy_duplicates(
     )
     assert [
         (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
-        for tier in tiers.parcel_tiers
+        for tier in tiers.tiers
     ] == [
-        (799, 2500, 2000),
-        (1549, 50000, 2000),
+        (799, 2500, 1000),
+        (1549, 50000, 1000),
     ]
 
 
@@ -473,17 +465,12 @@ def test_load_shipping_route_book_keeps_letters_and_non_dominated_parcels(
     )
     assert [
         (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
-        for tier in tiers.letter_tiers
+        for tier in tiers.tiers
     ] == [
-        (155, 2500, 20),
-        (200, 2500, 50),
-    ]
-    assert [
-        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
-        for tier in tiers.parcel_tiers
-    ] == [
-        (799, 2500, 2000),
-        (1549, 50000, 2000),
+        (155, 2500, 10),
+        (200, 2500, 43),
+        (799, 2500, 1000),
+        (1549, 50000, 1000),
     ]
 
 
@@ -513,11 +500,11 @@ def test_normalize_route_tiers_keeps_smallest_non_dominated_parcel_weight() -> N
         ],
     )
 
-    assert tiers.parcel_tiers == (
+    assert tiers.tiers == (
         ShippingTier(
             total_price_cents=799,
             max_value_cents=2500,
-            max_weight_grams=2000,
+            max_weight_grams=1000,
         ),
     )
 
@@ -573,9 +560,9 @@ def test_load_shipping_route_book_prunes_tracked_letter_duplicate_when_no_better
     )
     assert [
         (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
-        for tier in tiers.letter_tiers
+        for tier in tiers.tiers
     ] == [
-        (200, 2500, 50),
+        (200, 2500, 43),
     ]
 
 
@@ -639,14 +626,9 @@ def test_load_shipping_route_book_builds_tiers_for_mixed_letter_and_parcel_route
     )
     assert [
         (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
-        for tier in tiers.letter_tiers
+        for tier in tiers.tiers
     ] == [
-        (170, 2500, 20),
-        (310, 2500, 50),
-    ]
-    assert [
-        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
-        for tier in tiers.parcel_tiers
-    ] == [
+        (170, 2500, 10),
+        (310, 2500, 43),
         (975, 10000, 1000),
     ]

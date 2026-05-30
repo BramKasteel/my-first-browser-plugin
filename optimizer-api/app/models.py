@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StringConstraints,
+    model_validator,
+)
 
 BoundedId = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)
@@ -78,6 +85,14 @@ class Offer(BaseModel):
     available_quantity: int = Field(ge=1, le=10_000)
     condition: BoundedDescriptor | None = None
     language: BoundedDescriptor | None = None
+    _unit_price_cents: int = PrivateAttr()
+
+    def model_post_init(self, __context) -> None:
+        self._unit_price_cents = int(round(self.unit_price * 100))
+
+    @property
+    def unit_price_cents(self) -> int:
+        return self._unit_price_cents
 
 
 class OptimizationPreferences(BaseModel):
