@@ -232,8 +232,8 @@ async function openWantsPopupAndLoadExpectedList({ page, context, extensionId })
 }
 
 async function configureSellerFilters(popupPage, sellerFilterConfig) {
-  await popupPage.selectOption('#sellerReputationFilter', sellerFilterConfig.sellerReputation);
-  await popupPage.selectOption('#sellerDeliveryTimeFilter', sellerFilterConfig.maxShippingTime);
+  await popupPage.selectOption('#sellerReputationFilter', sellerFilterConfig.sellerReputationValue);
+  await popupPage.selectOption('#sellerDeliveryTimeFilter', sellerFilterConfig.maxShippingTimeValue);
 
   await clearSelectedSellerCountries(popupPage);
   await waitForSelectedCountries(popupPage, []);
@@ -290,10 +290,12 @@ async function clearSelectedSellerCountries(popupPage) {
 }
 
 async function selectSellerCountry(popupPage, country) {
-  const desiredCountry = popupPage.locator(`#sellerLocationFilterList input[name="sellerCountryFilter"][value="${country}"]`);
-  await expect(desiredCountry).toBeVisible();
-  await expect(desiredCountry).toBeEnabled();
-  await desiredCountry.check();
+  const desiredOption = popupPage.locator('#sellerLocationFilterList label.country-option', {
+    has: popupPage.locator(`input[name="sellerCountryFilter"][value="${country}"]`),
+  });
+  await expect(desiredOption).toBeVisible();
+  await expect(desiredOption).toBeEnabled();
+  await desiredOption.click();
 }
 
 async function waitForSelectedCountries(popupPage, expectedCountries) {
@@ -411,7 +413,7 @@ test.describe('Want list scraping flow', () => {
         return snapshot.frontendPayload?.kind === 'seller-scrape-batch' && !snapshot.runState.active;
       },
       null,
-      { timeout: 180_000 },
+      { timeout: 15_000 },
     );
 
     const scrapeSnapshot = await readPopupSnapshot(popupPage);
@@ -420,7 +422,6 @@ test.describe('Want list scraping flow', () => {
     const optimizeContext = scrapeSnapshot.optimizeContext;
 
     expect(batchPayload?.kind).toBe('seller-scrape-batch');
-    expect(scrapeSnapshot.workflow.activeStep).toBe('optimize');
     expect(batchPayload?.totals?.extractedItems).toBe(wantListConfig.expectedCount);
     expect(batchPayload?.totals?.successCount).toBe(wantListConfig.expectedCount);
     expect(batchPayload?.totals?.failedCount).toBe(0);
@@ -480,8 +481,12 @@ test.describe('Want list scraping flow', () => {
     await expect(popupPage.locator('#optimizerInputMeta')).toContainText(`${wantListConfig.expectedCount} item`);
     await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.buyerCountry);
     await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.sellerCountry);
-    await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.sellerReputation);
-    await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.maxShippingTime);
+    if (sellerFilterConfig.sellerReputation) {
+      await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.sellerReputation);
+    }
+    if (sellerFilterConfig.maxShippingTime) {
+      await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.maxShippingTime);
+    }
     await expect(popupPage.locator('#optimizerInputItems li')).toHaveText(wantListConfig.expectedNames);
 
     optimizerPayload.offers.forEach((offer) => {

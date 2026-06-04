@@ -90,6 +90,41 @@ function getActiveSellerFilters(item) {
   };
 }
 
+function applySellerFilters(result, item) {
+  const filters = getActiveSellerFilters(item);
+  const rawSellers = Array.isArray(result?.sellers) ? result.sellers : [];
+  const filteredSellers = rawSellers.filter((seller) => {
+    if (filters.requestedLanguages.length) {
+      const sellerLanguage = normalizeLanguageName(seller.language);
+      if (!filters.requestedLanguages.some((language) => sellerLanguage === normalizeLanguageName(language))) {
+        return false;
+      }
+    }
+    if (filters.allowedCountries.length) {
+      const sellerCountry = normalizeCountryName(seller.location);
+      if (!sellerCountry) return false;
+      if (!filters.allowedCountries.includes(sellerCountry)) return false;
+    }
+    return true;
+  });
+
+  return {
+    ...result,
+    sellers: filteredSellers,
+    sellerPreview: filteredSellers.slice(0, 12),
+    totalSellers: filteredSellers.length,
+    unfilteredTotalSellers: rawSellers.length,
+    filtersApplied: {
+      requestedLanguages: filters.requestedLanguages,
+      sellerCountries: filters.allowedCountries,
+      sellerCountryFilterText: filters.locationFilterText,
+      sellerReputation: filters.sellerReputation,
+      maxShippingTime: filters.maxShippingTime,
+      sellerType: filters.sellerType,
+    },
+  };
+}
+
 function getOrderedSellerCountries(selectedCountries = []) {
   const selected = new Set((selectedCountries || []).map((value) => normalizeCountryName(value)).filter(Boolean));
   return [...SELLER_COUNTRY_OPTIONS].sort((left, right) => {

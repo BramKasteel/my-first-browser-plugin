@@ -10,6 +10,27 @@ playwright mode='headed':
 	fi
 
 
+playwright-capture mode='headed' log='' extra='':
+	#!/usr/bin/env bash
+	set -euo pipefail
+
+	mkdir -p test-results/playwright
+	if [[ -n "{{log}}" ]]; then
+	  log_path="{{log}}"
+	else
+	  log_path="test-results/playwright/$(date +%Y%m%d-%H%M%S)-{{mode}}.log"
+	fi
+
+	echo "Capturing Playwright output to $log_path"
+	if [[ "{{mode}}" == "headless" ]]; then
+	  stdbuf -oL -eL env PW_HEADLESS=1 npx playwright test {{extra}} 2>&1 | tee "$log_path"
+	else
+	  stdbuf -oL -eL env PW_HEADLESS=0 npx playwright test --headed {{extra}} 2>&1 | tee "$log_path"
+	fi
+
+	exit "${PIPESTATUS[0]}"
+
+
 playwright-report:
     npx playwright show-report
 

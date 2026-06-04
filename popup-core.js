@@ -731,32 +731,14 @@ function normalizeLanguageName(value) {
   return aliases[normalized] || textOf(value);
 }
 
-function normalizeSellerReputation(value) {
-  const normalized = textOf(value).toLowerCase();
-  if (!normalized) return '';
-  if (/outstanding/.test(normalized)) return 'Outstanding';
-  if (/excellent|very good/.test(normalized)) return 'Very good';
-  if (/good/.test(normalized)) return 'Good';
-  return textOf(value);
-}
-
-function normalizeSellerType(value) {
-  const normalized = textOf(value).toLowerCase();
-  if (!normalized) return '';
-  if (/power/.test(normalized)) return 'Power Seller';
-  if (/professional/.test(normalized)) return 'Professional';
-  if (/private/.test(normalized)) return 'Private';
-  return textOf(value);
-}
-
-function normalizeMaxShippingTime(value) {
-  const normalized = textOf(value).toLowerCase();
-  if (!normalized) return '';
-  if (/1-2|2 days|fast/.test(normalized)) return '1-2 days';
-  if (/1 week|7/.test(normalized)) return '1 week';
-  if (/2 week|14/.test(normalized)) return '2 weeks';
-  return textOf(value);
-}
+const {
+  normalizeSellerReputation,
+  normalizeSellerType,
+  normalizeMaxShippingTime,
+  getCardmarketSellerReputationId,
+  getCardmarketMaxShippingTimeId,
+  getCardmarketSellerTypeId,
+} = window.SellerFilterUtils;
 
 function normalizeCountryName(value) {
   const normalized = textOf(value).toLowerCase();
@@ -939,36 +921,6 @@ function getCardmarketCountryId(value) {
 
 function getCardmarketCountryIdsFromCountries(values) {
   return [...new Set((values || []).map((value) => getCardmarketCountryId(value)).filter(Boolean))];
-}
-
-function getCardmarketSellerReputationId(value) {
-  const normalized = normalizeSellerReputation(value);
-  const ids = {
-    Outstanding: '1',
-    'Very good': '2',
-    Good: '3',
-  };
-  return ids[normalized] || '';
-}
-
-function getCardmarketMaxShippingTimeId(value) {
-  const normalized = normalizeMaxShippingTime(value);
-  const ids = {
-    '1-2 days': '1',
-    '1 week': '2',
-    '2 weeks': '3',
-  };
-  return ids[normalized] || '';
-}
-
-function getCardmarketSellerTypeId(value) {
-  const normalized = normalizeSellerType(value);
-  const ids = {
-    Professional: '1',
-    'Power Seller': '2',
-    Private: '3',
-  };
-  return ids[normalized] || '';
 }
 
 function getCountryNameById(countryId) {

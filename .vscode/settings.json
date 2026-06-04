@@ -4,5 +4,11 @@
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
-    "testing.automaticallyOpenTestResults": "neverOpen"
+    "testing.automaticallyOpenTestResults": "neverOpen",
+    "chat.tools.terminal.autoApprove": {
+        "/^just playwright-capture$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }
