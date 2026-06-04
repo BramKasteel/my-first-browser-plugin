@@ -11,6 +11,10 @@ function getPopupSnapshot() {
       activeStep: activeWorkflowStep,
       history: [...workflowHistory],
     },
+    resultsPanel: {
+      activeTab: activeResultTab,
+      panelExpanded: isResultPanelExpanded,
+    },
     wantLists: {
       selectedWantListId,
       available: availableWantLists.map((entry) => ({ ...entry })),

@@ -52,6 +52,9 @@ resultTabButtons.forEach((button) => {
     setActiveResultTab(button.dataset.resultTab || 'overview');
   });
 });
+resultPanelToggleButton?.addEventListener('click', () => {
+  setResultPanelExpanded(!isResultPanelExpanded);
+});
 wantListSelectEl?.addEventListener('change', () => {
   selectedWantListId = textOf(wantListSelectEl.value);
   saveSellerSettings();
@@ -82,14 +85,32 @@ buyerCountrySelectEl.addEventListener('change', () => {
   saveSellerSettings();
   refreshOptimizerPayloadFromCurrentState();
 });
-sellerLocationFilterListEl.addEventListener('change', (event) => {
-  if (event.target instanceof HTMLInputElement && event.target.name === 'sellerCountryFilter') {
-    const country = normalizeCountryName(event.target.value);
-    if (event.target.checked && country && !selectedSellerCountries.includes(country)) {
-      setSelectedSellerCountries(clampSellerCountriesToPolicy([...selectedSellerCountries, country]));
-    }
-    saveSellerSettings();
+sellerCountryFilterInputEl?.addEventListener('input', () => {
+  renderSellerCountryFilterList(selectedSellerCountries);
+});
+sellerCountryFilterInputEl?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+
+  const firstMatchButton = sellerLocationFilterListEl.querySelector('button[data-country-option]');
+  if (!(firstMatchButton instanceof HTMLButtonElement) || firstMatchButton.disabled) return;
+
+  event.preventDefault();
+  firstMatchButton.click();
+});
+sellerLocationFilterListEl.addEventListener('click', (event) => {
+  const optionButton = event.target instanceof HTMLElement
+    ? event.target.closest('button[data-country-option]')
+    : null;
+  if (!(optionButton instanceof HTMLButtonElement)) return;
+
+  const country = normalizeCountryName(optionButton.dataset.countryOption || '');
+  if (!country || selectedSellerCountries.includes(country)) return;
+
+  setSelectedSellerCountries(clampSellerCountriesToPolicy([...selectedSellerCountries, country]));
+  if (sellerCountryFilterInputEl) {
+    sellerCountryFilterInputEl.value = '';
   }
+  saveSellerSettings();
 });
 selectedSellerCountriesEl.addEventListener('click', (event) => {
   const removeButton = event.target instanceof HTMLElement
@@ -101,6 +122,7 @@ selectedSellerCountriesEl.addEventListener('click', (event) => {
   if (!country) return;
 
   setSelectedSellerCountries(selectedSellerCountries.filter((value) => value !== country));
+  if (sellerCountryFilterInputEl) sellerCountryFilterInputEl.focus();
   saveSellerSettings();
 });
 window.addEventListener('focus', () => {
@@ -122,6 +144,8 @@ renderPayload(null);
 renderFrontendPayload(null);
 renderOptimizerInputContext();
 renderBuyerCountryOptions();
+setResultPanelExpanded(false);
+setActiveResultTab('overview');
 installE2eTestApi();
 renderSellerCountryFilterList();
 renderWantListOptions();

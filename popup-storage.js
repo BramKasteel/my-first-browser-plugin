@@ -18,7 +18,7 @@ async function loadSellerSettings() {
   renderBuyerCountryOptions(settings.buyerCountry || inferBuyerCountry());
   selectedWantListId = '';
   restoredWantListId = '';
-  setSelectedSellerCountries(getStoredSellerCountries(settings));
+  setSelectedSellerCountries([]);
 }
 
 async function loadDetachedBatchState() {
@@ -53,7 +53,6 @@ async function saveSellerSettings() {
       sellerTypeFilter: normalizeSellerType(sellerTypeFilterEl.value),
       buyerCountry: getSelectedBuyerCountry(),
       selectedWantListId: textOf(selectedWantListId),
-      sellerLocationFilter: getSelectedSellerCountries(),
     },
   });
 }

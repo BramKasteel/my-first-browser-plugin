@@ -7,6 +7,7 @@ const buyerCountrySelectEl = document.getElementById('buyerCountry');
 const sellerReputationFilterEl = document.getElementById('sellerReputationFilter');
 const sellerDeliveryTimeFilterEl = document.getElementById('sellerDeliveryTimeFilter');
 const sellerTypeFilterEl = document.getElementById('sellerTypeFilter');
+const sellerCountryFilterInputEl = document.getElementById('sellerCountryFilterInput');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
 const selectedSellerCountriesEl = document.getElementById('selectedSellerCountries');
 const sellerCountryLimitHintEl = document.getElementById('sellerCountryLimitHint');
@@ -31,6 +32,9 @@ const cartSummaryTotalItemsEl = document.getElementById('cartSummaryTotalItems')
 const statusLogEl = document.getElementById('statusLog');
 const runStatusEl = document.getElementById('runStatus');
 const runStatusTextEl = document.getElementById('runStatusText');
+const resultPanelEl = document.getElementById('resultPanel');
+const resultPanelToggleButton = document.getElementById('resultPanelToggle');
+const resultTabsEl = document.getElementById('resultTabs');
 const activityBadgeEl = document.getElementById('activityBadge');
 const activityTabButton = document.getElementById('resultTabActivity');
 const resultTabButtons = [...document.querySelectorAll('[data-result-tab]')];
@@ -78,7 +82,9 @@ let availableWantLists = [];
 let selectedWantListId = '';
 let restoredWantListId = '';
 let activeWorkflowStep = 'source';
+let activeResultTab = 'overview';
 let workflowHistory = [];
+let isResultPanelExpanded = false;
 let activeStepActivity = null;
 let lastOptimizerWarmupAt = 0;
 let wantListRetryTimer = null;
@@ -175,8 +181,9 @@ function setBusy(isBusy) {
   sellerReputationFilterEl.disabled = isBusy;
   sellerDeliveryTimeFilterEl.disabled = isBusy;
   sellerTypeFilterEl.disabled = isBusy;
-  sellerLocationFilterListEl.querySelectorAll('input').forEach((input) => {
-    input.disabled = isBusy;
+  if (sellerCountryFilterInputEl) sellerCountryFilterInputEl.disabled = isBusy;
+  sellerLocationFilterListEl.querySelectorAll('button').forEach((button) => {
+    button.disabled = isBusy;
   });
   selectedSellerCountriesEl.querySelectorAll('button').forEach((button) => {
     button.disabled = isBusy;
@@ -197,6 +204,7 @@ function setRunState({ active, message, tone = '' }) {
   const showBadge = active && !activityTabButton.classList.contains('active');
   activityBadgeEl.classList.toggle('visible', showBadge);
   activityTabButton.classList.toggle('has-live', active);
+  resultPanelEl?.classList.toggle('has-live', active);
 }
 
 function startRun(message) {
@@ -317,33 +325,8 @@ function clampSellerCountriesToPolicy(countries, policy = getWantListSelectionPo
   return normalizedCountries.slice(0, Math.min(MAX_SELLER_COUNTRIES, policy.maxSellerCountries));
 }
 
-function getDefaultSellerCountries(policy = getWantListSelectionPolicy(), preferredCountries = []) {
-  if (policy.isBlocked || policy.maxSellerCountries <= 0) return [];
-
-  const preferred = clampSellerCountriesToPolicy(preferredCountries, policy);
-  if (preferred.length >= policy.maxSellerCountries) {
-    return preferred;
-  }
-
-  const seen = new Set(preferred);
-  const seeded = [...preferred];
-  for (const country of SELLER_COUNTRY_OPTIONS) {
-    const normalizedCountry = normalizeCountryName(country);
-    if (!normalizedCountry || seen.has(normalizedCountry)) continue;
-    seeded.push(normalizedCountry);
-    seen.add(normalizedCountry);
-    if (seeded.length >= policy.maxSellerCountries) break;
-  }
-
-  return seeded;
-}
-
 function getSellerCountriesForCurrentPolicy(countries, policy = getWantListSelectionPolicy()) {
-  const constrainedCountries = clampSellerCountriesToPolicy(countries, policy);
-  if (constrainedCountries.length || !policy.distinctItemCount) {
-    return constrainedCountries;
-  }
-  return getDefaultSellerCountries(policy, countries);
+  return clampSellerCountriesToPolicy(countries, policy);
 }
 
 function enforceWantListSelectionPolicy({ persist = false, announce = false } = {}) {
@@ -441,7 +424,16 @@ function renderStepActivity() {
   }
 }
 
+function setResultPanelExpanded(expanded) {
+  isResultPanelExpanded = !!expanded;
+  resultPanelEl?.setAttribute('data-panel-expanded', isResultPanelExpanded ? 'true' : 'false');
+  resultPanelToggleButton?.setAttribute('aria-expanded', isResultPanelExpanded ? 'true' : 'false');
+  resultPanelToggleButton?.setAttribute('aria-label', isResultPanelExpanded ? 'Hide results and activity' : 'Show results and activity');
+}
+
 function setActiveResultTab(tabName) {
+  activeResultTab = tabName;
+
   resultTabButtons.forEach((button) => {
     const isActive = button.dataset.resultTab === tabName;
     button.classList.toggle('active', isActive);

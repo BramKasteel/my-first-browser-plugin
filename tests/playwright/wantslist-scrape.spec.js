@@ -290,9 +290,10 @@ async function clearSelectedSellerCountries(popupPage) {
 }
 
 async function selectSellerCountry(popupPage, country) {
-  const desiredOption = popupPage.locator('#sellerLocationFilterList label.country-option', {
-    has: popupPage.locator(`input[name="sellerCountryFilter"][value="${country}"]`),
-  });
+  const searchInput = popupPage.locator('#sellerCountryFilterInput');
+  await expect(searchInput).toBeVisible();
+  await searchInput.fill(country.slice(0, 3));
+  const desiredOption = popupPage.locator(`#sellerLocationFilterList button[data-country-option="${country}"]`);
   await expect(desiredOption).toBeVisible();
   await expect(desiredOption).toBeEnabled();
   await desiredOption.click();
@@ -399,7 +400,7 @@ test.describe('Want list scraping flow', () => {
     const configuredStorage = await readPopupStorage(popupPage, ['sellerScrapeSettings']);
     expect(configuredStorage.sellerScrapeSettings?.sellerReputationFilter).toBe(sellerFilterConfig.sellerReputation);
     expect(configuredStorage.sellerScrapeSettings?.sellerDeliveryTimeFilter).toBe(sellerFilterConfig.maxShippingTime);
-    expect(configuredStorage.sellerScrapeSettings?.sellerLocationFilter).toEqual([sellerFilterConfig.sellerCountry]);
+    expect(configuredStorage.sellerScrapeSettings).not.toHaveProperty('sellerLocationFilter');
 
     await expect(popupPage.locator('#scrapeAllItems')).toBeVisible();
     await expect(popupPage.locator('#scrapeAllItems')).toBeEnabled();
@@ -635,14 +636,14 @@ test.describe('Want list scraping flow', () => {
     );
 
     await clearSelectedSellerCountries(popupPage);
-  await waitForSelectedCountries(popupPage, []);
-  await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select exactly 1 seller country');
-  await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bbad\b/);
+    await waitForSelectedCountries(popupPage, []);
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select exactly 1 seller country');
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bbad\b/);
     await selectSellerCountry(popupPage, 'Germany');
     await waitForSelectedCountries(popupPage, ['Germany']);
-  await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select exactly 1 seller country');
-  await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);
-    await expect(popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="France"]')).toBeDisabled();
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select exactly 1 seller country');
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);
+    await expect(popupPage.locator('#sellerCountryFilterInput')).toBeDisabled();
 
     await selectWantListAndWaitForLoad(popupPage, {
       wantListName: sizeConfig.over70.wantListName,

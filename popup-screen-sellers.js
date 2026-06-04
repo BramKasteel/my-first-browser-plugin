@@ -137,6 +137,16 @@ function getOrderedSellerCountries(selectedCountries = []) {
   });
 }
 
+function getSellerCountryQuery() {
+  return textOf(sellerCountryFilterInputEl?.value).toLowerCase();
+}
+
+function countryMatchesQuery(country, query = getSellerCountryQuery()) {
+  if (!query) return true;
+  const normalizedCountry = textOf(country).toLowerCase();
+  return normalizedCountry.includes(query);
+}
+
 function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTRIES) {
   const wantListPolicy = getWantListSelectionPolicy();
   const normalizedSelectedCountries = clampSellerCountriesToPolicy(selectedCountries, wantListPolicy);
@@ -147,10 +157,16 @@ function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTR
   sellerLocationFilterListEl.replaceChildren();
   const selected = new Set(normalizedSelectedCountries);
   const maxCountriesReached = normalizedSelectedCountries.length >= wantListPolicy.maxSellerCountries;
-  const otherCountriesSectionEl = sellerLocationFilterListEl.parentElement;
+  const query = getSellerCountryQuery();
+  const otherCountriesSectionEl = sellerCountryFilterInputEl?.closest('.country-section');
   const otherCountriesLabelEl = otherCountriesSectionEl?.querySelector('.country-section-label');
+  const isPickerDisabled = isUiBusy || wantListPolicy.isBlocked || maxCountriesReached;
 
-  sellerLocationFilterListEl.hidden = maxCountriesReached;
+  if (sellerCountryFilterInputEl) {
+    sellerCountryFilterInputEl.disabled = isPickerDisabled;
+    sellerCountryFilterInputEl.setAttribute('aria-expanded', String(!isPickerDisabled));
+  }
+  sellerLocationFilterListEl.hidden = isPickerDisabled;
   if (otherCountriesLabelEl) otherCountriesLabelEl.hidden = maxCountriesReached;
 
   if (normalizedSelectedCountries.length) {
@@ -180,26 +196,29 @@ function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTR
   }
 
   getOrderedSellerCountries(selectedCountries).forEach((country) => {
-    if (selected.has(normalizeCountryName(country))) {
+    if (selected.has(normalizeCountryName(country)) || !countryMatchesQuery(country, query)) {
       return;
     }
 
-    const option = document.createElement('label');
+    const option = document.createElement('button');
+    option.type = 'button';
     option.className = 'country-option';
-
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.name = 'sellerCountryFilter';
-    input.value = country;
-    input.checked = false;
-    input.disabled = isUiBusy || wantListPolicy.isBlocked || maxCountriesReached;
+    option.dataset.countryOption = country;
+    option.disabled = isPickerDisabled;
 
     const text = document.createElement('span');
     text.textContent = country;
 
-    option.append(input, text);
+    option.append(text);
     sellerLocationFilterListEl.appendChild(option);
   });
+
+  if (!isPickerDisabled && !sellerLocationFilterListEl.childElementCount) {
+    const empty = document.createElement('p');
+    empty.className = 'country-dropdown-empty';
+    empty.textContent = query ? 'No matching countries.' : 'Type to search seller countries.';
+    sellerLocationFilterListEl.appendChild(empty);
+  }
 
   renderSellerFilterState();
 }

@@ -588,28 +588,82 @@
       margin: 0;
     }
 
+    .country-picker {
+      display: grid;
+      gap: 8px;
+    }
+
+    .country-picker-shell {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      min-height: 44px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(159, 176, 190, 0.16);
+      background: rgba(17, 22, 27, 0.44);
+    }
+
+    .country-picker-input {
+      flex: 1 1 140px;
+      min-width: 96px;
+      padding: 6px 0;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      box-shadow: none;
+    }
+
+    .country-picker-input::placeholder {
+      color: rgba(159, 176, 190, 0.72);
+    }
+
+    .country-picker-input:focus {
+      outline: none;
+    }
+
+    .country-picker-input:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+
     .country-list {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px 10px;
+      gap: 6px;
       max-height: 180px;
       overflow: auto;
-      padding: 10px;
+      padding: 8px;
       border-radius: 10px;
       border: 1px solid rgba(159, 176, 190, 0.12);
       background: rgba(17, 22, 27, 0.92);
     }
 
     .country-option {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 12px;
+      justify-content: flex-start;
+      width: 100%;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(159, 176, 190, 0.12);
+      background: rgba(49, 65, 79, 0.34);
       color: var(--text);
+      font-size: 12px;
+      line-height: 1.3;
+      text-align: left;
+      box-shadow: none;
     }
 
-    .country-option input {
-      margin: 0;
+    .country-option:hover:not(:disabled) {
+      background: rgba(49, 65, 79, 0.62);
+      border-color: rgba(159, 176, 190, 0.22);
+      transform: none;
+      filter: none;
+    }
+
+    .country-option:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
     }
 
     .country-section {
@@ -624,6 +678,7 @@
     }
 
     .seller-filter-field.is-required select,
+    .seller-filter-field.is-required .country-picker-shell,
     .seller-filter-field.is-required .country-selected-list {
       border-color: rgba(245, 158, 11, 0.48);
       box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.12);
@@ -652,11 +707,8 @@
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      min-height: 44px;
-      padding: 10px;
-      border-radius: 10px;
-      border: 1px solid rgba(159, 176, 190, 0.16);
-      background: rgba(17, 22, 27, 0.44);
+      flex: 0 1 auto;
+      min-width: 0;
     }
 
     .country-chip {
@@ -697,6 +749,14 @@
 
     .country-empty {
       margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .country-dropdown-empty {
+      margin: 0;
+      padding: 8px 10px;
       color: var(--muted);
       font-size: 12px;
       line-height: 1.45;
@@ -826,6 +886,86 @@
       word-break: break-word;
     }
 
+    .result-panel {
+      position: relative;
+      padding-top: 10px;
+      overflow: hidden;
+      transition: padding-top 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .result-panel[data-panel-expanded="false"] {
+      padding: 8px 14px 10px;
+      background: rgba(26, 35, 44, 0.28);
+      border-color: rgba(159, 176, 190, 0.08);
+    }
+
+    .result-panel[data-panel-expanded="false"] .result-panel-content,
+    .result-panel[data-panel-expanded="false"] .panel-header {
+      display: none;
+    }
+
+    .result-panel[data-panel-expanded="true"] {
+      padding-top: 14px;
+    }
+
+    .result-panel-peek {
+      display: flex;
+      justify-content: flex-end;
+      margin: -4px -6px 0 0;
+    }
+
+    .result-panel[data-panel-expanded="true"] .result-panel-peek {
+      margin: -4px -6px 10px 0;
+    }
+
+    .result-panel-toggle {
+      width: 44px;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: rgba(159, 176, 190, 0.22);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.42;
+      cursor: pointer;
+      position: relative;
+      z-index: 1;
+      transition: opacity 140ms ease, color 140ms ease, transform 140ms ease;
+    }
+
+    .result-panel-toggle::before {
+      content: '';
+      width: 18px;
+      height: 2px;
+      border-radius: 999px;
+      background: currentColor;
+      box-shadow: 0 0 0 1px rgba(17, 22, 27, 0.08);
+    }
+
+    .result-panel:hover .result-panel-toggle,
+    .result-panel-toggle:focus-visible,
+    .result-panel[data-panel-expanded="true"] .result-panel-toggle,
+    .result-panel.has-live .result-panel-toggle {
+      opacity: 1;
+      color: rgba(245, 158, 11, 0.55);
+    }
+
+    .result-panel[data-panel-expanded="true"] .result-panel-toggle {
+      transform: translateY(-1px);
+    }
+
+    .result-panel-toggle:focus-visible {
+      outline: 2px solid rgba(245, 158, 11, 0.28);
+      outline-offset: 2px;
+    }
+
+    .result-panel-content {
+      display: block;
+    }
+
     .result-tabs {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -950,6 +1090,7 @@
       .result-tabs {
         grid-template-columns: 1fr;
       }
+
     }
 
     @keyframes pulse {
@@ -1087,11 +1228,14 @@
           <div class="config-label seller-filter-field">
             <span>Seller country</span>
             <div class="country-section">
-              <div id="selectedSellerCountries" class="country-selected-list" role="group" aria-label="Selected seller countries"></div>
-            </div>
-            <div class="country-section">
-              <span class="country-section-label">Other countries</span>
-              <div id="sellerLocationFilterList" class="country-list" role="group" aria-label="Other seller countries"></div>
+              <div class="country-picker">
+                <div class="country-picker-shell">
+                  <input id="sellerCountryFilterInput" class="country-picker-input" type="text" autocomplete="off" spellcheck="false" placeholder="Type seller country, e.g. ger" aria-label="Search seller countries" aria-controls="sellerLocationFilterList" aria-expanded="false">
+                  <div id="selectedSellerCountries" class="country-selected-list" role="group" aria-label="Selected seller countries"></div>
+                </div>
+                <span class="country-section-label">Other countries</span>
+                <div id="sellerLocationFilterList" class="country-list" role="listbox" aria-label="Other seller countries"></div>
+              </div>
             </div>
             <p id="sellerCountryLimitHint" class="inline-notice" hidden></p>
           </div>
@@ -1172,50 +1316,55 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section id="resultPanel" class="panel result-panel has-live" data-panel-expanded="false">
+        <div class="result-panel-peek">
+          <button type="button" class="result-panel-toggle" id="resultPanelToggle" aria-expanded="false" aria-controls="resultPanelContent" aria-label="Show results and activity"></button>
+        </div>
         <div class="panel-header">
           <h2 class="panel-title">Results and Activity</h2>
         </div>
 
-        <div id="runStatus" class="run-status" aria-live="polite">
-          <span class="run-status-dot" aria-hidden="true"></span>
-          <span id="runStatusText" class="run-status-text">Idle. Start extract, scrape, or optimize.</span>
-        </div>
+        <div id="resultPanelContent" class="result-panel-content">
+          <div id="runStatus" class="run-status" aria-live="polite">
+            <span class="run-status-dot" aria-hidden="true"></span>
+            <span id="runStatusText" class="run-status-text">Idle. Start extract, scrape, or optimize.</span>
+          </div>
 
-        <div class="result-tabs" role="tablist" aria-label="Result views">
-              <button type="button" class="secondary mini-button result-tab active" id="resultTabOverview" data-result-tab="overview" aria-selected="true"><span class="tab-label">Overview</span></button>
+          <div id="resultTabs" class="result-tabs" role="tablist" aria-label="Result views">
+            <button type="button" class="secondary mini-button result-tab active" id="resultTabOverview" data-result-tab="overview" aria-selected="true"><span class="tab-label">Overview</span></button>
             <button type="button" class="secondary mini-button result-tab" id="resultTabActivity" data-result-tab="activity" aria-selected="false"><span class="tab-label">Logs <span id="activityBadge" class="tab-badge" aria-hidden="true"></span></span></button>
-              <button type="button" class="secondary mini-button result-tab" id="resultTabSellers" data-result-tab="sellers" aria-selected="false"><span class="tab-label">Sellers</span></button>
+            <button type="button" class="secondary mini-button result-tab" id="resultTabSellers" data-result-tab="sellers" aria-selected="false"><span class="tab-label">Sellers</span></button>
             <button type="button" class="secondary mini-button result-tab" id="resultTabCart" data-result-tab="cart" aria-selected="false"><span class="tab-label">Cart</span></button>
-            </div>
+          </div>
 
-            <div class="result-view active" data-result-panel="overview">
-              <div id="summary" class="summary"></div>
-            </div>
+          <div class="result-view active" data-result-panel="overview">
+            <div id="summary" class="summary"></div>
+          </div>
 
-            <div class="result-view" data-result-panel="cart">
-              <div class="panel-header">
-                <h3 class="panel-title">Optimized Cart</h3>
+          <div class="result-view" data-result-panel="cart">
+            <div class="panel-header">
+              <h3 class="panel-title">Optimized Cart</h3>
+            </div>
+            <div id="cartSummary" class="summary" hidden>
+              <div class="summary-line">
+                <span class="summary-label">Total price</span>
+                <span id="cartSummaryGrandTotal" class="summary-value">-</span>
               </div>
-              <div id="cartSummary" class="summary" hidden>
-                <div class="summary-line">
-                  <span class="summary-label">Total price</span>
-                  <span id="cartSummaryGrandTotal" class="summary-value">-</span>
-                </div>
-                <div class="summary-line">
-                  <span class="summary-label">Total items</span>
-                  <span id="cartSummaryTotalItems" class="summary-value">-</span>
-                </div>
+              <div class="summary-line">
+                <span class="summary-label">Total items</span>
+                <span id="cartSummaryTotalItems" class="summary-value">-</span>
               </div>
-              <div id="cartItems" class="items"></div>
             </div>
+            <div id="cartItems" class="items"></div>
+          </div>
 
-            <div class="result-view" data-result-panel="sellers">
-              <div id="sellerItems" class="items"></div>
-            </div>
+          <div class="result-view" data-result-panel="sellers">
+            <div id="sellerItems" class="items"></div>
+          </div>
 
-        <div class="result-view" data-result-panel="activity">
-          <ul id="statusLog" class="status-log"></ul>
+          <div class="result-view" data-result-panel="activity">
+            <ul id="statusLog" class="status-log"></ul>
+          </div>
         </div>
       </section>
     </section>
