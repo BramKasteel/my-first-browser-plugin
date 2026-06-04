@@ -236,10 +236,9 @@ async function configureSellerFilters(popupPage, sellerFilterConfig) {
   await popupPage.selectOption('#sellerDeliveryTimeFilter', sellerFilterConfig.maxShippingTime);
 
   await clearSelectedSellerCountries(popupPage);
-
-  const desiredCountry = popupPage.locator(`#sellerLocationFilterList input[name="sellerCountryFilter"][value="${sellerFilterConfig.sellerCountry}"]`);
-  await expect(desiredCountry).toBeVisible();
-  await desiredCountry.click();
+  await waitForSelectedCountries(popupPage, []);
+  await selectSellerCountry(popupPage, sellerFilterConfig.sellerCountry);
+  await waitForSelectedCountries(popupPage, [sellerFilterConfig.sellerCountry]);
 
   await popupPage.waitForFunction(
     (expected) => {
@@ -273,8 +272,28 @@ async function configureBuyerCountry(popupPage, buyerCountry) {
 
 async function clearSelectedSellerCountries(popupPage) {
   while (await popupPage.locator('#selectedSellerCountries button[data-country-remove]').count()) {
-    await popupPage.locator('#selectedSellerCountries button[data-country-remove]').first().click();
+    const before = await popupPage.evaluate(
+      () => window.__cmOptimizerTestApi.getSnapshot().sellerFilters.sellerCountries || []
+    );
+    const removeButton = popupPage.locator('#selectedSellerCountries button[data-country-remove]').first();
+    await expect(removeButton).toBeVisible();
+    await removeButton.click();
+    await popupPage.waitForFunction(
+      (previousLength) => {
+        const selected = window.__cmOptimizerTestApi.getSnapshot().sellerFilters.sellerCountries || [];
+        return selected.length < previousLength;
+      },
+      before.length,
+      { timeout: 15_000 },
+    );
   }
+}
+
+async function selectSellerCountry(popupPage, country) {
+  const desiredCountry = popupPage.locator(`#sellerLocationFilterList input[name="sellerCountryFilter"][value="${country}"]`);
+  await expect(desiredCountry).toBeVisible();
+  await expect(desiredCountry).toBeEnabled();
+  await desiredCountry.check();
 }
 
 async function waitForSelectedCountries(popupPage, expectedCountries) {
@@ -582,8 +601,8 @@ test.describe('Want list scraping flow', () => {
     await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('up to 2 seller countries');
     await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);
     await expect(popupPage.locator('#sellerLocationFilterList')).toBeVisible();
-    await popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="Germany"]').click();
-    await popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="Netherlands"]').click();
+    await selectSellerCountry(popupPage, 'Germany');
+    await selectSellerCountry(popupPage, 'Netherlands');
     await waitForSelectedCountries(popupPage, ['Germany', 'Netherlands']);
     await expect(popupPage.locator('#sellerLocationFilterList')).toBeHidden();
 
@@ -614,7 +633,7 @@ test.describe('Want list scraping flow', () => {
   await waitForSelectedCountries(popupPage, []);
   await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select exactly 1 seller country');
   await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bbad\b/);
-    await popupPage.locator('#sellerLocationFilterList input[name="sellerCountryFilter"][value="Germany"]').click();
+    await selectSellerCountry(popupPage, 'Germany');
     await waitForSelectedCountries(popupPage, ['Germany']);
   await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select exactly 1 seller country');
   await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);

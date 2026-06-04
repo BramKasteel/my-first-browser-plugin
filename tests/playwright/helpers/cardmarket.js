@@ -38,6 +38,11 @@ async function dismissCookieBanner(page) {
         await locator.click({ timeout: 1_000 });
         return;
       } catch {
+        try {
+          await locator.dispatchEvent('click');
+          return;
+        } catch {
+        }
       }
     }
   }
