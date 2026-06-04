@@ -92,11 +92,6 @@
       gap: 10px;
     }
 
-    .hero-action-button {
-      flex: 1 1 180px;
-      min-width: 0;
-    }
-
     .hero-action-note {
       margin: 0;
       color: var(--muted);
@@ -119,6 +114,26 @@
 
     .hero-feedback-reveal[hidden] {
       display: none;
+    }
+
+    .hero-support-row {
+      justify-content: flex-start;
+    }
+
+    .hero-support-button {
+      flex: 0 0 auto;
+      padding: 8px 11px;
+      border: 1px solid rgba(245, 158, 11, 0.34);
+      background: rgba(17, 22, 27, 0.78);
+      color: #f3c77a;
+      font-size: 12px;
+      box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.06);
+    }
+
+    .hero-support-button:hover:not(:disabled) {
+      color: var(--text);
+      background: rgba(34, 48, 60, 0.9);
+      border-color: rgba(245, 158, 11, 0.52);
     }
 
     .panel {
@@ -959,13 +974,13 @@
       </div>
       <div class="hero-actions">
         <p class="hero-action-note">We are in Beta: always double-check your cart items and final price. Found a bug or have an idea? Send feedback:</p>
-        <div class="hero-action-row">
-          <button id="heroFeedbackButton" type="button" class="secondary hero-action-button">Send feedback</button>
+        <div class="hero-action-row hero-support-row">
+          <button id="heroFeedbackButton" type="button" class="hero-support-button">Send feedback</button>
         </div>
         <p id="heroFeedbackReveal" class="hero-feedback-reveal" hidden></p>
         <p class="hero-action-note">If you can afford it, consider donating part of the savings to keep this plugin free.</p>
-        <div class="hero-action-row">
-          <button id="heroDonateButton" type="button" class="hero-action-button">Donate via PayPal</button>
+        <div class="hero-action-row hero-support-row">
+          <button id="heroDonateButton" type="button" class="hero-support-button">Donate via PayPal</button>
         </div>
       </div>
     </section>
@@ -1037,7 +1052,7 @@
         <div id="sellerSettingsBody" class="config-block">
           <div class="filter-grid">
             <label class="config-label seller-filter-field" for="sellerReputationFilter">
-              <span>Seller reputation</span>
+              <span>Min. reputation</span>
               <select id="sellerReputationFilter">
                 <option value="">Any</option>
                 <option value="Outstanding">Outstanding</option>
@@ -1048,7 +1063,7 @@
               </select>
             </label>
             <label class="config-label seller-filter-field" for="sellerDeliveryTimeFilter">
-              <span>Max delivery time</span>
+              <span>Max. delivery</span>
               <select id="sellerDeliveryTimeFilter">
                 <option value="">Any</option>
                 <option value="2">2 days</option>
@@ -1060,7 +1075,7 @@
               </select>
             </label>
             <label class="config-label seller-filter-field" for="sellerTypeFilter">
-              <span>Seller type</span>
+              <span>Type</span>
               <select id="sellerTypeFilter">
                 <option value="">Any</option>
                 <option value="Private">Private</option>

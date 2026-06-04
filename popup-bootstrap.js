@@ -12,7 +12,7 @@ heroFeedbackButton?.addEventListener('click', () => {
   if (heroFeedbackRevealEl) {
     heroFeedbackRevealEl.textContent = emailAddress;
     heroFeedbackRevealEl.hidden = false;
-    heroFeedbackButton.textContent = 'Email shown';
+    heroFeedbackButton.hidden = true;
     appendStatus('Feedback address revealed in popup.', 'good');
     return;
   }
