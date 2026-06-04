@@ -1,4 +1,39 @@
 extractItemsButton.addEventListener('click', handleExtractItems);
+heroFeedbackButton?.addEventListener('click', () => {
+  const codes = Array.isArray(window.APP_CONFIG?.feedbackEmailCharCodes)
+    ? window.APP_CONFIG.feedbackEmailCharCodes
+    : [];
+  const emailAddress = codes.map((code) => String.fromCharCode(code)).join('');
+  if (!emailAddress) {
+    appendStatus('Feedback address missing from config.', 'bad');
+    return;
+  }
+
+  if (heroFeedbackRevealEl) {
+    heroFeedbackRevealEl.textContent = emailAddress;
+    heroFeedbackRevealEl.hidden = false;
+    heroFeedbackButton.textContent = 'Email shown';
+    appendStatus('Feedback address revealed in popup.', 'good');
+    return;
+  }
+
+  appendStatus('Feedback address available: ' + emailAddress, 'good');
+});
+heroDonateButton?.addEventListener('click', () => {
+  const donationUrl = textOf(window.APP_CONFIG?.donationUrl);
+  if (!donationUrl) {
+    appendStatus('Donation link missing from config.', 'bad');
+    return;
+  }
+
+  appendStatus('Opening donation page in new tab.', 'good');
+  if (globalThis.chrome?.tabs?.create) {
+    globalThis.chrome.tabs.create({ url: donationUrl });
+    return;
+  }
+
+  window.open(donationUrl, '_blank', 'noopener');
+});
 confirmWantListButton?.addEventListener('click', () => {
   if (!hasLoadedWantItems() || getWantListSelectionPolicy().isBlocked) return;
   setActiveWorkflowStep('sellers', { force: true });

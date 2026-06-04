@@ -75,6 +75,52 @@
       line-height: 1.45;
     }
 
+    .hero-copy {
+      display: grid;
+      gap: 8px;
+    }
+
+    .hero-actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .hero-action-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .hero-action-button {
+      flex: 1 1 180px;
+      min-width: 0;
+    }
+
+    .hero-action-note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .hero-feedback-reveal {
+      margin: 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(159, 176, 190, 0.18);
+      background: rgba(17, 22, 27, 0.82);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.45;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .hero-feedback-reveal[hidden] {
+      display: none;
+    }
+
     .panel {
       min-width: 0;
       padding: 14px;
@@ -903,17 +949,23 @@
 <body>
   <main>
     <section class="hero">
-      <p class="eyebrow">Castle Consultancy</p>
+      <p class="eyebrow">Version 0.1.0</p>
       <h1>Cardmarket Optimizer</h1>
-      <p class="subtle">Create an order that is significantly cheaper!</p>
-      <p class="subtle">We are in Beta: make sure to check your cart on items and price.</p>
-      <p class="subtle">Report bugs!</p>
-      <p class="subtle">Current limitations, in absence of funding:</p>
-      <ul class="subtle">
-        <li>Maximum of 70 unique cards</li>
-        <li>One or two seller countries</li>
-        <li>Only MTG implemented</li>
-      </ul>
+      <div class="hero-copy">
+        <p class="subtle">Create an order that is significantly cheaper!</p>
+        <p class="subtle">Only MTG implemented currently.</p>
+      </div>
+      <div class="hero-actions">
+        <p class="hero-action-note">We are in Beta: always double-check your cart items and final price. Found a bug or have an idea? Send feedback:</p>
+        <div class="hero-action-row">
+          <button id="heroFeedbackButton" type="button" class="secondary hero-action-button">Send feedback</button>
+        </div>
+        <p id="heroFeedbackReveal" class="hero-feedback-reveal" hidden></p>
+        <p class="hero-action-note">If you can afford it, consider donating part of the savings.</p>
+        <div class="hero-action-row">
+          <button id="heroDonateButton" type="button" class="hero-action-button">Donate via PayPal</button>
+        </div>
+      </div>
     </section>
 
     <section class="panel workflow-shell">

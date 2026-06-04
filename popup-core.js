@@ -52,6 +52,9 @@ const mainCartSummaryTotalItemsEl = document.getElementById('mainCartSummaryTota
 const optimizerWaitingEl = document.getElementById('optimizerWaiting');
 const optimizerWaitingTextEl = document.getElementById('optimizerWaitingText');
 const optimizerWaitingDetailEl = document.getElementById('optimizerWaitingDetail');
+const heroFeedbackButton = document.getElementById('heroFeedbackButton');
+const heroFeedbackRevealEl = document.getElementById('heroFeedbackReveal');
+const heroDonateButton = document.getElementById('heroDonateButton');
 
 const urlParams = new URLSearchParams(window.location.search);
 const isDetached = urlParams.get('detached') === '1';
