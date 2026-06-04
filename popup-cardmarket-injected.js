@@ -547,7 +547,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
       ].find((entry) => entry && !new RegExp(nameHint, 'i').test(entry)) || '';
       if (/^(y|yes|true)$/i.test(value)) return true;
       if (/^(n|no|false)$/i.test(value)) return false;
-      if (/^any$/i.test(value) || value === '') return false;
+      if (/^any$/i.test(value) || value === '') return null;
       return null;
     }
 

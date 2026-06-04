@@ -640,8 +640,10 @@ async function executeSellerScopeScrape({
   logPowerSellerFallback,
   onScopeStart,
 }) {
+  const requestIsFoil = typeof item?.isFoil === 'boolean' ? item.isFoil : null;
   const requestFilters = {
     languageId: requestLanguageId,
+    isFoil: requestIsFoil,
     sellerCountryIds,
     sellerReputationId,
     maxShippingTimeId,
@@ -695,12 +697,14 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
   await ensureSellerScrapeNotCoolingDown();
 
   const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(item));
+  const requestIsFoil = typeof item?.isFoil === 'boolean' ? item.isFoil : null;
   const requestCountryIds = getCardmarketCountryIdsFromCountries(getSelectedSellerCountries());
   const sellerReputationId = getCardmarketSellerReputationId(sellerReputationFilterEl.value);
   const maxShippingTimeId = getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value);
   const sellerTypeId = getCardmarketSellerTypeId(sellerTypeFilterEl.value);
   const baseRequestFilters = {
     languageId: requestLanguageId,
+    isFoil: requestIsFoil,
     sellerCountryIds: requestCountryIds,
     sellerReputationId,
     maxShippingTimeId,

@@ -1406,8 +1406,10 @@ async function executeSellerScopeScrape({
   logPowerSellerFallback,
   onScopeStart,
 }) {
+  const requestIsFoil = typeof item?.isFoil === 'boolean' ? item.isFoil : null;
   const requestFilters = {
     languageId: requestLanguageId,
+    isFoil: requestIsFoil,
     sellerCountryIds,
     sellerReputationId,
     maxShippingTimeId,
@@ -1461,12 +1463,14 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
   await ensureSellerScrapeNotCoolingDown();
 
   const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(item));
+  const requestIsFoil = typeof item?.isFoil === 'boolean' ? item.isFoil : null;
   const requestCountryIds = getCardmarketCountryIdsFromCountries(getSelectedSellerCountries());
   const sellerReputationId = getCardmarketSellerReputationId(sellerReputationFilterEl.value);
   const maxShippingTimeId = getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value);
   const sellerTypeId = getCardmarketSellerTypeId(sellerTypeFilterEl.value);
   const baseRequestFilters = {
     languageId: requestLanguageId,
+    isFoil: requestIsFoil,
     sellerCountryIds: requestCountryIds,
     sellerReputationId,
     maxShippingTimeId,
@@ -1809,6 +1813,9 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     const url = new URL(urlValue, origin);
     if (activeFilters.languageId) {
       url.searchParams.set('language', activeFilters.languageId);
+    }
+    if (activeFilters.isFoil != null) {
+      url.searchParams.set('isFoil', activeFilters.isFoil ? 'Y' : 'N');
     }
     if (activeFilters.sellerCountryIds?.length) {
       url.searchParams.set('sellerCountry', activeFilters.sellerCountryIds.join(','));
