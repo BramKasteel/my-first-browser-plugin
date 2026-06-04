@@ -602,7 +602,8 @@
       gap: 8px;
     }
 
-    .buyer-country-field.is-required .country-section select {
+    .buyer-country-field.is-required .country-section select,
+    .want-list-field.is-required select {
       border-color: rgba(245, 158, 11, 0.48);
       box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.12);
     }
@@ -614,6 +615,7 @@
     }
 
     .buyer-country-field.is-required > span,
+    .want-list-field.is-required > span,
     .seller-filter-field.is-required > span,
     .buyer-country-field.is-required .country-section-label {
       color: #f7d388;
@@ -961,7 +963,7 @@
           <button id="heroFeedbackButton" type="button" class="secondary hero-action-button">Send feedback</button>
         </div>
         <p id="heroFeedbackReveal" class="hero-feedback-reveal" hidden></p>
-        <p class="hero-action-note">If you can afford it, consider donating part of the savings.</p>
+        <p class="hero-action-note">If you can afford it, consider donating part of the savings to keep this plugin free.</p>
         <div class="hero-action-row">
           <button id="heroDonateButton" type="button" class="hero-action-button">Donate via PayPal</button>
         </div>
@@ -1007,7 +1009,7 @@
             <h3 class="source-title">Select a wants list</h3>
             <div class="step-card-actions">
               <div class="config-row">
-                <div class="config-label">
+                <div id="wantListField" class="config-label seller-filter-field want-list-field">
                   <select id="wantListSelect">
                     <option value="">Loading want lists...</option>
                   </select>

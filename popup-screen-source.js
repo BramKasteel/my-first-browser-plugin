@@ -6,6 +6,12 @@ function hasSelectedWantList() {
   return !!textOf(selectedWantListId);
 }
 
+function renderWantListState() {
+  if (!wantListFieldEl) return;
+
+  wantListFieldEl.classList.toggle('is-required', availableWantLists.length > 0 && !hasSelectedWantList());
+}
+
 function syncExtractButton(isBusy = false) {
   const hasWantLists = availableWantLists.length > 0;
   const hasSelection = hasSelectedWantList();
@@ -19,6 +25,7 @@ function syncExtractButton(isBusy = false) {
   if (wantListSelectEl) {
     wantListSelectEl.disabled = isBusy || !hasWantLists;
   }
+  renderWantListState();
   if (confirmWantListButton) {
     confirmWantListButton.hidden = !hasLoadedItems;
     confirmWantListButton.disabled = isBusy || !hasLoadedItems || wantListPolicy.isBlocked;
@@ -37,8 +44,15 @@ function renderWantListOptions() {
     option.textContent = 'No want lists found';
     wantListSelectEl.appendChild(option);
     wantListSelectEl.value = '';
+    renderWantListState();
     return;
   }
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Select want list';
+  placeholder.selected = !hasSelectedWantList();
+  wantListSelectEl.appendChild(placeholder);
 
   availableWantLists.forEach((wantList) => {
     const option = document.createElement('option');
@@ -47,6 +61,7 @@ function renderWantListOptions() {
     wantListSelectEl.appendChild(option);
   });
   wantListSelectEl.value = selectedWantListId;
+  renderWantListState();
 }
 
 async function refreshWantLists({ quiet = false } = {}) {

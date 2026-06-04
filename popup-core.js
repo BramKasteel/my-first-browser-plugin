@@ -19,6 +19,7 @@ const sellerProgressBarEl = document.getElementById('sellerProgressBar');
 const wantListPreviewEl = document.getElementById('wantListPreview');
 const wantListWarningEl = document.getElementById('wantListWarning');
 const wantListSelectEl = document.getElementById('wantListSelect');
+const wantListFieldEl = document.getElementById('wantListField');
 const confirmWantListButton = document.getElementById('confirmWantList');
 const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
@@ -691,11 +692,9 @@ function setAvailableWantLists(wantLists, preferredWantListId = '') {
     : [];
 
   const validIds = new Set(availableWantLists.map((entry) => entry.id));
-  const desiredId = textOf(preferredWantListId) || textOf(selectedWantListId);
+  const desiredId = textOf(selectedWantListId);
   if (desiredId && validIds.has(desiredId)) {
     selectedWantListId = desiredId;
-  } else if (availableWantLists.length) {
-    selectedWantListId = availableWantLists[0].id;
   } else {
     selectedWantListId = '';
   }

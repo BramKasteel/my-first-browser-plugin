@@ -16,8 +16,8 @@ async function loadSellerSettings() {
   sellerDeliveryTimeFilterEl.value = '';
   sellerTypeFilterEl.value = '';
   renderBuyerCountryOptions(settings.buyerCountry || inferBuyerCountry());
-  selectedWantListId = textOf(settings.selectedWantListId);
-  restoredWantListId = selectedWantListId;
+  selectedWantListId = '';
+  restoredWantListId = '';
   setSelectedSellerCountries(getStoredSellerCountries(settings));
 }
 
