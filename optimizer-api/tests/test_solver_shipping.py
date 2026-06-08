@@ -14,8 +14,10 @@ from app.shipping import (
 )
 from app.solver import (
     MISSING_ROUTE_DATA_PENALTY_CENTS,
+    _item_offer_price_stats,
     _prune_cheapest_single_item_sellers,
     _prune_dominated_offers_per_seller,
+    _prune_expensive_country_offers,
     optimize_order,
 )
 
@@ -372,6 +374,151 @@ def test_prune_dominated_offers_keeps_all_options_when_wanted_quantity_exceeds_b
     item_map = {"item-1": WantedItem(item_id="item-1", name="Card", quantity=3)}
 
     pruned = _prune_dominated_offers_per_seller(offers, item_map)
+
+    assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2"]
+
+
+def test_item_offer_price_stats_computes_min_and_median_per_item() -> None:
+    offers = [
+        Offer(
+            offer_id="offer-1",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=1.0,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-2",
+            item_id="item-1",
+            seller_id="seller-2",
+            unit_price=3.0,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-3",
+            item_id="item-1",
+            seller_id="seller-3",
+            unit_price=5.0,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-4",
+            item_id="item-2",
+            seller_id="seller-4",
+            unit_price=2.5,
+            available_quantity=1,
+        ),
+    ]
+
+    stats = _item_offer_price_stats(offers)
+
+    assert stats["item-1"] == {
+        "offer_count": 3,
+        "min_unit_price": 1.0,
+        "min_unit_price_cents": 100,
+        "median_unit_price": 3.0,
+    }
+    assert stats["item-2"] == {
+        "offer_count": 1,
+        "min_unit_price": 2.5,
+        "min_unit_price_cents": 250,
+        "median_unit_price": 2.5,
+    }
+
+
+def test_prune_expensive_country_offers_drops_same_country_prices_above_threshold() -> (
+    None
+):
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(values=[(100, 50000, 1000)]),
+        },
+    )
+    sellers = {
+        "seller-1": Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
+        "seller-2": Seller(seller_id="seller-2", name="Seller 2", country="Germany"),
+        "seller-3": Seller(
+            seller_id="seller-3", name="Seller 3", country="Netherlands"
+        ),
+    }
+    offers = [
+        Offer(
+            offer_id="offer-1",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=1.0,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-2",
+            item_id="item-1",
+            seller_id="seller-2",
+            unit_price=1.9,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-3",
+            item_id="item-1",
+            seller_id="seller-2",
+            unit_price=2.05,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-4",
+            item_id="item-1",
+            seller_id="seller-3",
+            unit_price=4.0,
+            available_quantity=1,
+        ),
+    ]
+
+    pruned = _prune_expensive_country_offers(
+        offers=offers,
+        seller_map=sellers,
+        buyer_country="Netherlands",
+        route_book=route_book,
+    )
+
+    assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2", "offer-4"]
+
+
+def test_prune_expensive_country_offers_keeps_bucket_when_shipping_selection_has_no_valid_tier() -> (
+    None
+):
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(values=[(100, 50, 1)]),
+        },
+    )
+    sellers = {
+        "seller-1": Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
+        "seller-2": Seller(seller_id="seller-2", name="Seller 2", country="Germany"),
+    }
+    offers = [
+        Offer(
+            offer_id="offer-1",
+            item_id="item-1",
+            seller_id="seller-1",
+            unit_price=2.0,
+            available_quantity=1,
+        ),
+        Offer(
+            offer_id="offer-2",
+            item_id="item-1",
+            seller_id="seller-2",
+            unit_price=9.0,
+            available_quantity=1,
+        ),
+    ]
+
+    pruned = _prune_expensive_country_offers(
+        offers=offers,
+        seller_map=sellers,
+        buyer_country="Netherlands",
+        route_book=route_book,
+    )
 
     assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2"]
 

@@ -4,6 +4,7 @@ import json
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from statistics import median
 from typing import Callable
 
 from ortools.sat.python import cp_model
@@ -83,6 +84,27 @@ def _offer_prune_rank(offer: Offer) -> tuple[float, int, str]:
         -offer.available_quantity,
         offer.offer_id,
     )
+
+
+def _item_offer_price_stats(
+    offers: list[Offer],
+) -> dict[str, dict[str, float | int]]:
+    offers_by_item: dict[str, list[Offer]] = defaultdict(list)
+    for offer in offers:
+        offers_by_item[offer.item_id].append(offer)
+
+    stats_by_item: dict[str, dict[str, float | int]] = {}
+    for item_id, item_offers in offers_by_item.items():
+        prices = sorted(offer.unit_price for offer in item_offers)
+        price_cents = sorted(offer.unit_price_cents for offer in item_offers)
+        stats_by_item[item_id] = {
+            "offer_count": len(item_offers),
+            "min_unit_price": prices[0],
+            "min_unit_price_cents": price_cents[0],
+            "median_unit_price": float(median(prices)),
+        }
+
+    return stats_by_item
 
 
 def _selection_shipping_cost_cents(
@@ -432,6 +454,41 @@ def _prune_cheapest_single_item_sellers(
     return [offer for offer in offers if offer.seller_id not in drop_seller_ids]
 
 
+def _prune_expensive_country_offers(
+    *,
+    offers: list[Offer],
+    seller_map: dict[str, object],
+    buyer_country: str,
+    route_book: shipping.ShippingRouteBook,
+) -> list[Offer]:
+    _ = _item_offer_price_stats(offers)
+
+    offers_by_bucket: dict[tuple[str, str], list[Offer]] = defaultdict(list)
+    for offer in offers:
+        seller = seller_map[offer.seller_id]
+        offers_by_bucket[(offer.item_id, seller.country)].append(offer)
+
+    chosen_offer_ids: set[str] = set()
+    for (_, seller_country), bucket_offers in offers_by_bucket.items():
+        cheapest_offer = min(bucket_offers, key=_offer_prune_rank)
+        shipping_cost_cents = _selection_shipping_cost_cents(
+            seller_country=seller_country,
+            buyer_country=buyer_country,
+            selections=[(cheapest_offer, 1)],
+            route_book=route_book,
+        )
+        if shipping_cost_cents is None:
+            chosen_offer_ids.update(offer.offer_id for offer in bucket_offers)
+            continue
+
+        threshold_cents = cheapest_offer.unit_price_cents + shipping_cost_cents
+        for offer in bucket_offers:
+            if offer.unit_price_cents <= threshold_cents:
+                chosen_offer_ids.add(offer.offer_id)
+
+    return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
+
+
 def prune_all(request: OptimizationRequest):
     seller_map = request.seller_map()
     item_map = request.item_map()
@@ -439,6 +496,12 @@ def prune_all(request: OptimizationRequest):
     usable_offers = _prune_dominated_offers_per_seller(request.offers, item_map)
 
     route_book = shipping.load_shipping_route_book()
+    usable_offers = _prune_expensive_country_offers(
+        offers=usable_offers,
+        seller_map=seller_map,
+        buyer_country=request.buyer_country,
+        route_book=route_book,
+    )
     usable_offers = _prune_cheapest_single_item_sellers(
         offers=usable_offers,
         item_map=item_map,
