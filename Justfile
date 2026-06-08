@@ -1,5 +1,11 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+solve:
+	#!/usr/bin/env bash
+	cd /home/bram/repos/my-first-browser-plugin/optimizer-api
+	source .venv/bin/activate
+	uv run python -m app.solver
+
 playwright mode='headed':
 	#!/usr/bin/env bash
 	set -eu -o pipefail
