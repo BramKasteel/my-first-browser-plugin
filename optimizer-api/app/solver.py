@@ -331,8 +331,13 @@ def _solve_exact_shipping_order(
     for seller_id, offers in seller_offers.items():
         active = seller_active_exprs[seller_id]
         total_units = sum(offer_vars[offer.offer_id] for offer in offers)
-        max_units = sum(_capped_offer_quantity(offer, item_map) for offer in offers)
-        model.Add(total_units <= max_units * active)
+
+        # Disaggregated constraints: each individual offer is bound by active state
+        for offer in offers:
+            capped_qty = _capped_offer_quantity(offer, item_map)
+            model.Add(offer_vars[offer.offer_id] <= capped_qty * active)
+
+        # If seller active, at least 1 unit must be purchased
         model.Add(total_units >= active)
 
     if request.preferences.max_sellers is not None:
