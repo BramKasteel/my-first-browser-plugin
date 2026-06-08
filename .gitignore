@@ -1,5 +1,3 @@
-.DS_Store
-Thumbs.db
 *.log
 .venv/
 venv/
@@ -15,41 +13,8 @@ playwright-report/
 test-results/
 .env.playwright
 .env.playwright.local
-.auth/
-infra/cdk.out/
-*.zip
-*.crx
-*.pem
-test-export*.csv
-cardmarket-stock-*.csv
-cardmarket-debug-*.html
-cardmarket-live-row-*.html
-cardmarket-rawfetch-*.html
-HOW_TO_PUBLISH.md
-CHROME_STORE_LISTING.md
-cardmarket-stock-exporter-v*.zip
-screenshots/raw/
-screenshots/store/
-build.ps1
-build.bat
-build-screenshots.ps1
-build-screenshots.bat
-build-promo.ps1
-build-promo.bat
-build-extension-icons.ps1
-build-extension-icons.bat
-build-channel-art.ps1
-build-channel-art.bat
-promo-video.html
-promo-video-fehler.html
-build-bgm.ps1
-build-bgm.bat
 
-# internal feedback log — not for public repo
-FEEDBACK.md
+
 
 # media (kept locally, too large for repo)
-*.mp3
-*.mp4
-*.mov
-*.wav
+optimizer-api/data/

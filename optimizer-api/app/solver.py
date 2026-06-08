@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+from typing import Callable
 
 from ortools.sat.python import cp_model
 
@@ -42,12 +46,20 @@ def _new_quantity_var(cp_model_instance, *, upper_bound: int, name: str):
     return cp_model_instance.NewIntVar(0, upper_bound, name)
 
 
-def _new_solver(cp_model, *, max_time_seconds: float | None):
+def _new_solver(
+    cp_model,
+    *,
+    max_time_seconds: float | None,
+    log_callback: Callable[[str], None] | None = None,
+):
     solver = cp_model.CpSolver()
     if max_time_seconds is not None:
         solver.parameters.max_time_in_seconds = max_time_seconds
     solver.parameters.absolute_gap_limit = SOLVER_ABSOLUTE_GAP_LIMIT
     solver.parameters.num_search_workers = SOLVER_NUM_SEARCH_WORKERS
+    solver.parameters.log_search_progress = True
+    if log_callback is not None:
+        solver.log_callback = log_callback
     return solver
 
 
@@ -171,6 +183,7 @@ def _solve_exact_shipping_order(
     item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
     route_book: shipping.ShippingRouteBook,
+    solver_log_callback: Callable[[str], None] | None = None,
 ) -> tuple[str, dict[str, int]] | None:
     model = cp_model.CpModel()
 
@@ -304,7 +317,11 @@ def _solve_exact_shipping_order(
         model.Add(sum(seller_active_exprs.values()) <= request.preferences.max_sellers)
 
     model.Minimize(sum(objective_terms))
-    solver = _new_solver(cp_model, max_time_seconds=MAX_TIME_SECONDS)
+    solver = _new_solver(
+        cp_model,
+        max_time_seconds=MAX_TIME_SECONDS,
+        log_callback=solver_log_callback,
+    )
     status = solver.Solve(model)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -432,7 +449,11 @@ def prune_all(request: OptimizationRequest):
     return usable_offers
 
 
-def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
+def optimize_order(
+    request: OptimizationRequest,
+    *,
+    solver_log_callback: Callable[[str], None] | None = None,
+) -> OptimizationResponse:
     usable_offers = prune_all(request)
     item_map = request.item_map()
     seller_map = request.seller_map()
@@ -466,6 +487,7 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         item_map=item_map,
         seller_map=seller_map,
         route_book=route_book,
+        solver_log_callback=solver_log_callback,
     )
     if solution is None:
         return OptimizationResponse(
@@ -600,3 +622,53 @@ def optimize_order(request: OptimizationRequest) -> OptimizationResponse:
         ),
         notes=notes,
     )
+
+
+def _make_file_log_callback(log_file) -> Callable[[str], None]:
+    def write_log(message: str) -> None:
+        log_file.write(message)
+        if not message.endswith("\n"):
+            log_file.write("\n")
+        log_file.flush()
+
+    return write_log
+
+
+def _run_big_list_debug_solve() -> Path:
+    project_root = Path(__file__).resolve().parents[1]
+    fixture_path = project_root / "tests" / "fixtures" / "requests" / "big_list.json"
+    data_dir = project_root / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+    log_path = data_dir / f"solver-big-list-{timestamp}.log"
+
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+    request = OptimizationRequest.model_validate(payload)
+
+    with log_path.open("w", encoding="utf-8") as log_file:
+        log_file.write(f"fixture: {fixture_path}\n")
+        log_file.write(f"timestamp: {datetime.now().isoformat(timespec='seconds')}\n\n")
+
+        response = optimize_order(
+            request,
+            solver_log_callback=_make_file_log_callback(log_file),
+        )
+
+        log_file.write("\n=== Optimization summary ===\n")
+        log_file.write(response.model_dump_json(indent=2))
+        log_file.write("\n")
+
+    print(f"Solver log written to {log_path}")
+    print(
+        "Result:",
+        response.status,
+        f"grand_total={response.totals.grand_total:.2f} {response.currency}",
+        f"sellers={response.cart.total_sellers}",
+        f"units={response.cart.total_units}",
+    )
+    return log_path
+
+
+if __name__ == "__main__":
+    _run_big_list_debug_solve()
