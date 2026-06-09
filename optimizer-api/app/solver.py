@@ -300,22 +300,30 @@ def _solve_exact_shipping_order(
             for tier_index, tier in enumerate(tier_candidates):
                 tier_var = model.NewBoolVar(f"ship_{seller_id}_{tier_index}")
                 seller_shipping_tier_choice_vars[seller_id].append((tier, tier_var))
-                model.Add(
-                    total_value_expr
-                    <= tier.max_value_cents
-                    + seller_value_upper_bounds[seller_id] * (1 - tier_var)
-                )
-                model.Add(
-                    double_total_weight_expr
-                    <= 2 * tier.max_weight_grams
-                    + 5 * seller_weight_upper_bounds[seller_id] * (1 - tier_var)
-                )
 
             active = sum(
                 tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
             )
             model.Add(active <= 1)
             seller_active_exprs[seller_id] = active
+
+            model.Add(
+                total_value_expr
+                <= sum(
+                    tier.max_value_cents * tier_var
+                    for tier, tier_var in seller_shipping_tier_choice_vars[seller_id]
+                )
+                + seller_value_upper_bounds[seller_id] * (1 - active)
+            )
+            model.Add(
+                double_total_weight_expr
+                <= sum(
+                    2 * tier.max_weight_grams * tier_var
+                    for tier, tier_var in seller_shipping_tier_choice_vars[seller_id]
+                )
+                + 5 * seller_weight_upper_bounds[seller_id] * (1 - active)
+            )
+
             objective_terms.append(
                 sum(
                     tier.total_price_cents * tier_var
@@ -340,8 +348,11 @@ def _solve_exact_shipping_order(
         # If seller active, at least 1 unit must be purchased
         model.Add(total_units >= active)
 
-    if request.preferences.max_sellers is not None:
-        model.Add(sum(seller_active_exprs.values()) <= request.preferences.max_sellers)
+    # if request.preferences.max_sellers is not None:
+    #     model.Add(sum(seller_active_exprs.values()) <= request.preferences.max_sellers)
+
+    model.Add(sum(seller_active_exprs.values()) >= len(request.items) // 5)
+    model.Add(sum(seller_active_exprs.values()) <= (2 * len(request.items)) // 7)
 
     model.Minimize(sum(objective_terms))
     solver = _new_solver(
@@ -702,6 +713,79 @@ def _make_file_log_callback(log_file) -> Callable[[str], None]:
     return write_log
 
 
+def _format_selected_offer_rank_analysis(
+    request: OptimizationRequest,
+    response: OptimizationResponse,
+) -> list[str]:
+    if not response.allocations:
+        return []
+
+    item_map = request.item_map()
+    seller_map = request.seller_map()
+    offer_by_id = {offer.offer_id: offer for offer in request.offers}
+    offers_by_item: dict[str, list[Offer]] = defaultdict(list)
+    for offer in request.offers:
+        offers_by_item[offer.item_id].append(offer)
+
+    selected_offer_ids = {allocation.offer_id for allocation in response.allocations}
+    lines = []
+    for allocation in response.allocations:
+        selected_offer = offer_by_id[allocation.offer_id]
+        item_offers = offers_by_item[selected_offer.item_id]
+        cheaper_count = sum(
+            1
+            for offer in item_offers
+            if offer.unit_price_cents < selected_offer.unit_price_cents
+        )
+        same_price_count = sum(
+            1
+            for offer in item_offers
+            if offer.offer_id != selected_offer.offer_id
+            and offer.unit_price_cents == selected_offer.unit_price_cents
+        )
+        pricier_count = sum(
+            1
+            for offer in item_offers
+            if offer.unit_price_cents > selected_offer.unit_price_cents
+        )
+
+        cheaper_unbought = sum(
+            1
+            for offer in item_offers
+            if offer.offer_id not in selected_offer_ids
+            and offer.unit_price_cents < selected_offer.unit_price_cents
+        )
+        same_price_unbought = sum(
+            1
+            for offer in item_offers
+            if offer.offer_id not in selected_offer_ids
+            and offer.unit_price_cents == selected_offer.unit_price_cents
+        )
+        pricier_unbought = sum(
+            1
+            for offer in item_offers
+            if offer.offer_id not in selected_offer_ids
+            and offer.unit_price_cents > selected_offer.unit_price_cents
+        )
+
+        rank = cheaper_count + 1
+        seller = seller_map[selected_offer.seller_id]
+        item = item_map[selected_offer.item_id]
+        line = (
+            f"- {item.name}: bought {selected_offer.unit_price:.2f} {request.currency} "
+            f"from {seller.name} [{selected_offer.seller_id}], rank {rank}/{len(item_offers)} "
+            f"by unit price; skipped {cheaper_unbought} cheaper, "
+            f"{same_price_unbought} same-price, {pricier_unbought} pricier"
+        )
+        if same_price_count > 0:
+            line += f" (ties at same price: {same_price_count})"
+        if allocation.quantity > 1:
+            line += f"; bought qty {allocation.quantity}"
+        lines.append(line)
+
+    return lines
+
+
 def _run_big_list_debug_solve() -> Path:
     project_root = Path(__file__).resolve().parents[1]
     fixture_path = project_root / "tests" / "fixtures" / "requests" / "big_list.json"
@@ -713,6 +797,7 @@ def _run_big_list_debug_solve() -> Path:
 
     payload = json.loads(fixture_path.read_text(encoding="utf-8"))
     request = OptimizationRequest.model_validate(payload)
+    analysis_lines: list[str] = []
 
     with log_path.open("w", encoding="utf-8") as log_file:
         log_file.write(f"fixture: {fixture_path}\n")
@@ -727,6 +812,14 @@ def _run_big_list_debug_solve() -> Path:
         log_file.write(response.model_dump_json(indent=2))
         log_file.write("\n")
 
+        analysis_lines = _format_selected_offer_rank_analysis(request, response)
+        log_file.write("\n=== Bought item price ranks ===\n")
+        if analysis_lines:
+            log_file.write("\n".join(analysis_lines))
+            log_file.write("\n")
+        else:
+            log_file.write("No bought-item rank analysis available.\n")
+
     print(f"Solver log written to {log_path}")
     print(
         "Result:",
@@ -735,6 +828,10 @@ def _run_big_list_debug_solve() -> Path:
         f"sellers={response.cart.total_sellers}",
         f"units={response.cart.total_units}",
     )
+    if analysis_lines:
+        print("Bought item price ranks:")
+        for line in analysis_lines:
+            print(line)
     return log_path
 
 

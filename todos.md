@@ -8,8 +8,15 @@ Use stuff from https://d-krupke.github.io/cpsat-primer/
 
 ---------------
 
-For large problems, simplify the problem by solving a delivery-only problem for the cheaper cards
-See the logs to compare convergence
+investigate the rank of each bought item. If we only get very good items we can prune aggressively
+
+--------------
+
+3. LP Relaxation "Fractional Leak" still exists in Tiers
+While our disaggregated constraints forced seller_active to 1, the shipping tier logic within active sellers can still leak fractionally.
+An active seller with 3 possible shipping tiers (e.g., Letter, registered, parcel) can select 0.5 of Tier 1 and 0.5 of Tier 2 under LP relaxation, falsely underestimating the true shipping total.
+
+--> might improve lower bound
 
 --------------
 

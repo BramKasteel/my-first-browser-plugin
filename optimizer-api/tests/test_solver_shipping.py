@@ -14,6 +14,7 @@ from app.shipping import (
 )
 from app.solver import (
     MISSING_ROUTE_DATA_PENALTY_CENTS,
+    _format_selected_offer_rank_analysis,
     _item_offer_price_stats,
     _prune_cheapest_single_item_sellers,
     _prune_dominated_offers_per_seller,
@@ -254,6 +255,75 @@ def test_optimize_returns_empty_cart_summary_for_infeasible_request() -> None:
     assert response.cart.sellers == []
     assert response.cart.total_sellers == 0
     assert response.cart.total_units == 0
+
+
+def test_selected_offer_rank_analysis_reports_cheaper_and_pricier_skips(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(
+                values=[(1000, 50000, 1000)],
+            ),
+            ("netherlands", "netherlands"): _tiers(
+                values=[(250, 50000, 1000)],
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[WantedItem(item_id="item-1", name="Card", quantity=1)],
+        sellers=[
+            Seller(seller_id="seller-1", name="German Seller", country="Germany"),
+            Seller(
+                seller_id="seller-2",
+                name="Local Seller",
+                country="Netherlands",
+            ),
+            Seller(
+                seller_id="seller-3",
+                name="Backup Seller",
+                country="Netherlands",
+            ),
+        ],
+        offers=[
+            Offer(
+                offer_id="offer-1",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=1.0,
+                available_quantity=1,
+            ),
+            Offer(
+                offer_id="offer-2",
+                item_id="item-1",
+                seller_id="seller-2",
+                unit_price=1.2,
+                available_quantity=1,
+            ),
+            Offer(
+                offer_id="offer-3",
+                item_id="item-1",
+                seller_id="seller-3",
+                unit_price=1.4,
+                available_quantity=1,
+            ),
+        ],
+        preferences=OptimizationPreferences(),
+    )
+
+    response = optimize_order(request)
+    analysis_lines = _format_selected_offer_rank_analysis(request, response)
+
+    assert response.allocations[0].offer_id == "offer-2"
+    assert analysis_lines == [
+        "- Card: bought 1.20 EUR from Local Seller [seller-2], rank 2/3 by unit price; skipped 1 cheaper, 0 same-price, 1 pricier"
+    ]
 
 
 def test_prune_dominated_offers_drops_more_expensive_duplicate() -> None:
