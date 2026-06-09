@@ -31,9 +31,9 @@ def _tiers(*, values: list[tuple[int, int, int]]) -> ShippingRouteTiers:
             ShippingTier(
                 total_price_cents=total_price_cents,
                 max_value_cents=max_value_cents,
-                max_weight_grams=max_weight_grams,
+                max_units=max_units,
             )
-            for total_price_cents, max_value_cents, max_weight_grams in values
+            for total_price_cents, max_value_cents, max_units in values
         ),
     )
 
@@ -142,7 +142,7 @@ def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
         country_ids={"germany": 7, "netherlands": 23},
         tiers_by_route={
             ("germany", "netherlands"): _tiers(
-                values=[(155, 2500, 10), (200, 2500, 43)],
+                values=[(155, 2500, 4), (200, 2500, 17)],
             )
         },
     )

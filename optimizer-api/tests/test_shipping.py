@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from app.shipping import (
+    PARCEL_CARD_ORDER_MAX_UNITS,
     ShippingTier,
     _load_shipping_route_book,
     _normalize_route_tiers,
@@ -66,7 +67,7 @@ def test_normalize_route_tiers_uses_card_capacity_for_letters() -> None:
         ShippingTier(
             total_price_cents=155,
             max_value_cents=2500,
-            max_weight_grams=1000,
+            max_units=PARCEL_CARD_ORDER_MAX_UNITS,
         ),
     )
 
@@ -114,7 +115,7 @@ def test_load_shipping_route_book_normalizes_countries(tmp_path) -> None:
     assert len(tiers.tiers) == 1
     assert tiers.tiers[0].total_price_cents == 155
     assert tiers.tiers[0].max_value_cents == 2500
-    assert tiers.tiers[0].max_weight_grams == 10
+    assert tiers.tiers[0].max_units == 4
 
 
 def test_lookup_tiers_can_apply_seller_specific_pruning(tmp_path) -> None:
@@ -185,14 +186,14 @@ def test_lookup_tiers_can_apply_seller_specific_pruning(tmp_path) -> None:
         seller_country="Germany",
         buyer_country="Netherlands",
         seller_value_upper_bound=2500,
-        seller_weight_upper_bound=10,
+        seller_unit_upper_bound=4,
     )
 
     assert tiers.tiers == (
         ShippingTier(
             total_price_cents=155,
             max_value_cents=2500,
-            max_weight_grams=10,
+            max_units=4,
         ),
     )
 
@@ -224,14 +225,14 @@ def test_prune_route_tiers_for_order_bounds_drops_redundant_letters() -> None:
             ]
         ),
         seller_value_upper_bound=2500,
-        seller_weight_upper_bound=10,
+        seller_unit_upper_bound=4,
     )
 
     assert pruned.tiers == (
         ShippingTier(
             total_price_cents=155,
             max_value_cents=2500,
-            max_weight_grams=10,
+            max_units=4,
         ),
     )
 
@@ -376,11 +377,11 @@ def test_load_shipping_route_book_prunes_insured_express_and_heavy_duplicates(
         seller_country="Germany", buyer_country="Netherlands"
     )
     assert [
-        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
+        (tier.total_price_cents, tier.max_value_cents, tier.max_units)
         for tier in tiers.tiers
     ] == [
-        (799, 2500, 1000),
-        (1549, 50000, 1000),
+        (799, 2500, PARCEL_CARD_ORDER_MAX_UNITS),
+        (1549, 50000, PARCEL_CARD_ORDER_MAX_UNITS),
     ]
 
 
@@ -464,13 +465,13 @@ def test_load_shipping_route_book_keeps_letters_and_non_dominated_parcels(
         seller_country="Germany", buyer_country="Netherlands"
     )
     assert [
-        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
+        (tier.total_price_cents, tier.max_value_cents, tier.max_units)
         for tier in tiers.tiers
     ] == [
-        (155, 2500, 10),
-        (200, 2500, 43),
-        (799, 2500, 1000),
-        (1549, 50000, 1000),
+        (155, 2500, 4),
+        (200, 2500, 17),
+        (799, 2500, PARCEL_CARD_ORDER_MAX_UNITS),
+        (1549, 50000, PARCEL_CARD_ORDER_MAX_UNITS),
     ]
 
 
@@ -504,7 +505,7 @@ def test_normalize_route_tiers_keeps_smallest_non_dominated_parcel_weight() -> N
         ShippingTier(
             total_price_cents=799,
             max_value_cents=2500,
-            max_weight_grams=1000,
+            max_units=PARCEL_CARD_ORDER_MAX_UNITS,
         ),
     )
 
@@ -559,10 +560,10 @@ def test_load_shipping_route_book_prunes_tracked_letter_duplicate_when_no_better
         seller_country="Germany", buyer_country="Netherlands"
     )
     assert [
-        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
+        (tier.total_price_cents, tier.max_value_cents, tier.max_units)
         for tier in tiers.tiers
     ] == [
-        (200, 2500, 43),
+        (200, 2500, 17),
     ]
 
 
@@ -625,10 +626,10 @@ def test_load_shipping_route_book_builds_tiers_for_mixed_letter_and_parcel_route
         seller_country="Netherlands", buyer_country="Netherlands"
     )
     assert [
-        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
+        (tier.total_price_cents, tier.max_value_cents, tier.max_units)
         for tier in tiers.tiers
     ] == [
-        (170, 2500, 10),
-        (310, 2500, 43),
-        (975, 10000, 1000),
+        (170, 2500, 4),
+        (310, 2500, 17),
+        (975, 10000, PARCEL_CARD_ORDER_MAX_UNITS),
     ]

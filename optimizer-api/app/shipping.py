@@ -9,7 +9,7 @@ from pathlib import Path
 SHIPPING_DATA_PATH = Path(__file__).with_name("data") / "shipping_costs.json"
 LETTER_CARD_LIMITS = ((20, 4), (50, 17), (100, 40))
 APPROX_GRAMS_PER_CARD = 2.5
-PARCEL_CARD_ORDER_MAX_WEIGHT_GRAMS = 1000
+PARCEL_CARD_ORDER_MAX_UNITS = 1000
 
 
 def _is_card_order_excluded_method(name: str) -> bool:
@@ -76,7 +76,7 @@ def cents_to_eur(amount: int) -> float:
 @dataclass(frozen=True)
 class ShippingTier:
     max_value_cents: int
-    max_weight_grams: int
+    max_units: int
     total_price_cents: int
 
 
@@ -101,7 +101,7 @@ class ShippingRouteBook:
         seller_country: str,
         buyer_country: str,
         seller_value_upper_bound: int | None = None,
-        seller_weight_upper_bound: int | None = None,
+        seller_unit_upper_bound: int | None = None,
     ) -> ShippingRouteTiers:
         route_tiers = self.tiers_by_route.get(
             (
@@ -110,12 +110,12 @@ class ShippingRouteBook:
             ),
             ShippingRouteTiers(tiers=()),
         )
-        if seller_value_upper_bound is None or seller_weight_upper_bound is None:
+        if seller_value_upper_bound is None or seller_unit_upper_bound is None:
             return route_tiers
         return prune_route_tiers_for_order_bounds(
             route_tiers=route_tiers,
             seller_value_upper_bound=seller_value_upper_bound,
-            seller_weight_upper_bound=seller_weight_upper_bound,
+            seller_unit_upper_bound=seller_unit_upper_bound,
         )
 
 
@@ -124,32 +124,32 @@ def card_weight_grams_for_quantity(quantity: int) -> int:
     return (quantity * 5 + 1) // 2
 
 
-def _normalized_tier_max_weight_grams(*, is_letter: bool, max_weight_grams: int) -> int:
+def _normalized_tier_max_units(*, is_letter: bool, max_weight_grams: int) -> int:
     if not is_letter:
-        return PARCEL_CARD_ORDER_MAX_WEIGHT_GRAMS
+        return PARCEL_CARD_ORDER_MAX_UNITS
     # This uses the estimates provided by cardmarket -> 20gr: 4 cards, etc
     # even though a card weighs 2.5 grams only
-    return card_weight_grams_for_quantity(max_cards_based_on_weight(max_weight_grams))
+    return max_cards_based_on_weight(max_weight_grams)
 
 
 def prune_route_tiers_for_order_bounds(
     *,
     route_tiers: ShippingRouteTiers,
     seller_value_upper_bound: int,
-    seller_weight_upper_bound: int,
+    seller_unit_upper_bound: int,
 ) -> ShippingRouteTiers:
     pruned = _prune_dominated_candidates(
         list(route_tiers.tiers),
         sort_key=lambda tier: (
             tier.total_price_cents,
             -min(tier.max_value_cents, seller_value_upper_bound),
-            -min(tier.max_weight_grams, seller_weight_upper_bound),
+            -min(tier.max_units, seller_unit_upper_bound),
         ),
         dominates=lambda existing, candidate: _shipping_tier_dominates_for_order_bounds(
             existing=existing,
             candidate=candidate,
             seller_value_upper_bound=seller_value_upper_bound,
-            seller_weight_upper_bound=seller_weight_upper_bound,
+            seller_unit_upper_bound=seller_unit_upper_bound,
         ),
     )
 
@@ -188,7 +188,7 @@ def _normalize_route_tiers(
         tier_candidates.append(
             ShippingTier(
                 max_value_cents=parse_eur_to_cents(method["maxValue"]),
-                max_weight_grams=_normalized_tier_max_weight_grams(
+                max_units=_normalized_tier_max_units(
                     is_letter=bool(method["isLetter"]),
                     max_weight_grams=int(method["maxWeight"]),
                 ),
@@ -201,7 +201,7 @@ def _normalize_route_tiers(
         sort_key=lambda tier: (
             tier.total_price_cents,
             -tier.max_value_cents,
-            -tier.max_weight_grams,
+            -tier.max_units,
         ),
         dominates=_shipping_tier_dominates,
     )
@@ -212,7 +212,7 @@ def _shipping_tier_dominates(existing: ShippingTier, candidate: ShippingTier) ->
     return (
         existing.total_price_cents <= candidate.total_price_cents
         and existing.max_value_cents >= candidate.max_value_cents
-        and existing.max_weight_grams >= candidate.max_weight_grams
+        and existing.max_units >= candidate.max_units
     )
 
 
@@ -221,7 +221,7 @@ def _shipping_tier_dominates_for_order_bounds(
     existing: ShippingTier,
     candidate: ShippingTier,
     seller_value_upper_bound: int,
-    seller_weight_upper_bound: int,
+    seller_unit_upper_bound: int,
 ) -> bool:
     if existing.total_price_cents > candidate.total_price_cents:
         return False
@@ -232,9 +232,9 @@ def _shipping_tier_dominates_for_order_bounds(
     ):
         return False
 
-    return min(existing.max_weight_grams, seller_weight_upper_bound) >= min(
-        candidate.max_weight_grams,
-        seller_weight_upper_bound,
+    return min(existing.max_units, seller_unit_upper_bound) >= min(
+        candidate.max_units,
+        seller_unit_upper_bound,
     )
 
 

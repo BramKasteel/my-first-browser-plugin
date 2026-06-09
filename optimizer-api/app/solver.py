@@ -27,7 +27,7 @@ MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
 MAX_TIME_SECONDS = 15
 SOLVER_ABSOLUTE_GAP_LIMIT = 10
 SOLVER_NUM_SEARCH_WORKERS = 8
-MAX_OFFERS_PER_ITEM = 50
+MAX_OFFERS_PER_ITEM = 150
 
 
 def _to_cents(amount: float) -> int:
@@ -123,15 +123,13 @@ def _selection_shipping_cost_cents(
         total_value_cents = sum(
             offer.unit_price_cents * quantity for offer, quantity in selections
         )
-        total_weight_grams = shipping.card_weight_grams_for_quantity(
-            sum(quantity for _, quantity in selections)
-        )
+        total_units = sum(quantity for _, quantity in selections)
 
         valid_tier_costs = []
         for tier in route_tiers.tiers:
             if total_value_cents > tier.max_value_cents:
                 continue
-            if total_weight_grams > tier.max_weight_grams:
+            if total_units > tier.max_units:
                 continue
             valid_tier_costs.append(tier.total_price_cents)
 
@@ -215,14 +213,14 @@ def _solve_exact_shipping_order(
     seller_active_exprs = {}
     seller_tier_candidates = {}
     seller_value_upper_bounds = {}
-    seller_weight_upper_bounds = {}
+    seller_unit_upper_bounds = {}
 
     seller_offers = defaultdict(list)
     for offer in usable_offers:
         seller_offers[offer.seller_id].append(offer)
         offer_vars[offer.offer_id] = _new_quantity_var(
             model,
-            upper_bound=offer.available_quantity,
+            upper_bound=_capped_offer_quantity(offer, item_map),
             name=f"qty_{offer.offer_id}",
         )
 
@@ -231,8 +229,8 @@ def _solve_exact_shipping_order(
             offer.unit_price_cents * _capped_offer_quantity(offer, item_map)
             for offer in offers
         )
-        seller_weight_upper_bounds[seller_id] = shipping.card_weight_grams_for_quantity(
-            sum(_capped_offer_quantity(offer, item_map) for offer in offers)
+        seller_unit_upper_bounds[seller_id] = sum(
+            _capped_offer_quantity(offer, item_map) for offer in offers
         )
 
     for seller_id in seller_offers:
@@ -240,7 +238,7 @@ def _solve_exact_shipping_order(
             seller_country=seller_map[seller_id].country,
             buyer_country=request.buyer_country,
             seller_value_upper_bound=seller_value_upper_bounds[seller_id],
-            seller_weight_upper_bound=seller_weight_upper_bounds[seller_id],
+            seller_unit_upper_bound=seller_unit_upper_bounds[seller_id],
         )
 
         tier_candidates = list(route_tiers.tiers)
@@ -277,9 +275,7 @@ def _solve_exact_shipping_order(
             total_value_expr = sum(
                 offer.unit_price_cents * offer_vars[offer.offer_id] for offer in offers
             )
-            double_total_weight_expr = sum(
-                5 * offer_vars[offer.offer_id] for offer in offers
-            )
+            total_units = sum(offer_vars[offer.offer_id] for offer in offers)
 
             if len(tier_candidates) == 1:
                 tier = tier_candidates[0]
@@ -287,9 +283,7 @@ def _solve_exact_shipping_order(
                 model.Add(total_value_expr <= tier.max_value_cents).OnlyEnforceIf(
                     active
                 )
-                model.Add(
-                    double_total_weight_expr <= 2 * tier.max_weight_grams
-                ).OnlyEnforceIf(active)
+                model.Add(total_units <= tier.max_units).OnlyEnforceIf(active)
 
                 objective_terms.append(tier.total_price_cents * active)
                 continue
@@ -302,9 +296,7 @@ def _solve_exact_shipping_order(
                 model.Add(total_value_expr <= tier.max_value_cents).OnlyEnforceIf(
                     tier_var
                 )
-                model.Add(
-                    double_total_weight_expr <= 2 * tier.max_weight_grams
-                ).OnlyEnforceIf(tier_var)
+                model.Add(total_units <= tier.max_units).OnlyEnforceIf(tier_var)
 
             active = sum(
                 tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
