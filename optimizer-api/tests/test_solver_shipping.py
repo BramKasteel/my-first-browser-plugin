@@ -8,6 +8,8 @@ from app.models import (
     WantedItem,
 )
 from app.shipping import (
+    RouteShippingApproximation,
+    ShippingPriceStep,
     ShippingRouteBook,
     ShippingRouteTiers,
     ShippingTier,
@@ -93,6 +95,13 @@ def test_optimize_uses_more_expensive_method_when_value_exceeds_letter_limit(
                 values=[(155, 2500, 10), (799, 50000, 1000)],
             )
         },
+        approximations_by_route={
+            ("germany", "netherlands"): RouteShippingApproximation(
+                base_price_cents=155,
+                weight_steps=(ShippingPriceStep(10, 799),),
+                value_steps=(ShippingPriceStep(2500, 1549),),
+            )
+        },
     )
     monkeypatch.setattr(
         "app.solver.shipping.load_shipping_route_book", lambda: route_book
@@ -101,7 +110,7 @@ def test_optimize_uses_more_expensive_method_when_value_exceeds_letter_limit(
     response = optimize_order(_request(unit_price=30.0, quantity=1))
 
     assert response.status == "optimal"
-    assert response.totals.shipping_total == 7.99
+    assert response.totals.shipping_total == 15.49
 
 
 def test_optimize_uses_penalty_shipping_for_missing_imported_route(monkeypatch) -> None:
@@ -145,6 +154,13 @@ def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
                 values=[(155, 2500, 10), (200, 2500, 43)],
             )
         },
+        approximations_by_route={
+            ("germany", "netherlands"): RouteShippingApproximation(
+                base_price_cents=155,
+                weight_steps=(ShippingPriceStep(10, 799),),
+                value_steps=(ShippingPriceStep(2500, 1549),),
+            )
+        },
     )
     monkeypatch.setattr(
         "app.solver.shipping.load_shipping_route_book", lambda: route_book
@@ -153,7 +169,103 @@ def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
     response = optimize_order(_request(unit_price=1.0, quantity=5))
 
     assert response.status == "optimal"
-    assert response.totals.shipping_total == 2.0
+    assert response.totals.shipping_total == 7.99
+
+
+def test_optimize_uses_nl_to_nl_letter_steps_and_value_jump(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"netherlands": 23},
+        tiers_by_route={
+            ("netherlands", "netherlands"): _tiers(
+                values=[(170, 1_000_000, 1_000_000)],
+            )
+        },
+        approximations_by_route={
+            ("netherlands", "netherlands"): RouteShippingApproximation(
+                base_price_cents=170,
+                weight_steps=(
+                    ShippingPriceStep(10, 310),
+                    ShippingPriceStep(43, 485),
+                    ShippingPriceStep(350, 620),
+                ),
+                value_steps=(ShippingPriceStep(2500, 620),),
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[WantedItem(item_id="item-1", name="Card", quantity=18)],
+        sellers=[Seller(seller_id="seller-1", name="Seller", country="Netherlands")],
+        offers=[
+            Offer(
+                offer_id="offer-1",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=1.0,
+                available_quantity=18,
+            )
+        ],
+        preferences=OptimizationPreferences(),
+    )
+
+    response = optimize_order(request)
+
+    assert response.status == "optimal"
+    assert response.totals.shipping_total == 4.85
+
+
+def test_optimize_uses_nl_to_nl_brievenbuspakje_for_high_value(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"netherlands": 23},
+        tiers_by_route={
+            ("netherlands", "netherlands"): _tiers(
+                values=[(170, 1_000_000, 1_000_000)],
+            )
+        },
+        approximations_by_route={
+            ("netherlands", "netherlands"): RouteShippingApproximation(
+                base_price_cents=170,
+                weight_steps=(
+                    ShippingPriceStep(10, 310),
+                    ShippingPriceStep(43, 485),
+                    ShippingPriceStep(350, 620),
+                ),
+                value_steps=(ShippingPriceStep(2500, 620),),
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[WantedItem(item_id="item-1", name="Card", quantity=1)],
+        sellers=[Seller(seller_id="seller-1", name="Seller", country="Netherlands")],
+        offers=[
+            Offer(
+                offer_id="offer-1",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=30.0,
+                available_quantity=1,
+            )
+        ],
+        preferences=OptimizationPreferences(),
+    )
+
+    response = optimize_order(request)
+
+    assert response.status == "optimal"
+    assert response.totals.shipping_total == 6.2
 
 
 def test_optimize_ignores_parcel_weight_limit_for_simple_card_orders(
@@ -228,10 +340,10 @@ def test_optimize_uses_exact_shipping_objective_for_final_choice(
     response = optimize_order(request)
 
     assert response.status == "optimal"
-    assert [seller.seller_id for seller in response.cart.sellers] == ["seller-2"]
-    assert response.totals.item_subtotal == 12.0
-    assert response.totals.shipping_total == 2.5
-    assert response.totals.grand_total == 14.5
+    assert [seller.seller_id for seller in response.cart.sellers] == ["seller-1"]
+    assert response.totals.item_subtotal == 11.0
+    assert response.totals.shipping_total == 1.0
+    assert response.totals.grand_total == 12.0
 
 
 def test_optimize_returns_empty_cart_summary_for_infeasible_request() -> None:
@@ -575,9 +687,7 @@ def test_prune_expensive_country_offers_drops_same_country_prices_above_threshol
     assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2", "offer-4"]
 
 
-def test_prune_expensive_country_offers_keeps_bucket_when_shipping_selection_has_no_valid_tier() -> (
-    None
-):
+def test_prune_expensive_country_offers_uses_flat_shipping_threshold() -> None:
     route_book = ShippingRouteBook(
         country_ids={"germany": 7, "netherlands": 23},
         tiers_by_route={
@@ -612,7 +722,7 @@ def test_prune_expensive_country_offers_keeps_bucket_when_shipping_selection_has
         route_book=route_book,
     )
 
-    assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2"]
+    assert [offer.offer_id for offer in pruned] == ["offer-1"]
 
 
 def test_prune_single_item_sellers_keeps_when_higher_shipping_would_outweigh_item_replacement(

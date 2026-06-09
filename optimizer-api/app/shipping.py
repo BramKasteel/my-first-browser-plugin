@@ -80,15 +80,50 @@ class ShippingTier:
     total_price_cents: int
 
 
+FLAT_RATE_MAX_VALUE_CENTS = 10_000_000
+FLAT_RATE_MAX_WEIGHT_GRAMS = 1_000_000
+
+
 @dataclass(frozen=True)
 class ShippingRouteTiers:
     tiers: tuple[ShippingTier, ...]
 
 
 @dataclass(frozen=True)
+class ShippingPriceStep:
+    threshold_cents_or_grams: int
+    total_price_cents: int
+
+
+@dataclass(frozen=True)
+class RouteShippingApproximation:
+    base_price_cents: int
+    weight_steps: tuple[ShippingPriceStep, ...] = ()
+    value_steps: tuple[ShippingPriceStep, ...] = ()
+
+    def price_for_order(
+        self,
+        *,
+        total_value_cents: int,
+        total_weight_grams: int,
+    ) -> int:
+        price_cents = self.base_price_cents
+        for step in self.weight_steps:
+            if total_weight_grams > step.threshold_cents_or_grams:
+                price_cents = max(price_cents, step.total_price_cents)
+        for step in self.value_steps:
+            if total_value_cents > step.threshold_cents_or_grams:
+                price_cents = max(price_cents, step.total_price_cents)
+        return price_cents
+
+
+@dataclass(frozen=True)
 class ShippingRouteBook:
     country_ids: dict[str, int]
     tiers_by_route: dict[tuple[str, str], ShippingRouteTiers] = field(
+        default_factory=dict
+    )
+    approximations_by_route: dict[tuple[str, str], RouteShippingApproximation] = field(
         default_factory=dict
     )
 
@@ -176,7 +211,7 @@ def _prune_dominated_candidates(
 def _normalize_route_tiers(
     raw_methods: list[dict[str, object]],
 ) -> "ShippingRouteTiers":
-    tier_candidates: list[ShippingTier] = []
+    lowest_price_cents: int | None = None
     for method in raw_methods:
         name = str(method.get("name", ""))
         if _is_card_order_excluded_method(name):
@@ -185,27 +220,188 @@ def _normalize_route_tiers(
         if bool(method["isVirtual"]):
             continue
 
-        tier_candidates.append(
+        price_cents = parse_eur_to_cents(method["price"])
+        if lowest_price_cents is None or price_cents < lowest_price_cents:
+            lowest_price_cents = price_cents
+
+    if lowest_price_cents is None:
+        return ShippingRouteTiers(tiers=())
+
+    return ShippingRouteTiers(
+        tiers=(
             ShippingTier(
-                max_value_cents=parse_eur_to_cents(method["maxValue"]),
-                max_weight_grams=_normalized_tier_max_weight_grams(
-                    is_letter=bool(method["isLetter"]),
-                    max_weight_grams=int(method["maxWeight"]),
+                max_value_cents=FLAT_RATE_MAX_VALUE_CENTS,
+                max_weight_grams=FLAT_RATE_MAX_WEIGHT_GRAMS,
+                total_price_cents=lowest_price_cents,
+            ),
+        )
+    )
+
+
+def _iter_usable_methods(
+    raw_methods: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    usable_methods = []
+    for method in raw_methods:
+        name = str(method.get("name", ""))
+        if _is_card_order_excluded_method(name):
+            continue
+        if bool(method["isVirtual"]):
+            continue
+        usable_methods.append(method)
+    return usable_methods
+
+
+def _method_price_cents(method: dict[str, object]) -> int:
+    return parse_eur_to_cents(str(method["price"]))
+
+
+def _method_max_value_cents(method: dict[str, object]) -> int:
+    return parse_eur_to_cents(str(method["maxValue"]))
+
+
+def _method_max_weight_grams(method: dict[str, object]) -> int:
+    return _normalized_tier_max_weight_grams(
+        is_letter=bool(method["isLetter"]),
+        max_weight_grams=int(method["maxWeight"]),
+    )
+
+
+def _build_germany_to_netherlands_approximation(
+    raw_methods: list[dict[str, object]],
+) -> RouteShippingApproximation | None:
+    usable_methods = _iter_usable_methods(raw_methods)
+    letter_methods = [method for method in usable_methods if bool(method["isLetter"])]
+    if not letter_methods:
+        return None
+
+    base_method = min(letter_methods, key=_method_price_cents)
+    base_price_cents = _method_price_cents(base_method)
+    letter_value_cents = _method_max_value_cents(base_method)
+    letter_weight_grams = _method_max_weight_grams(base_method)
+
+    heavier_methods = [
+        method
+        for method in usable_methods
+        if _method_max_weight_grams(method) > letter_weight_grams
+    ]
+    more_valuable_methods = [
+        method
+        for method in usable_methods
+        if _method_max_value_cents(method) > letter_value_cents
+    ]
+
+    weight_steps = ()
+    if heavier_methods:
+        weight_steps = (
+            ShippingPriceStep(
+                threshold_cents_or_grams=letter_weight_grams,
+                total_price_cents=min(
+                    _method_price_cents(method) for method in heavier_methods
                 ),
-                total_price_cents=parse_eur_to_cents(method["price"]),
-            )
+            ),
         )
 
-    pruned_candidates = _prune_dominated_candidates(
-        tier_candidates,
-        sort_key=lambda tier: (
-            tier.total_price_cents,
-            -tier.max_value_cents,
-            -tier.max_weight_grams,
-        ),
-        dominates=_shipping_tier_dominates,
+    value_steps = ()
+    if more_valuable_methods:
+        value_steps = (
+            ShippingPriceStep(
+                threshold_cents_or_grams=letter_value_cents,
+                total_price_cents=min(
+                    _method_price_cents(method) for method in more_valuable_methods
+                ),
+            ),
+        )
+
+    return RouteShippingApproximation(
+        base_price_cents=base_price_cents,
+        weight_steps=weight_steps,
+        value_steps=value_steps,
     )
-    return ShippingRouteTiers(tiers=tuple(pruned_candidates))
+
+
+def _build_netherlands_to_netherlands_approximation(
+    raw_methods: list[dict[str, object]],
+) -> RouteShippingApproximation | None:
+    usable_methods = _iter_usable_methods(raw_methods)
+    letter_methods = sorted(
+        [method for method in usable_methods if bool(method["isLetter"])],
+        key=lambda method: (
+            _method_max_weight_grams(method),
+            _method_price_cents(method),
+        ),
+    )
+    if not letter_methods:
+        return None
+
+    base_method = letter_methods[0]
+    base_price_cents = _method_price_cents(base_method)
+    letter_value_cents = _method_max_value_cents(base_method)
+
+    weight_steps: list[ShippingPriceStep] = []
+    previous_weight_grams = _method_max_weight_grams(base_method)
+    last_target_price_cents = base_price_cents
+    for method in letter_methods[1:]:
+        target_price_cents = _method_price_cents(method)
+        if target_price_cents <= last_target_price_cents:
+            previous_weight_grams = max(
+                previous_weight_grams, _method_max_weight_grams(method)
+            )
+            continue
+        weight_steps.append(
+            ShippingPriceStep(
+                threshold_cents_or_grams=previous_weight_grams,
+                total_price_cents=target_price_cents,
+            )
+        )
+        previous_weight_grams = _method_max_weight_grams(method)
+        last_target_price_cents = target_price_cents
+
+    extended_methods = [
+        method
+        for method in usable_methods
+        if _method_max_weight_grams(method)
+        > _method_max_weight_grams(letter_methods[-1])
+        or _method_max_value_cents(method) > letter_value_cents
+    ]
+    if extended_methods:
+        target_price_cents = min(
+            _method_price_cents(method) for method in extended_methods
+        )
+        if target_price_cents > last_target_price_cents:
+            weight_steps.append(
+                ShippingPriceStep(
+                    threshold_cents_or_grams=_method_max_weight_grams(
+                        letter_methods[-1]
+                    ),
+                    total_price_cents=target_price_cents,
+                )
+            )
+        value_steps = (
+            ShippingPriceStep(
+                threshold_cents_or_grams=letter_value_cents,
+                total_price_cents=target_price_cents,
+            ),
+        )
+    else:
+        value_steps = ()
+
+    return RouteShippingApproximation(
+        base_price_cents=base_price_cents,
+        weight_steps=tuple(weight_steps),
+        value_steps=value_steps,
+    )
+
+
+def _route_approximation_from_methods(
+    route_key: tuple[str, str],
+    raw_methods: list[dict[str, object]],
+) -> RouteShippingApproximation | None:
+    if route_key == ("germany", "netherlands"):
+        return _build_germany_to_netherlands_approximation(raw_methods)
+    if route_key == ("netherlands", "netherlands"):
+        return _build_netherlands_to_netherlands_approximation(raw_methods)
+    return None
 
 
 def _shipping_tier_dominates(existing: ShippingTier, candidate: ShippingTier) -> bool:
@@ -252,15 +448,21 @@ def _load_shipping_route_book(path: Path) -> ShippingRouteBook:
     }
 
     tiers_by_route: dict[tuple[str, str], ShippingRouteTiers] = {}
+    approximations_by_route: dict[tuple[str, str], RouteShippingApproximation] = {}
     for route in payload.get("routes", []):
         from_country = route["from_country"]
         to_country = route["to_country"]
         route_key = _route_key(from_country, to_country)
-        tiers_by_route[route_key] = _normalize_route_tiers(route.get("methods", []))
+        raw_methods = route.get("methods", [])
+        tiers_by_route[route_key] = _normalize_route_tiers(raw_methods)
+        route_approximation = _route_approximation_from_methods(route_key, raw_methods)
+        if route_approximation is not None:
+            approximations_by_route[route_key] = route_approximation
 
     return ShippingRouteBook(
         country_ids=country_ids,
         tiers_by_route=tiers_by_route,
+        approximations_by_route=approximations_by_route,
     )
 
 
@@ -282,3 +484,28 @@ def minimum_shipping_cost_cents(
     )
     tier_costs = [tier.total_price_cents for tier in route_tiers.tiers]
     return min(tier_costs) if tier_costs else missing_route_cost_cents
+
+
+def approximate_shipping_cost_cents(
+    *,
+    seller_country: str,
+    buyer_country: str,
+    total_value_cents: int,
+    total_weight_grams: int,
+    route_book: ShippingRouteBook,
+    missing_route_cost_cents: int,
+) -> int:
+    route_key = _route_key(seller_country, buyer_country)
+    route_approximation = route_book.approximations_by_route.get(route_key)
+    if route_approximation is not None:
+        return route_approximation.price_for_order(
+            total_value_cents=total_value_cents,
+            total_weight_grams=total_weight_grams,
+        )
+
+    return minimum_shipping_cost_cents(
+        seller_country=seller_country,
+        buyer_country=buyer_country,
+        route_book=route_book,
+        missing_route_cost_cents=missing_route_cost_cents,
+    )

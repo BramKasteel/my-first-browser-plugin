@@ -115,29 +115,89 @@ def _selection_shipping_cost_cents(
     selections: list[tuple[Offer, int]],
     route_book: shipping.ShippingRouteBook,
 ) -> int | None:
-    route_tiers = route_book.lookup_tiers(
+    total_value_cents = sum(
+        offer.unit_price_cents * quantity for offer, quantity in selections
+    )
+    total_weight_grams = shipping.card_weight_grams_for_quantity(
+        sum(quantity for _, quantity in selections)
+    )
+    return shipping.approximate_shipping_cost_cents(
         seller_country=seller_country,
         buyer_country=buyer_country,
+        total_value_cents=total_value_cents,
+        total_weight_grams=total_weight_grams,
+        route_book=route_book,
+        missing_route_cost_cents=MISSING_ROUTE_DATA_PENALTY_CENTS,
     )
-    if route_tiers.tiers:
-        total_value_cents = sum(
-            offer.unit_price_cents * quantity for offer, quantity in selections
+
+
+def _seller_shipping_cost_expr(
+    *,
+    model,
+    seller_id: str,
+    active,
+    offers: list[Offer],
+    offer_vars: dict[str, object],
+    seller_country: str,
+    buyer_country: str,
+    route_book: shipping.ShippingRouteBook,
+):
+    route_key = (
+        shipping.normalize_country_name(seller_country),
+        shipping.normalize_country_name(buyer_country),
+    )
+    route_approximation = route_book.approximations_by_route.get(route_key)
+    if route_approximation is None:
+        return (
+            shipping.minimum_shipping_cost_cents(
+                seller_country=seller_country,
+                buyer_country=buyer_country,
+                route_book=route_book,
+                missing_route_cost_cents=MISSING_ROUTE_DATA_PENALTY_CENTS,
+            )
+            * active
         )
-        total_weight_grams = shipping.card_weight_grams_for_quantity(
-            sum(quantity for _, quantity in selections)
+
+    total_value_expr = sum(
+        offer.unit_price_cents * offer_vars[offer.offer_id] for offer in offers
+    )
+    double_total_weight_expr = sum(5 * offer_vars[offer.offer_id] for offer in offers)
+    max_price_cents = max(
+        [route_approximation.base_price_cents]
+        + [step.total_price_cents for step in route_approximation.weight_steps]
+        + [step.total_price_cents for step in route_approximation.value_steps]
+    )
+    shipping_cost_var = model.NewIntVar(0, max_price_cents, f"ship_cost_{seller_id}")
+    model.Add(shipping_cost_var == 0).OnlyEnforceIf(active.Not())
+    model.Add(shipping_cost_var >= route_approximation.base_price_cents).OnlyEnforceIf(
+        active
+    )
+
+    for index, step in enumerate(route_approximation.weight_steps):
+        trigger_var = model.NewBoolVar(f"ship_weight_{seller_id}_{index}")
+        model.Add(
+            double_total_weight_expr >= 2 * step.threshold_cents_or_grams + 1
+        ).OnlyEnforceIf(trigger_var)
+        model.Add(
+            double_total_weight_expr <= 2 * step.threshold_cents_or_grams
+        ).OnlyEnforceIf(trigger_var.Not())
+        model.Add(shipping_cost_var >= step.total_price_cents).OnlyEnforceIf(
+            trigger_var
         )
 
-        valid_tier_costs = []
-        for tier in route_tiers.tiers:
-            if total_value_cents > tier.max_value_cents:
-                continue
-            if total_weight_grams > tier.max_weight_grams:
-                continue
-            valid_tier_costs.append(tier.total_price_cents)
+    for index, step in enumerate(route_approximation.value_steps):
+        trigger_var = model.NewBoolVar(f"ship_value_{seller_id}_{index}")
+        model.Add(total_value_expr >= step.threshold_cents_or_grams + 1).OnlyEnforceIf(
+            trigger_var
+        )
+        model.Add(total_value_expr <= step.threshold_cents_or_grams).OnlyEnforceIf(
+            trigger_var.Not()
+        )
+        model.Add(shipping_cost_var >= step.total_price_cents).OnlyEnforceIf(
+            trigger_var
+        )
 
-        return min(valid_tier_costs) if valid_tier_costs else None
-
-    return MISSING_ROUTE_DATA_PENALTY_CENTS
+    return shipping_cost_var
 
 
 def _assignment_total_cost_cents(
@@ -212,10 +272,6 @@ def _solve_exact_shipping_order(
 
     offer_vars = {}
     seller_active_vars = {}
-    seller_active_exprs = {}
-    seller_tier_candidates = {}
-    seller_value_upper_bounds = {}
-    seller_weight_upper_bounds = {}
 
     seller_offers = defaultdict(list)
     for offer in usable_offers:
@@ -226,31 +282,8 @@ def _solve_exact_shipping_order(
             name=f"qty_{offer.offer_id}",
         )
 
-    for seller_id, offers in seller_offers.items():
-        seller_value_upper_bounds[seller_id] = sum(
-            offer.unit_price_cents * _capped_offer_quantity(offer, item_map)
-            for offer in offers
-        )
-        seller_weight_upper_bounds[seller_id] = shipping.card_weight_grams_for_quantity(
-            sum(_capped_offer_quantity(offer, item_map) for offer in offers)
-        )
-
     for seller_id in seller_offers:
-        route_tiers = route_book.lookup_tiers(
-            seller_country=seller_map[seller_id].country,
-            buyer_country=request.buyer_country,
-            seller_value_upper_bound=seller_value_upper_bounds[seller_id],
-            seller_weight_upper_bound=seller_weight_upper_bounds[seller_id],
-        )
-
-        tier_candidates = list(route_tiers.tiers)
-        seller_tier_candidates[seller_id] = tier_candidates
-
-        if len(tier_candidates) <= 1:
-            seller_active_vars[seller_id] = model.NewBoolVar(
-                f"seller_active_{seller_id}"
-            )
-            seller_active_exprs[seller_id] = seller_active_vars[seller_id]
+        seller_active_vars[seller_id] = model.NewBoolVar(f"seller_active_{seller_id}")
 
     for item in request.items:
         model.Add(
@@ -266,92 +299,34 @@ def _solve_exact_shipping_order(
         offer.unit_price_cents * offer_vars[offer.offer_id] for offer in usable_offers
     ]
 
-    seller_shipping_tier_choice_vars = {}
-    seller_inactive_literals = {}
-
     for seller_id, offers in seller_offers.items():
-        active = seller_active_exprs.get(seller_id)
-        tier_candidates = seller_tier_candidates[seller_id]
-
-        if tier_candidates:
-            total_value_expr = sum(
-                offer.unit_price_cents * offer_vars[offer.offer_id] for offer in offers
-            )
-            double_total_weight_expr = sum(
-                5 * offer_vars[offer.offer_id] for offer in offers
-            )
-
-            if len(tier_candidates) == 1:
-                tier = tier_candidates[0]
-                seller_inactive_literals[seller_id] = [active.Not()]
-                model.Add(total_value_expr <= tier.max_value_cents).OnlyEnforceIf(
-                    active
-                )
-                model.Add(
-                    double_total_weight_expr <= 2 * tier.max_weight_grams
-                ).OnlyEnforceIf(active)
-
-                objective_terms.append(tier.total_price_cents * active)
-                continue
-
-            seller_shipping_tier_choice_vars[seller_id] = []
-
-            for tier_index, tier in enumerate(tier_candidates):
-                tier_var = model.NewBoolVar(f"ship_{seller_id}_{tier_index}")
-                seller_shipping_tier_choice_vars[seller_id].append((tier, tier_var))
-                model.Add(total_value_expr <= tier.max_value_cents).OnlyEnforceIf(
-                    tier_var
-                )
-                model.Add(
-                    double_total_weight_expr <= 2 * tier.max_weight_grams
-                ).OnlyEnforceIf(tier_var)
-
-            active = sum(
-                tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
-            )
-            model.AddAtMostOne(
-                tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
-            )
-            seller_active_exprs[seller_id] = active
-            seller_inactive_literals[seller_id] = [
-                tier_var.Not()
-                for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
-            ]
-
-            objective_terms.append(
-                sum(
-                    tier.total_price_cents * tier_var
-                    for tier, tier_var in seller_shipping_tier_choice_vars[seller_id]
-                )
-            )
-            continue
-
+        active = seller_active_vars[seller_id]
         objective_terms.append(
-            MISSING_ROUTE_DATA_PENALTY_CENTS * active
-        )  # If no tier candidates
-        seller_inactive_literals[seller_id] = [active.Not()]
+            _seller_shipping_cost_expr(
+                model=model,
+                seller_id=seller_id,
+                active=active,
+                offers=offers,
+                offer_vars=offer_vars,
+                seller_country=seller_map[seller_id].country,
+                buyer_country=request.buyer_country,
+                route_book=route_book,
+            )
+        )
 
     for seller_id, offers in seller_offers.items():
-        active = seller_active_exprs[seller_id]
-        inactive_literals = seller_inactive_literals[seller_id]
-        total_units = sum(
-            offer_vars[offer.offer_id] for offer in offers
-        )  # TODO: ORTOOLS native
+        active = seller_active_vars[seller_id]
+        total_units = sum(offer_vars[offer.offer_id] for offer in offers)
 
         # When seller stays inactive, every quantity for seller must be zero.
         for offer in offers:
-            model.Add(offer_vars[offer.offer_id] == 0).OnlyEnforceIf(inactive_literals)
+            model.Add(offer_vars[offer.offer_id] == 0).OnlyEnforceIf(active.Not())
 
         # Any active seller choice must buy at least one unit.
-        if seller_id in seller_shipping_tier_choice_vars:
-            for _, tier_var in seller_shipping_tier_choice_vars[seller_id]:
-                model.Add(total_units >= 1).OnlyEnforceIf(tier_var)
-            continue
-
         model.Add(total_units >= 1).OnlyEnforceIf(active)
 
     # if request.preferences.max_sellers is not None:
-    #     model.Add(sum(seller_active_exprs.values()) <= request.preferences.max_sellers)
+    #     model.Add(sum(seller_active_vars.values()) <= request.preferences.max_sellers)
 
     model.Minimize(sum(objective_terms))
     solver = _new_solver(

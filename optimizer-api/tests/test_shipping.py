@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from app.shipping import (
     ShippingTier,
     _load_shipping_route_book,
     _normalize_route_tiers,
-    max_cards_based_on_weight,
+    approximate_shipping_cost_cents,
+    minimum_shipping_cost_cents,
     parse_eur_to_cents,
-    prune_route_tiers_for_order_bounds,
 )
 
 
@@ -19,14 +20,7 @@ def test_parse_eur_to_cents_handles_cardmarket_format() -> None:
     assert parse_eur_to_cents("46,00 kr") == 4600
 
 
-def test_method_card_capacity_uses_letter_breakpoints() -> None:
-    assert max_cards_based_on_weight(20) == 4
-    assert max_cards_based_on_weight(50) == 17
-    assert max_cards_based_on_weight(100) == 40
-    assert max_cards_based_on_weight(250) == 100
-
-
-def test_normalize_route_tiers_uses_card_capacity_for_letters() -> None:
+def test_normalize_route_tiers_keeps_cheapest_usable_method_only() -> None:
     tiers = _normalize_route_tiers(
         [
             {
@@ -65,8 +59,8 @@ def test_normalize_route_tiers_uses_card_capacity_for_letters() -> None:
     assert tiers.tiers == (
         ShippingTier(
             total_price_cents=155,
-            max_value_cents=2500,
-            max_weight_grams=1000,
+            max_value_cents=10_000_000,
+            max_weight_grams=1_000_000,
         ),
     )
 
@@ -113,11 +107,11 @@ def test_load_shipping_route_book_normalizes_countries(tmp_path) -> None:
     )
     assert len(tiers.tiers) == 1
     assert tiers.tiers[0].total_price_cents == 155
-    assert tiers.tiers[0].max_value_cents == 2500
-    assert tiers.tiers[0].max_weight_grams == 10
+    assert tiers.tiers[0].max_value_cents == 10_000_000
+    assert tiers.tiers[0].max_weight_grams == 1_000_000
 
 
-def test_lookup_tiers_can_apply_seller_specific_pruning(tmp_path) -> None:
+def test_lookup_tiers_ignores_order_bounds_under_flat_fee_model(tmp_path) -> None:
     fixture_path = tmp_path / "shipping_costs.json"
     fixture_path.write_text(
         json.dumps(
@@ -191,48 +185,168 @@ def test_lookup_tiers_can_apply_seller_specific_pruning(tmp_path) -> None:
     assert tiers.tiers == (
         ShippingTier(
             total_price_cents=155,
-            max_value_cents=2500,
-            max_weight_grams=10,
+            max_value_cents=10_000_000,
+            max_weight_grams=1_000_000,
         ),
     )
 
 
-def test_prune_route_tiers_for_order_bounds_drops_redundant_letters() -> None:
-    pruned = prune_route_tiers_for_order_bounds(
-        route_tiers=_normalize_route_tiers(
-            [
-                {
-                    "name": "Letter 20g",
-                    "isTracked": False,
-                    "maxValue": "25,00 €",
-                    "maxWeight": 20,
-                    "stampPrice": "1,25 €",
-                    "price": "1,55 €",
-                    "isLetter": True,
-                    "isVirtual": False,
-                },
-                {
-                    "name": "Letter 50g",
-                    "isTracked": False,
-                    "maxValue": "25,00 €",
-                    "maxWeight": 50,
-                    "stampPrice": "1,70 €",
-                    "price": "2,00 €",
-                    "isLetter": True,
-                    "isVirtual": False,
-                },
-            ]
+def test_minimum_shipping_cost_returns_flat_route_price(tmp_path) -> None:
+    fixture_path = tmp_path / "shipping_costs.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "countries": [
+                    {"name": "Germany", "externalId": 7},
+                    {"name": "Netherlands", "externalId": 23},
+                ],
+                "routes": [
+                    {
+                        "from_country": "Germany",
+                        "to_country": "Netherlands",
+                        "methods": [
+                            {
+                                "name": "Letter 20g",
+                                "isTracked": False,
+                                "maxValue": "25,00 €",
+                                "maxWeight": 20,
+                                "stampPrice": "1,25 €",
+                                "price": "1,55 €",
+                                "isLetter": True,
+                                "isVirtual": False,
+                            },
+                            {
+                                "name": "Parcel",
+                                "isTracked": False,
+                                "maxValue": "500,00 €",
+                                "maxWeight": 5000,
+                                "stampPrice": "6,99 €",
+                                "price": "7,99 €",
+                                "isLetter": False,
+                                "isVirtual": False,
+                            },
+                        ],
+                    }
+                ],
+            }
         ),
-        seller_value_upper_bound=2500,
-        seller_weight_upper_bound=10,
+        encoding="utf-8",
     )
 
-    assert pruned.tiers == (
-        ShippingTier(
-            total_price_cents=155,
-            max_value_cents=2500,
-            max_weight_grams=10,
-        ),
+    route_book = _load_shipping_route_book(fixture_path)
+
+    assert (
+        minimum_shipping_cost_cents(
+            seller_country="Germany",
+            buyer_country="Netherlands",
+            route_book=route_book,
+            missing_route_cost_cents=9_999,
+        )
+        == 155
+    )
+
+
+def test_approximate_shipping_cost_uses_de_to_nl_weight_and_value_breakpoints() -> None:
+    route_book = _load_shipping_route_book(
+        Path(__file__).resolve().parents[1] / "app" / "data" / "shipping_costs.json"
+    )
+
+    assert (
+        approximate_shipping_cost_cents(
+            seller_country="Germany",
+            buyer_country="Netherlands",
+            total_value_cents=2_400,
+            total_weight_grams=10,
+            route_book=route_book,
+            missing_route_cost_cents=9_999,
+        )
+        == 155
+    )
+    assert (
+        approximate_shipping_cost_cents(
+            seller_country="Germany",
+            buyer_country="Netherlands",
+            total_value_cents=2_400,
+            total_weight_grams=11,
+            route_book=route_book,
+            missing_route_cost_cents=9_999,
+        )
+        == 799
+    )
+    assert (
+        approximate_shipping_cost_cents(
+            seller_country="Germany",
+            buyer_country="Netherlands",
+            total_value_cents=2_600,
+            total_weight_grams=10,
+            route_book=route_book,
+            missing_route_cost_cents=9_999,
+        )
+        == 1549
+    )
+
+
+def test_approximate_shipping_cost_uses_nl_to_nl_letter_steps_and_brievenbuspakje() -> (
+    None
+):
+    route_book = _load_shipping_route_book(
+        Path(__file__).resolve().parents[1] / "app" / "data" / "shipping_costs.json"
+    )
+
+    assert (
+        approximate_shipping_cost_cents(
+            seller_country="Netherlands",
+            buyer_country="Netherlands",
+            total_value_cents=2_400,
+            total_weight_grams=10,
+            route_book=route_book,
+            missing_route_cost_cents=9_999,
+        )
+        == 170
+    )
+    assert (
+        approximate_shipping_cost_cents(
+            seller_country="Netherlands",
+            buyer_country="Netherlands",
+            total_value_cents=2_400,
+            total_weight_grams=11,
+            route_book=route_book,
+            missing_route_cost_cents=9_999,
+        )
+        == 310
+    )
+    assert (
+        approximate_shipping_cost_cents(
+            seller_country="Netherlands",
+            buyer_country="Netherlands",
+            total_value_cents=2_400,
+            total_weight_grams=44,
+            route_book=route_book,
+            missing_route_cost_cents=9_999,
+        )
+        == 485
+    )
+    assert (
+        approximate_shipping_cost_cents(
+            seller_country="Netherlands",
+            buyer_country="Netherlands",
+            total_value_cents=2_400,
+            total_weight_grams=351,
+            route_book=route_book,
+            missing_route_cost_cents=9_999,
+        )
+        == 620
+    )
+    assert (
+        approximate_shipping_cost_cents(
+            seller_country="Netherlands",
+            buyer_country="Netherlands",
+            total_value_cents=2_600,
+            total_weight_grams=10,
+            route_book=route_book,
+            missing_route_cost_cents=9_999,
+        )
+        == 620
     )
 
 
@@ -286,7 +400,7 @@ def test_load_shipping_route_book_skips_estimation_methods(tmp_path) -> None:
     assert [tier.total_price_cents for tier in tiers.tiers] == [155]
 
 
-def test_load_shipping_route_book_prunes_insured_express_and_heavy_duplicates(
+def test_load_shipping_route_book_keeps_cheapest_method_after_filtering(
     tmp_path,
 ) -> None:
     fixture_path = tmp_path / "shipping_costs.json"
@@ -379,12 +493,11 @@ def test_load_shipping_route_book_prunes_insured_express_and_heavy_duplicates(
         (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
         for tier in tiers.tiers
     ] == [
-        (799, 2500, 1000),
-        (1549, 50000, 1000),
+        (799, 10_000_000, 1_000_000),
     ]
 
 
-def test_load_shipping_route_book_keeps_letters_and_non_dominated_parcels(
+def test_load_shipping_route_book_uses_cheapest_letter_when_letters_exist(
     tmp_path,
 ) -> None:
     fixture_path = tmp_path / "shipping_costs.json"
@@ -467,14 +580,11 @@ def test_load_shipping_route_book_keeps_letters_and_non_dominated_parcels(
         (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
         for tier in tiers.tiers
     ] == [
-        (155, 2500, 10),
-        (200, 2500, 43),
-        (799, 2500, 1000),
-        (1549, 50000, 1000),
+        (155, 10_000_000, 1_000_000),
     ]
 
 
-def test_normalize_route_tiers_keeps_smallest_non_dominated_parcel_weight() -> None:
+def test_normalize_route_tiers_keeps_cheapest_parcel_when_only_parcels_exist() -> None:
     tiers = _normalize_route_tiers(
         [
             {
@@ -503,13 +613,13 @@ def test_normalize_route_tiers_keeps_smallest_non_dominated_parcel_weight() -> N
     assert tiers.tiers == (
         ShippingTier(
             total_price_cents=799,
-            max_value_cents=2500,
-            max_weight_grams=1000,
+            max_value_cents=10_000_000,
+            max_weight_grams=1_000_000,
         ),
     )
 
 
-def test_load_shipping_route_book_prunes_tracked_letter_duplicate_when_no_better(
+def test_load_shipping_route_book_prefers_cheapest_letter_duplicate(
     tmp_path,
 ) -> None:
     fixture_path = tmp_path / "shipping_costs.json"
@@ -558,15 +668,10 @@ def test_load_shipping_route_book_prunes_tracked_letter_duplicate_when_no_better
     tiers = route_book.lookup_tiers(
         seller_country="Germany", buyer_country="Netherlands"
     )
-    assert [
-        (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
-        for tier in tiers.tiers
-    ] == [
-        (200, 2500, 43),
-    ]
+    assert [(tier.total_price_cents,) for tier in tiers.tiers] == [(200,)]
 
 
-def test_load_shipping_route_book_builds_tiers_for_mixed_letter_and_parcel_route(
+def test_load_shipping_route_book_builds_flat_fee_for_mixed_letter_and_parcel_route(
     tmp_path,
 ) -> None:
     fixture_path = tmp_path / "shipping_costs.json"
@@ -628,7 +733,5 @@ def test_load_shipping_route_book_builds_tiers_for_mixed_letter_and_parcel_route
         (tier.total_price_cents, tier.max_value_cents, tier.max_weight_grams)
         for tier in tiers.tiers
     ] == [
-        (170, 2500, 10),
-        (310, 2500, 43),
-        (975, 10000, 1000),
+        (170, 10_000_000, 1_000_000),
     ]
