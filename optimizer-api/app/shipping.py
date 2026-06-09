@@ -98,6 +98,8 @@ class ShippingPriceStep:
 @dataclass(frozen=True)
 class RouteShippingApproximation:
     base_price_cents: int
+    base_max_value_cents: int = FLAT_RATE_MAX_VALUE_CENTS
+    base_max_weight_grams: int = FLAT_RATE_MAX_WEIGHT_GRAMS
     weight_steps: tuple[ShippingPriceStep, ...] = ()
     value_steps: tuple[ShippingPriceStep, ...] = ()
 
@@ -234,7 +236,7 @@ def _normalize_route_tiers(
                 max_weight_grams=FLAT_RATE_MAX_WEIGHT_GRAMS,
                 total_price_cents=lowest_price_cents,
             ),
-        )
+        ),
     )
 
 
@@ -315,6 +317,8 @@ def _build_germany_to_netherlands_approximation(
 
     return RouteShippingApproximation(
         base_price_cents=base_price_cents,
+        base_max_value_cents=letter_value_cents,
+        base_max_weight_grams=letter_weight_grams,
         weight_steps=weight_steps,
         value_steps=value_steps,
     )
@@ -388,6 +392,8 @@ def _build_netherlands_to_netherlands_approximation(
 
     return RouteShippingApproximation(
         base_price_cents=base_price_cents,
+        base_max_value_cents=letter_value_cents,
+        base_max_weight_grams=_method_max_weight_grams(base_method),
         weight_steps=tuple(weight_steps),
         value_steps=value_steps,
     )

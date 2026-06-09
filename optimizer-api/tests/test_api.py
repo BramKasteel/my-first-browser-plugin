@@ -68,7 +68,7 @@ def model_sizes_for_request(request: OptimizationRequest) -> dict[str, dict[str,
     with patch.object(cp_model.CpSolver, "Solve", wrapped_solve):
         optimize_order(request)
 
-    return {"exact": captures[0]}
+    return {"exact": captures[-1]}
 
 
 @pytest.fixture

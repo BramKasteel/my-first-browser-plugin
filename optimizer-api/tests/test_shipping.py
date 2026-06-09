@@ -20,7 +20,7 @@ def test_parse_eur_to_cents_handles_cardmarket_format() -> None:
     assert parse_eur_to_cents("46,00 kr") == 4600
 
 
-def test_normalize_route_tiers_keeps_cheapest_usable_method_only() -> None:
+def test_normalize_route_tiers_keeps_real_method_limits() -> None:
     tiers = _normalize_route_tiers(
         [
             {
@@ -111,7 +111,9 @@ def test_load_shipping_route_book_normalizes_countries(tmp_path) -> None:
     assert tiers.tiers[0].max_weight_grams == 1_000_000
 
 
-def test_lookup_tiers_ignores_order_bounds_under_flat_fee_model(tmp_path) -> None:
+def test_lookup_tiers_prunes_to_cheapest_feasible_method_for_order_bounds(
+    tmp_path,
+) -> None:
     fixture_path = tmp_path / "shipping_costs.json"
     fixture_path.write_text(
         json.dumps(

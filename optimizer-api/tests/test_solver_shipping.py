@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from app.models import (
     Offer,
     OptimizationPreferences,
@@ -23,8 +25,10 @@ from app.solver import (
     _prune_dominated_offers_per_seller,
     _prune_expensive_country_offers,
     _prune_top_offers_per_item_by_price,
+    _solve_lowest_tier_warm_start,
     optimize_order,
 )
+from ortools.sat.python import cp_model
 
 
 def _tiers(*, values: list[tuple[int, int, int]]) -> ShippingRouteTiers:
@@ -344,6 +348,127 @@ def test_optimize_uses_exact_shipping_objective_for_final_choice(
     assert response.totals.item_subtotal == 11.0
     assert response.totals.shipping_total == 1.0
     assert response.totals.grand_total == 12.0
+
+
+def test_warm_start_caps_seller_to_cheapest_tier_card_limit(monkeypatch) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(
+                values=[(155, 2500, 10), (400, 50000, 1000)],
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[WantedItem(item_id="item-1", name="Card", quantity=5)],
+        sellers=[
+            Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
+            Seller(seller_id="seller-2", name="Seller 2", country="Germany"),
+        ],
+        offers=[
+            Offer(
+                offer_id="offer-1",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=1.0,
+                available_quantity=5,
+            ),
+            Offer(
+                offer_id="offer-2",
+                item_id="item-1",
+                seller_id="seller-2",
+                unit_price=1.01,
+                available_quantity=1,
+            ),
+        ],
+        preferences=OptimizationPreferences(),
+    )
+
+    result = _solve_lowest_tier_warm_start(
+        cp_model=cp_model,
+        request=request,
+        usable_offers=request.offers,
+        item_map=request.item_map(),
+        seller_map=request.seller_map(),
+        route_book=route_book,
+    )
+
+    assert result.status == "optimal"
+    assert result.selected_offer_quantities == {"offer-1": 4, "offer-2": 1}
+
+
+def test_warm_start_allows_expensive_single_card_over_cheapest_value(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(
+                values=[(155, 2500, 10), (799, 50000, 1000)],
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = _request(unit_price=30.0, quantity=1)
+
+    result = _solve_lowest_tier_warm_start(
+        cp_model=cp_model,
+        request=request,
+        usable_offers=request.offers,
+        item_map=request.item_map(),
+        seller_map=request.seller_map(),
+        route_book=route_book,
+    )
+
+    assert result.status == "optimal"
+    assert result.selected_offer_quantities == {"offer-1": 1}
+
+
+def test_optimize_hints_exact_shipping_model_from_warm_start(monkeypatch) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(
+                values=[(155, 2500, 10), (799, 50000, 1000)],
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = _request(unit_price=30.0, quantity=1)
+    captures = []
+    original_solve = cp_model.CpSolver.Solve
+
+    def wrapped_solve(self, model, *args, **kwargs):
+        captures.append(model.Proto())
+        return original_solve(self, model, *args, **kwargs)
+
+    with patch.object(cp_model.CpSolver, "Solve", wrapped_solve):
+        response = optimize_order(request)
+
+    assert response.warm_start_status == "warm_start_optimal_hinted"
+    exact_proto = captures[-1]
+    hint_values = {
+        exact_proto.variables[var_index].name: value
+        for var_index, value in zip(
+            exact_proto.solution_hint.vars,
+            exact_proto.solution_hint.values,
+        )
+    }
+
+    assert hint_values["qty_offer-1"] == 1
+    assert hint_values["seller_active_seller-1"] == 1
+    assert all(not name.startswith("ship_seller-1_") for name in hint_values)
 
 
 def test_optimize_returns_empty_cart_summary_for_infeasible_request() -> None:
