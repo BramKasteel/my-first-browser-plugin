@@ -27,6 +27,7 @@ MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
 MAX_TIME_SECONDS = 15
 SOLVER_ABSOLUTE_GAP_LIMIT = 10
 SOLVER_NUM_SEARCH_WORKERS = 8
+MAX_OFFERS_PER_ITEM = 50
 
 
 def _to_cents(amount: float) -> int:
@@ -266,6 +267,7 @@ def _solve_exact_shipping_order(
     ]
 
     seller_shipping_tier_choice_vars = {}
+    seller_inactive_literals = {}
 
     for seller_id, offers in seller_offers.items():
         active = seller_active_exprs.get(seller_id)
@@ -281,16 +283,13 @@ def _solve_exact_shipping_order(
 
             if len(tier_candidates) == 1:
                 tier = tier_candidates[0]
-                model.Add(
-                    total_value_expr
-                    <= tier.max_value_cents
-                    + seller_value_upper_bounds[seller_id] * (1 - active)
+                seller_inactive_literals[seller_id] = [active.Not()]
+                model.Add(total_value_expr <= tier.max_value_cents).OnlyEnforceIf(
+                    active
                 )
                 model.Add(
-                    double_total_weight_expr
-                    <= 2 * tier.max_weight_grams
-                    + 5 * seller_weight_upper_bounds[seller_id] * (1 - active)
-                )
+                    double_total_weight_expr <= 2 * tier.max_weight_grams
+                ).OnlyEnforceIf(active)
 
                 objective_terms.append(tier.total_price_cents * active)
                 continue
@@ -300,29 +299,24 @@ def _solve_exact_shipping_order(
             for tier_index, tier in enumerate(tier_candidates):
                 tier_var = model.NewBoolVar(f"ship_{seller_id}_{tier_index}")
                 seller_shipping_tier_choice_vars[seller_id].append((tier, tier_var))
+                model.Add(total_value_expr <= tier.max_value_cents).OnlyEnforceIf(
+                    tier_var
+                )
+                model.Add(
+                    double_total_weight_expr <= 2 * tier.max_weight_grams
+                ).OnlyEnforceIf(tier_var)
 
             active = sum(
                 tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
             )
-            model.Add(active <= 1)
+            model.AddAtMostOne(
+                tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
+            )
             seller_active_exprs[seller_id] = active
-
-            model.Add(
-                total_value_expr
-                <= sum(
-                    tier.max_value_cents * tier_var
-                    for tier, tier_var in seller_shipping_tier_choice_vars[seller_id]
-                )
-                + seller_value_upper_bounds[seller_id] * (1 - active)
-            )
-            model.Add(
-                double_total_weight_expr
-                <= sum(
-                    2 * tier.max_weight_grams * tier_var
-                    for tier, tier_var in seller_shipping_tier_choice_vars[seller_id]
-                )
-                + 5 * seller_weight_upper_bounds[seller_id] * (1 - active)
-            )
+            seller_inactive_literals[seller_id] = [
+                tier_var.Not()
+                for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
+            ]
 
             objective_terms.append(
                 sum(
@@ -335,24 +329,29 @@ def _solve_exact_shipping_order(
         objective_terms.append(
             MISSING_ROUTE_DATA_PENALTY_CENTS * active
         )  # If no tier candidates
+        seller_inactive_literals[seller_id] = [active.Not()]
 
     for seller_id, offers in seller_offers.items():
         active = seller_active_exprs[seller_id]
-        total_units = sum(offer_vars[offer.offer_id] for offer in offers)
+        inactive_literals = seller_inactive_literals[seller_id]
+        total_units = sum(
+            offer_vars[offer.offer_id] for offer in offers
+        )  # TODO: ORTOOLS native
 
-        # Disaggregated constraints: each individual offer is bound by active state
+        # When seller stays inactive, every quantity for seller must be zero.
         for offer in offers:
-            capped_qty = _capped_offer_quantity(offer, item_map)
-            model.Add(offer_vars[offer.offer_id] <= capped_qty * active)
+            model.Add(offer_vars[offer.offer_id] == 0).OnlyEnforceIf(inactive_literals)
 
-        # If seller active, at least 1 unit must be purchased
-        model.Add(total_units >= active)
+        # Any active seller choice must buy at least one unit.
+        if seller_id in seller_shipping_tier_choice_vars:
+            for _, tier_var in seller_shipping_tier_choice_vars[seller_id]:
+                model.Add(total_units >= 1).OnlyEnforceIf(tier_var)
+            continue
+
+        model.Add(total_units >= 1).OnlyEnforceIf(active)
 
     # if request.preferences.max_sellers is not None:
     #     model.Add(sum(seller_active_exprs.values()) <= request.preferences.max_sellers)
-
-    model.Add(sum(seller_active_exprs.values()) >= len(request.items) // 5)
-    model.Add(sum(seller_active_exprs.values()) <= (2 * len(request.items)) // 7)
 
     model.Minimize(sum(objective_terms))
     solver = _new_solver(
@@ -505,11 +504,25 @@ def _prune_expensive_country_offers(
     return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
 
 
+def _prune_top_offers_per_item_by_price(offers: list[Offer]) -> list[Offer]:
+    offers_by_item: dict[str, list[Offer]] = defaultdict(list)
+    for offer in offers:
+        offers_by_item[offer.item_id].append(offer)
+
+    chosen_offer_ids: set[str] = set()
+    for item_offers in offers_by_item.values():
+        for offer in sorted(item_offers, key=_offer_prune_rank)[:MAX_OFFERS_PER_ITEM]:
+            chosen_offer_ids.add(offer.offer_id)
+
+    return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
+
+
 def prune_all(request: OptimizationRequest):
     seller_map = request.seller_map()
     item_map = request.item_map()
 
     usable_offers = _prune_dominated_offers_per_seller(request.offers, item_map)
+    usable_offers = _prune_top_offers_per_item_by_price(usable_offers)
 
     route_book = shipping.load_shipping_route_book()
     usable_offers = _prune_expensive_country_offers(

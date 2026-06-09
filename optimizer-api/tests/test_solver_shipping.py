@@ -13,12 +13,14 @@ from app.shipping import (
     ShippingTier,
 )
 from app.solver import (
+    MAX_OFFERS_PER_ITEM,
     MISSING_ROUTE_DATA_PENALTY_CENTS,
     _format_selected_offer_rank_analysis,
     _item_offer_price_stats,
     _prune_cheapest_single_item_sellers,
     _prune_dominated_offers_per_seller,
     _prune_expensive_country_offers,
+    _prune_top_offers_per_item_by_price,
     optimize_order,
 )
 
@@ -353,6 +355,26 @@ def test_prune_dominated_offers_drops_more_expensive_duplicate() -> None:
     pruned = _prune_dominated_offers_per_seller(offers, item_map)
 
     assert [offer.offer_id for offer in pruned] == ["offer-1"]
+
+
+def test_prune_top_offers_per_item_by_price_keeps_only_cheapest_150() -> None:
+    offers = [
+        Offer(
+            offer_id=f"offer-{index}",
+            item_id="item-1",
+            seller_id=f"seller-{index}",
+            unit_price=float(index),
+            available_quantity=1,
+        )
+        for index in range(MAX_OFFERS_PER_ITEM + 10)
+    ]
+
+    pruned = _prune_top_offers_per_item_by_price(offers)
+
+    assert len(pruned) == MAX_OFFERS_PER_ITEM
+    assert [offer.offer_id for offer in pruned] == [
+        f"offer-{index}" for index in range(MAX_OFFERS_PER_ITEM)
+    ]
 
 
 def test_prune_dominated_offers_keeps_n_cheapest_even_when_input_order_is_scrambled() -> (

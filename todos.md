@@ -6,9 +6,17 @@ Use stuff from https://d-krupke.github.io/cpsat-primer/
 - order the decision vars from expensive to cheap + change the branching method to 'first'
 - make this a problem with only bool vars (2x or more speedup --> see if thats the case)
 
+----------
+
+use ortools native, like onlyapplyif on constraints
+
 ---------------
 
 investigate the rank of each bought item. If we only get very good items we can prune aggressively
+
+--------------
+
+Add constraints thay say only 1 of a group of sellers can be active; if their offers are very similar
 
 --------------
 
