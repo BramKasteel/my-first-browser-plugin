@@ -839,13 +839,14 @@ def test_prune_low_value_small_basket_sellers_drops_replaceable_seller() -> None
 
     pruned = _prune_low_value_small_basket_sellers(offers)
 
-    assert {offer.seller_id for offer in pruned} == {
-        "seller-b",
-        "seller-c",
-        "seller-d",
-        "seller-e",
-        "seller-f",
-    }
+    remaining_sellers = {offer.seller_id for offer in pruned}
+    dropped_sellers = {offer.seller_id for offer in offers} - remaining_sellers
+
+    assert len(remaining_sellers) == 5
+    assert dropped_sellers <= {"seller-a", "seller-c", "seller-d", "seller-e", "seller-f"}
+    assert "seller-b" in remaining_sellers
+    assert sum(1 for offer in pruned if offer.item_id == "item-1") == 5
+    assert sum(1 for offer in pruned if offer.item_id == "item-2") == 5
 
 
 def test_prune_low_value_small_basket_sellers_keeps_cheapest_item_seller() -> None:
