@@ -28,6 +28,9 @@ MAX_TIME_SECONDS = 15
 SOLVER_ABSOLUTE_GAP_LIMIT = 10
 SOLVER_NUM_SEARCH_WORKERS = 8
 MAX_OFFERS_PER_ITEM = 150
+LOW_VALUE_SELLER_MAX_ITEMS = 3
+LOW_VALUE_SELLER_MAX_REPLACEMENT_DELTA_CENTS = 200
+LOW_VALUE_SELLER_MIN_ITEM_DEPTH = 5
 
 
 def _to_cents(amount: float) -> int:
@@ -106,6 +109,103 @@ def _item_offer_price_stats(
         }
 
     return stats_by_item
+
+
+def _offer_stage_snapshot(stage: str, offers: list[Offer]) -> dict[str, str | int]:
+    return {
+        "stage": stage,
+        "offers": len(offers),
+        "sellers": len({offer.seller_id for offer in offers}),
+    }
+
+
+def _best_offers_by_seller_item(offers: list[Offer]) -> dict[tuple[str, str], Offer]:
+    best_offers: dict[tuple[str, str], Offer] = {}
+    for offer in offers:
+        bucket = (offer.seller_id, offer.item_id)
+        current = best_offers.get(bucket)
+        if current is None or _offer_prune_rank(offer) < _offer_prune_rank(current):
+            best_offers[bucket] = offer
+    return best_offers
+
+
+def _low_value_small_seller_delta_cents(
+    *,
+    seller_id: str,
+    seller_item_ids: list[str],
+    best_offers_by_bucket: dict[tuple[str, str], Offer],
+    item_sellers: dict[str, set[str]],
+) -> int | None:
+    seller_subtotal_cents = 0
+    replacement_subtotal_cents = 0
+
+    for item_id in seller_item_ids:
+        remaining_depth = len(item_sellers[item_id]) - 1
+        if remaining_depth < LOW_VALUE_SELLER_MIN_ITEM_DEPTH:
+            return None
+
+        seller_offer = best_offers_by_bucket[(seller_id, item_id)]
+        alternative_offers = [
+            best_offers_by_bucket[(other_seller_id, item_id)]
+            for other_seller_id in item_sellers[item_id]
+            if other_seller_id != seller_id
+        ]
+        if not alternative_offers:
+            return None
+
+        cheapest_alternative_cents = min(
+            offer.unit_price_cents for offer in alternative_offers
+        )
+        if seller_offer.unit_price_cents <= cheapest_alternative_cents:
+            return None
+
+        seller_subtotal_cents += seller_offer.unit_price_cents
+        replacement_subtotal_cents += round(
+            sum(offer.unit_price_cents for offer in alternative_offers)
+            / len(alternative_offers)
+        )
+
+    return replacement_subtotal_cents - seller_subtotal_cents
+
+
+def _prune_low_value_small_basket_sellers(offers: list[Offer]) -> list[Offer]:
+    remaining_offers = offers
+
+    while True:
+        best_offers_by_bucket = _best_offers_by_seller_item(remaining_offers)
+        seller_items: dict[str, list[str]] = defaultdict(list)
+        item_sellers: dict[str, set[str]] = defaultdict(set)
+        for seller_id, item_id in best_offers_by_bucket:
+            seller_items[seller_id].append(item_id)
+            item_sellers[item_id].add(seller_id)
+
+        drop_candidates: list[tuple[int, int, str]] = []
+        for seller_id, item_ids in seller_items.items():
+            if not 1 <= len(item_ids) <= LOW_VALUE_SELLER_MAX_ITEMS:
+                continue
+
+            replacement_delta_cents = _low_value_small_seller_delta_cents(
+                seller_id=seller_id,
+                seller_item_ids=item_ids,
+                best_offers_by_bucket=best_offers_by_bucket,
+                item_sellers=item_sellers,
+            )
+            if replacement_delta_cents is None:
+                continue
+            if replacement_delta_cents > LOW_VALUE_SELLER_MAX_REPLACEMENT_DELTA_CENTS:
+                continue
+
+            drop_candidates.append(
+                (replacement_delta_cents, len(item_ids), seller_id)
+            )
+
+        if not drop_candidates:
+            return remaining_offers
+
+        _, _, drop_seller_id = min(drop_candidates)
+        remaining_offers = [
+            offer for offer in remaining_offers if offer.seller_id != drop_seller_id
+        ]
 
 
 def _selection_shipping_cost_cents(
@@ -509,12 +609,29 @@ def _prune_top_offers_per_item_by_price(offers: list[Offer]) -> list[Offer]:
     return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
 
 
-def prune_all(request: OptimizationRequest):
+def prune_all_with_stats(
+    request: OptimizationRequest,
+    *,
+    include_small_basket_prune: bool = True,
+) -> tuple[list[Offer], list[dict[str, str | int]]]:
     seller_map = request.seller_map()
     item_map = request.item_map()
+    stage_stats = [_offer_stage_snapshot("input", request.offers)]
 
     usable_offers = _prune_dominated_offers_per_seller(request.offers, item_map)
+    stage_stats.append(_offer_stage_snapshot("dominated_per_seller", usable_offers))
     usable_offers = _prune_top_offers_per_item_by_price(usable_offers)
+    stage_stats.append(_offer_stage_snapshot("top_offers_per_item", usable_offers))
+
+    if include_small_basket_prune:
+        usable_offers = _prune_low_value_small_basket_sellers(usable_offers)
+        stage_stats.append(
+            _offer_stage_snapshot("low_value_small_basket_sellers", usable_offers)
+        )
+    else:
+        stage_stats.append(
+            _offer_stage_snapshot("low_value_small_basket_sellers_skipped", usable_offers)
+        )
 
     route_book = shipping.load_shipping_route_book()
     usable_offers = _prune_expensive_country_offers(
@@ -523,12 +640,26 @@ def prune_all(request: OptimizationRequest):
         buyer_country=request.buyer_country,
         route_book=route_book,
     )
+    stage_stats.append(_offer_stage_snapshot("expensive_country_offers", usable_offers))
     usable_offers = _prune_cheapest_single_item_sellers(
         offers=usable_offers,
         item_map=item_map,
         seller_map=seller_map,
         buyer_country=request.buyer_country,
         route_book=route_book,
+    )
+    stage_stats.append(_offer_stage_snapshot("single_item_sellers", usable_offers))
+    return usable_offers, stage_stats
+
+
+def prune_all(
+    request: OptimizationRequest,
+    *,
+    include_small_basket_prune: bool = True,
+) -> list[Offer]:
+    usable_offers, _ = prune_all_with_stats(
+        request,
+        include_small_basket_prune=include_small_basket_prune,
     )
     return usable_offers
 
@@ -537,8 +668,12 @@ def optimize_order(
     request: OptimizationRequest,
     *,
     solver_log_callback: Callable[[str], None] | None = None,
+    include_small_basket_prune: bool = True,
 ) -> OptimizationResponse:
-    usable_offers = prune_all(request)
+    usable_offers = prune_all(
+        request,
+        include_small_basket_prune=include_small_basket_prune,
+    )
     item_map = request.item_map()
     seller_map = request.seller_map()
 
@@ -803,10 +938,18 @@ def _run_big_list_debug_solve() -> Path:
     payload = json.loads(fixture_path.read_text(encoding="utf-8"))
     request = OptimizationRequest.model_validate(payload)
     analysis_lines: list[str] = []
+    _, stage_stats = prune_all_with_stats(request)
 
     with log_path.open("w", encoding="utf-8") as log_file:
         log_file.write(f"fixture: {fixture_path}\n")
         log_file.write(f"timestamp: {datetime.now().isoformat(timespec='seconds')}\n\n")
+        log_file.write("=== Prune stage counts ===\n")
+        for stage_stat in stage_stats:
+            log_file.write(
+                f"{stage_stat['stage']}: offers={stage_stat['offers']}, "
+                f"sellers={stage_stat['sellers']}\n"
+            )
+        log_file.write("\n")
 
         response = optimize_order(
             request,
