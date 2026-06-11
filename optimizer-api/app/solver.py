@@ -664,6 +664,42 @@ def prune_all(
     return usable_offers
 
 
+def analyze_request_pruning(request: OptimizationRequest) -> dict[str, object]:
+    baseline_offers, baseline_stage_stats = prune_all_with_stats(
+        request,
+        include_small_basket_prune=False,
+    )
+    candidate_offers, candidate_stage_stats = prune_all_with_stats(
+        request,
+        include_small_basket_prune=True,
+    )
+
+    baseline_lookup = {
+        stage_stat["stage"]: stage_stat for stage_stat in baseline_stage_stats
+    }
+    candidate_lookup = {
+        stage_stat["stage"]: stage_stat for stage_stat in candidate_stage_stats
+    }
+
+    return {
+        "baseline_stage_stats": baseline_stage_stats,
+        "candidate_stage_stats": candidate_stage_stats,
+        "delta": {
+            "offers": len(baseline_offers) - len(candidate_offers),
+            "sellers": len({offer.seller_id for offer in baseline_offers})
+            - len({offer.seller_id for offer in candidate_offers}),
+            "offers_at_new_stage": baseline_lookup[
+                "low_value_small_basket_sellers_skipped"
+            ]["offers"]
+            - candidate_lookup["low_value_small_basket_sellers"]["offers"],
+            "sellers_at_new_stage": baseline_lookup[
+                "low_value_small_basket_sellers_skipped"
+            ]["sellers"]
+            - candidate_lookup["low_value_small_basket_sellers"]["sellers"],
+        },
+    }
+
+
 def optimize_order(
     request: OptimizationRequest,
     *,
@@ -981,6 +1017,43 @@ def _run_big_list_debug_solve() -> Path:
         for line in analysis_lines:
             print(line)
     return log_path
+
+
+def _run_big_list_prune_analysis() -> dict[str, object]:
+    project_root = Path(__file__).resolve().parents[1]
+    fixture_path = project_root / "tests" / "fixtures" / "requests" / "big_list.json"
+
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+    request = OptimizationRequest.model_validate(payload)
+    analysis = analyze_request_pruning(request)
+
+    print(f"fixture: {fixture_path}")
+    print("baseline prune stages:")
+    for stage_stat in analysis["baseline_stage_stats"]:
+        print(
+            f"  {stage_stat['stage']}: offers={stage_stat['offers']}, "
+            f"sellers={stage_stat['sellers']}"
+        )
+
+    print("candidate prune stages:")
+    for stage_stat in analysis["candidate_stage_stats"]:
+        print(
+            f"  {stage_stat['stage']}: offers={stage_stat['offers']}, "
+            f"sellers={stage_stat['sellers']}"
+        )
+
+    delta = analysis["delta"]
+    print(
+        "new-step delta:",
+        f"offers={delta['offers_at_new_stage']}",
+        f"sellers={delta['sellers_at_new_stage']}",
+    )
+    print(
+        "final delta:",
+        f"offers={delta['offers']}",
+        f"sellers={delta['sellers']}",
+    )
+    return analysis
 
 
 if __name__ == "__main__":
