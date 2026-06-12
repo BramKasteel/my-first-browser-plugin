@@ -1725,7 +1725,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
   }
 
   return {
-    filteredResult: applySellerFilters(result, item),
+    filteredResult: result,
   };
 }
 

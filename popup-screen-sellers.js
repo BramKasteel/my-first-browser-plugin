@@ -74,57 +74,6 @@ function refreshOptimizerPayloadFromCurrentState() {
   renderPayload(buildOptimizerPayload(latestFrontendPayload));
 }
 
-function getActiveSellerFilters(item) {
-  const requestedLanguages = getItemLanguages(item);
-  const allowedCountries = getSelectedSellerCountries();
-  const sellerReputation = normalizeSellerReputation(sellerReputationFilterEl.value);
-  const maxShippingTime = normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value);
-  const sellerType = normalizeSellerType(sellerTypeFilterEl.value);
-  return {
-    requestedLanguages,
-    allowedCountries,
-    sellerReputation,
-    maxShippingTime,
-    sellerType,
-    locationFilterText: allowedCountries.join(', '),
-  };
-}
-
-function applySellerFilters(result, item) {
-  const filters = getActiveSellerFilters(item);
-  const rawSellers = Array.isArray(result?.sellers) ? result.sellers : [];
-  const filteredSellers = rawSellers.filter((seller) => {
-    if (filters.requestedLanguages.length) {
-      const sellerLanguage = normalizeLanguageName(seller.language);
-      if (!filters.requestedLanguages.some((language) => sellerLanguage === normalizeLanguageName(language))) {
-        return false;
-      }
-    }
-    if (filters.allowedCountries.length) {
-      const sellerCountry = normalizeCountryName(seller.location);
-      if (!sellerCountry) return false;
-      if (!filters.allowedCountries.includes(sellerCountry)) return false;
-    }
-    return true;
-  });
-
-  return {
-    ...result,
-    sellers: filteredSellers,
-    sellerPreview: filteredSellers.slice(0, 12),
-    totalSellers: filteredSellers.length,
-    unfilteredTotalSellers: rawSellers.length,
-    filtersApplied: {
-      requestedLanguages: filters.requestedLanguages,
-      sellerCountries: filters.allowedCountries,
-      sellerCountryFilterText: filters.locationFilterText,
-      sellerReputation: filters.sellerReputation,
-      maxShippingTime: filters.maxShippingTime,
-      sellerType: filters.sellerType,
-    },
-  };
-}
-
 function getOrderedSellerCountries(selectedCountries = []) {
   const selected = new Set((selectedCountries || []).map((value) => normalizeCountryName(value)).filter(Boolean));
   return [...SELLER_COUNTRY_OPTIONS].sort((left, right) => {
@@ -384,11 +333,9 @@ async function handleScrapeAllItems() {
           error: filteredResult.error,
           rateLimited: !!filteredResult.rateLimited,
           totalSellers: filteredResult.totalSellers || 0,
-          unfilteredTotalSellers: filteredResult.unfilteredTotalSellers || 0,
           pagesFetched: filteredResult.pagesFetched || 0,
           marketPath: filteredResult.marketPath || '',
           requestFilters: filteredResult.requestFilters || null,
-          filtersApplied: filteredResult.filtersApplied || null,
           attemptedUrls: filteredResult.attemptedUrls || [],
           partitionCount: filteredResult.partitionCount || 1,
           sellers: filteredResult.sellers || [],
@@ -409,11 +356,9 @@ async function handleScrapeAllItems() {
         error: '',
         rateLimited: !!filteredResult.rateLimited,
         totalSellers: filteredResult.totalSellers || 0,
-        unfilteredTotalSellers: filteredResult.unfilteredTotalSellers || 0,
         pagesFetched: filteredResult.pagesFetched || 0,
         marketPath: filteredResult.marketPath || '',
         requestFilters: filteredResult.requestFilters || null,
-        filtersApplied: filteredResult.filtersApplied || null,
         attemptedUrls: filteredResult.attemptedUrls || [],
         partitionCount: filteredResult.partitionCount || 1,
         sellers: filteredResult.sellers || [],
@@ -783,7 +728,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
   }
 
   return {
-    filteredResult: applySellerFilters(result, item),
+    filteredResult: result,
   };
 }
 
