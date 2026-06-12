@@ -1916,10 +1916,6 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
 
   function buildInitialBaseCandidates() {
     const candidates = [];
-    if (item.productUrl) {
-      const productUrl = buildSellerRequestUrl(item.productUrl, requestFilters, origin);
-      candidates.push({ url: productUrl, currentRequest: { url: productUrl, method: 'GET' }, label: 'productUrl' });
-    }
     const productIdUrl = buildSellerRequestUrl(
       `${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`,
       requestFilters,
@@ -1930,6 +1926,10 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
       currentRequest: { url: productIdUrl, method: 'GET' },
       label: 'stockOffersByProductId',
     });
+    if (item.productUrl) {
+      const productUrl = buildSellerRequestUrl(item.productUrl, requestFilters, origin);
+      candidates.push({ url: productUrl, currentRequest: { url: productUrl, method: 'GET' }, label: 'productUrl' });
+    }
     return candidates;
   }
 
