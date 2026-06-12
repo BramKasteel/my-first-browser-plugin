@@ -314,21 +314,14 @@ def _solve_exact_shipping_order(
     for seller_id, offers in seller_offers.items():
         active = seller_active_vars[seller_id]
         inactive_literals = seller_inactive_literals[seller_id]
-        total_units = sum(
-            offer_vars[offer.offer_id] for offer in offers
-        )
+        total_units = sum(offer_vars[offer.offer_id] for offer in offers)
 
         # When seller is inactive, every quantity for seller must be zero.
         for offer in offers:
             model.Add(offer_vars[offer.offer_id] == 0).OnlyEnforceIf(inactive_literals)
 
-        # Any active seller choice must buy at least one unit.
-        if seller_id in seller_shipping_tier_choice_vars:
-            for _, tier_var in seller_shipping_tier_choice_vars[seller_id]:
-                model.Add(total_units >= 1).OnlyEnforceIf(tier_var)
-            continue
-
-        model.Add(total_units >= 1).OnlyEnforceIf(active)
+        # Any active seller must buy at least one unit.
+        model.Add(total_units >= active)
 
     # if request.preferences.max_sellers is not None:
     #     model.Add(sum(seller_active_vars.values()) <= request.preferences.max_sellers)
