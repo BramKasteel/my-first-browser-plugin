@@ -407,77 +407,40 @@ def _prune_dominated_offers_per_seller(
     return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
 
 
-def _prune_cheapest_single_item_sellers(
+def _prune_small_nonbest_sellers(
     *,
     offers: list[Offer],
     item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
-    buyer_country: str,
-    route_book: shipping.ShippingRouteBook,
 ) -> list[Offer]:
-    # Map seller_id to their offers
-    seller_offers: dict[str, list[Offer]] = defaultdict(list)
+    seller_item_ids: dict[str, set[str]] = defaultdict(set)
+    best_price_by_item_country: dict[tuple[str, str], int] = {}
+
     for offer in offers:
-        seller_offers[offer.seller_id].append(offer)
-
-    # Find all single-item sellers: sellers who only offer one item_id
-    single_item_sellers: dict[str, str] = {}  # seller_id -> item_id
-    for seller_id, offer_list in seller_offers.items():
-        item_ids = {offer.item_id for offer in offer_list}
-        if len(item_ids) == 1:
-            single_item_sellers[seller_id] = next(iter(item_ids))
-
-    # For each item_id, collect single-item sellers
-    item_to_single_sellers: dict[str, list[str]] = defaultdict(list)
-    for seller_id, item_id in single_item_sellers.items():
-        item_to_single_sellers[item_id].append(seller_id)
-
-    # Sellers to drop
-    drop_seller_ids: set[str] = set()
-
-    for item_id, sellers in item_to_single_sellers.items():
-        if item_map[item_id].quantity != 1:
+        if offer.item_id not in item_map:
             continue
+        seller_item_ids[offer.seller_id].add(offer.item_id)
+        seller_country = seller_map[offer.seller_id].country
+        bucket = (offer.item_id, seller_country)
+        current_best = best_price_by_item_country.get(bucket)
+        if current_best is None or offer.unit_price_cents < current_best:
+            best_price_by_item_country[bucket] = offer.unit_price_cents
 
-        # For each seller, compute total cost (item + shipping) for quantity 1
-        seller_costs = []
-        for seller_id in sellers:
-            offer_list = seller_offers[seller_id]
-
-            best_offer = None
-            for offer in offer_list:
-                if offer.item_id == item_id and offer.available_quantity >= 1:
-                    if best_offer is None or offer.unit_price < best_offer.unit_price:
-                        best_offer = offer
-            assert best_offer is not None
-
-            seller = seller_map[seller_id]
-            shipping_cost = _selection_shipping_cost_cents(
-                seller_country=seller.country,
-                buyer_country=buyer_country,
-                selections=[(best_offer, 1)],
-                route_book=route_book,
-            )
-            if shipping_cost is None:
-                continue
-            total_cost = best_offer.unit_price_cents + shipping_cost
-            seller_costs.append((total_cost, seller_id))
-        if not seller_costs:
+    seller_has_best_price_offer: set[str] = set()
+    for offer in offers:
+        if offer.item_id not in item_map:
             continue
+        seller_country = seller_map[offer.seller_id].country
+        bucket = (offer.item_id, seller_country)
+        if offer.unit_price_cents == best_price_by_item_country.get(bucket):
+            seller_has_best_price_offer.add(offer.seller_id)
 
-        min_cost = min(sc[0] for sc in seller_costs)
+    drop_seller_ids = {
+        seller_id
+        for seller_id, item_ids in seller_item_ids.items()
+        if len(item_ids) <= 3 and seller_id not in seller_has_best_price_offer
+    }
 
-        min_cost_sellers = [
-            seller_id for cost, seller_id in seller_costs if cost == min_cost
-        ]
-
-        chosen_seller = min_cost_sellers[0]
-
-        for _, seller_id in seller_costs:
-            if seller_id != chosen_seller:
-                drop_seller_ids.add(seller_id)
-
-    # Return offers, dropping those from dropped sellers
     return [offer for offer in offers if offer.seller_id not in drop_seller_ids]
 
 
@@ -543,12 +506,10 @@ def prune_all(request: OptimizationRequest):
         buyer_country=request.buyer_country,
         route_book=route_book,
     )
-    usable_offers = _prune_cheapest_single_item_sellers(
+    usable_offers = _prune_small_nonbest_sellers(
         offers=usable_offers,
         item_map=item_map,
         seller_map=seller_map,
-        buyer_country=request.buyer_country,
-        route_book=route_book,
     )
     return usable_offers
 
