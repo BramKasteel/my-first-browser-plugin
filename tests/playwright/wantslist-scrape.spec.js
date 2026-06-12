@@ -579,6 +579,10 @@ test.describe('Want list scraping flow', () => {
     const sizeConfig = assertWantListSizeLimitConfig();
     const popupPage = await openWantsPopupForCardmarketWants({ page, context, extensionId });
 
+    await selectSellerCountry(popupPage, 'Germany');
+    await selectSellerCountry(popupPage, 'Netherlands');
+    await waitForSelectedCountries(popupPage, ['Germany', 'Netherlands']);
+
     await selectWantListAndWaitForLoad(popupPage, {
       wantListName: sizeConfig.under30.wantListName,
       expectedDistinctCount: sizeConfig.under30.expectedDistinctCount,

@@ -31,7 +31,7 @@ const test = base.extend({
   context: async ({}, use) => {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-optimizer-pw-'));
     const context = await chromium.launchPersistentContext(userDataDir, {
-      channel: 'chromium',
+      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser',
       headless: process.env.PW_HEADLESS === '1',
       viewport: { width: 1440, height: 1080 },
       args: [
