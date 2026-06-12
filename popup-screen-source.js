@@ -118,11 +118,15 @@ function renderItems(items, totalVisible) {
     const meta = document.createElement('p');
     meta.className = 'item-meta';
     const languages = getItemLanguages(item);
+    const expansions = Array.isArray(item?.expansions)
+      ? item.expansions.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
     meta.textContent = [
       `want=${item.idWant || '?'}`,
       `product=${item.idProduct || '?'}`,
       `qty=${item.quantity || '1'}`,
       languages.length ? `langs=${languages.join(', ')}` : null,
+      expansions.length ? `exp=${expansions.join(', ')}` : null,
       item.minCondition ? `cond=${item.minCondition}` : null,
       item.maxPrice ? `max=${item.maxPrice}` : null,
     ].filter(Boolean).join(' | ');

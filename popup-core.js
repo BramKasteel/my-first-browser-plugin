@@ -89,6 +89,7 @@ let activeStepActivity = null;
 let lastOptimizerWarmupAt = 0;
 let wantListRetryTimer = null;
 let sellerRequestDelayMs = 250;
+const sellerExpansionFilterCache = new Map();
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
@@ -1265,6 +1266,185 @@ async function resolveSellerRequestContext(item) {
   throw new Error('Could not determine Cardmarket language and game for seller scrape. Re-extract want items from a Cardmarket want list first.');
 }
 
+function buildSellerRequestUrl(urlValue, activeFilters = {}, originValue = 'https://www.cardmarket.com') {
+  const url = new URL(urlValue, originValue);
+  if (activeFilters.expansionIds) {
+    url.searchParams.set('idExpansion', activeFilters.expansionIds);
+  }
+  if (activeFilters.languageId) {
+    url.searchParams.set('language', activeFilters.languageId);
+  }
+  if (activeFilters.isFoil != null) {
+    url.searchParams.set('isFoil', activeFilters.isFoil ? 'Y' : 'N');
+  }
+  if (activeFilters.sellerCountryIds?.length) {
+    url.searchParams.set('sellerCountry', activeFilters.sellerCountryIds.join(','));
+  }
+  if (activeFilters.sellerReputationId) {
+    url.searchParams.set('sellerReputation', activeFilters.sellerReputationId);
+  }
+  if (activeFilters.maxShippingTimeId) {
+    url.searchParams.set('maxShippingTime', activeFilters.maxShippingTimeId);
+  }
+  if (activeFilters.sellerTypeId) {
+    url.searchParams.set('sellerType', activeFilters.sellerTypeId);
+  }
+  return url.toString();
+}
+
+function getRequestedExpansionNames(item) {
+  const names = Array.isArray(item?.expansions) ? item.expansions : [];
+  return [...new Set(names.map((value) => textOf(value)).filter(Boolean))];
+}
+
+function normalizeExpansionFilterLabel(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[’']/g, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function inspectAvailableExpansionFiltersInDocument(doc) {
+  const select = doc.querySelector('select[name="idExpansion"], select[name^="idExpansion"], select#idExpansion, select[name="expansion"]');
+  if (!select) return [];
+
+  const seen = new Set();
+  return [...select.options]
+    .map((option) => ({
+      rawName: select.name || '',
+      value: textOf(option.value),
+      label: textOf(option.textContent),
+      selected: option.selected,
+    }))
+    .filter((option) => {
+      if (!/^\d+$/.test(option.value) || option.value === '0' || !option.label) return false;
+      const marker = `${option.rawName}|${option.value}|${option.label}`;
+      if (seen.has(marker)) return false;
+      seen.add(marker);
+      return true;
+    });
+}
+
+function buildExpansionFilterCacheKey(item, requestContext) {
+  return [
+    textOf(requestContext?.origin),
+    textOf(requestContext?.lang),
+    textOf(requestContext?.game),
+    textOf(item?.idProduct),
+    textOf(item?.productUrl),
+  ].join('|');
+}
+
+function matchExpansionIds(requestedExpansionNames, availableExpansionFilters) {
+  const expansionIds = [];
+  const matchedExpansionNames = [];
+  const unmatchedExpansionNames = [];
+  const idsByLabel = new Map();
+
+  availableExpansionFilters.forEach((entry) => {
+    const normalizedLabel = normalizeExpansionFilterLabel(entry?.label);
+    const value = textOf(entry?.value);
+    if (!normalizedLabel || !/^\d+$/.test(value) || value === '0') return;
+    if (!idsByLabel.has(normalizedLabel)) idsByLabel.set(normalizedLabel, []);
+    idsByLabel.get(normalizedLabel).push(value);
+  });
+
+  requestedExpansionNames.forEach((name) => {
+    const normalizedName = normalizeExpansionFilterLabel(name);
+    const matchedIds = normalizedName ? idsByLabel.get(normalizedName) || [] : [];
+    if (!matchedIds.length) {
+      unmatchedExpansionNames.push(name);
+      return;
+    }
+    matchedExpansionNames.push(name);
+    matchedIds.forEach((value) => {
+      if (!expansionIds.includes(value)) expansionIds.push(value);
+    });
+  });
+
+  return {
+    expansionIds: expansionIds.join(','),
+    matchedExpansionNames,
+    unmatchedExpansionNames,
+  };
+}
+
+async function fetchAvailableExpansionFiltersForItem({ item, requestContext, requestFilters = {} }) {
+  const runtimeContext = requestContext || parseCardmarketRequestContext(item?.productUrl);
+  if (!runtimeContext) return { options: [], rateLimited: false };
+
+  const sanitizedFilters = { ...requestFilters };
+  delete sanitizedFilters.expansionIds;
+
+  const candidateUrls = [];
+  if (item?.productUrl) {
+    candidateUrls.push(buildSellerRequestUrl(item.productUrl, sanitizedFilters, runtimeContext.origin));
+  }
+  if (textOf(item?.idProduct)) {
+    candidateUrls.push(buildSellerRequestUrl(
+      `/${runtimeContext.lang}/${runtimeContext.game}/Stock/Offers/Singles?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`,
+      sanitizedFilters,
+      runtimeContext.origin,
+    ));
+  }
+
+  const seenUrls = new Set();
+  for (const candidateUrl of candidateUrls) {
+    if (!candidateUrl || seenUrls.has(candidateUrl)) continue;
+    seenUrls.add(candidateUrl);
+    try {
+      const response = await fetch(candidateUrl, { credentials: 'include' });
+      if (response.status === 429) {
+        return { options: [], rateLimited: true };
+      }
+      if (!response.ok) continue;
+      const html = await response.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const options = inspectAvailableExpansionFiltersInDocument(doc);
+      if (options.length) {
+        return { options, rateLimited: false };
+      }
+    } catch {
+    }
+  }
+
+  return { options: [], rateLimited: false };
+}
+
+async function resolveItemExpansionRequestFilter({ item, requestContext, requestFilters = {} }) {
+  const requestedExpansionNames = getRequestedExpansionNames(item);
+  if (!requestedExpansionNames.length) {
+    return {
+      expansionIds: '',
+      matchedExpansionNames: [],
+      unmatchedExpansionNames: [],
+      rateLimited: false,
+    };
+  }
+
+  const cacheKey = buildExpansionFilterCacheKey(item, requestContext);
+  let availableExpansionFilters = sellerExpansionFilterCache.get(cacheKey) || [];
+  let rateLimited = false;
+
+  if (!availableExpansionFilters.length) {
+    const discovery = await fetchAvailableExpansionFiltersForItem({ item, requestContext, requestFilters });
+    availableExpansionFilters = discovery.options || [];
+    rateLimited = discovery.rateLimited === true;
+    if (availableExpansionFilters.length) {
+      sellerExpansionFilterCache.set(cacheKey, availableExpansionFilters);
+    }
+  }
+
+  return {
+    ...matchExpansionIds(requestedExpansionNames, availableExpansionFilters),
+    rateLimited,
+  };
+}
+
 function shouldPartitionSellerScrape(baseResult, countryScopes) {
   if (!baseResult || baseResult.error) return false;
   if (!countryScopes.length) return false;
@@ -1470,6 +1650,24 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
     maxShippingTimeId,
     sellerTypeId,
   };
+  const expansionFilter = await resolveItemExpansionRequestFilter({
+    item,
+    requestContext,
+    requestFilters: baseRequestFilters,
+  });
+  if (expansionFilter.expansionIds) {
+    baseRequestFilters.expansionIds = expansionFilter.expansionIds;
+  }
+  if (expansionFilter.unmatchedExpansionNames.length) {
+    const itemLabel = textOf(item?.productName) || textOf(item?.idProduct) || 'wanted item';
+    if (expansionFilter.rateLimited) {
+      appendStatus(`Expansion lookup rate-limited for ${itemLabel}. Scraping without expansion filter.`, 'bad');
+    } else if (expansionFilter.matchedExpansionNames.length) {
+      appendStatus(`Expansion partial match for ${itemLabel}. Skipped: ${expansionFilter.unmatchedExpansionNames.join(', ')}.`, 'bad');
+    } else {
+      appendStatus(`Could not match expansions for ${itemLabel}: ${expansionFilter.unmatchedExpansionNames.join(', ')}. Scraping without expansion filter.`, 'bad');
+    }
+  }
   const explicitCountryScopes = buildSellerCountryScopes({
     requestCountryIds,
     availableSellerFilters: null,
@@ -1704,12 +1902,17 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
   function buildInitialBaseCandidates() {
     const candidates = [];
     if (item.productUrl) {
-      const productUrl = appendSellerRequestFilters(item.productUrl, requestFilters);
+      const productUrl = buildSellerRequestUrl(item.productUrl, requestFilters, origin);
       candidates.push({ url: productUrl, currentRequest: { url: productUrl, method: 'GET' }, label: 'productUrl' });
     }
+    const productIdUrl = buildSellerRequestUrl(
+      `${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`,
+      requestFilters,
+      origin,
+    );
     candidates.push({
-      url: appendSellerRequestFilters(`${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`, requestFilters),
-      currentRequest: { url: appendSellerRequestFilters(`${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`, requestFilters), method: 'GET' },
+      url: productIdUrl,
+      currentRequest: { url: productIdUrl, method: 'GET' },
       label: 'stockOffersByProductId',
     });
     return candidates;
@@ -1801,29 +2004,6 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     }
     if (meta.buttonName) formData.append(meta.buttonName, meta.buttonValue || '');
     return { url: meta.actionUrl, method: meta.method || 'POST', body: formData };
-  }
-
-  function appendSellerRequestFilters(urlValue, activeFilters) {
-    const url = new URL(urlValue, origin);
-    if (activeFilters.languageId) {
-      url.searchParams.set('language', activeFilters.languageId);
-    }
-    if (activeFilters.isFoil != null) {
-      url.searchParams.set('isFoil', activeFilters.isFoil ? 'Y' : 'N');
-    }
-    if (activeFilters.sellerCountryIds?.length) {
-      url.searchParams.set('sellerCountry', activeFilters.sellerCountryIds.join(','));
-    }
-    if (activeFilters.sellerReputationId) {
-      url.searchParams.set('sellerReputation', activeFilters.sellerReputationId);
-    }
-    if (activeFilters.maxShippingTimeId) {
-      url.searchParams.set('maxShippingTime', activeFilters.maxShippingTimeId);
-    }
-    if (activeFilters.sellerTypeId) {
-      url.searchParams.set('sellerType', activeFilters.sellerTypeId);
-    }
-    return url.toString();
   }
 
   function inspectAvailableSellerFiltersInDocument(doc, currentUrl) {
