@@ -256,7 +256,7 @@ function getLoadedWantItemCount() {
   return Array.isArray(latestExtractedItems) ? latestExtractedItems.length : 0;
 }
 
-function getSellerPagesPerCountry(itemCount = getLoadedWantItemCount()) {
+function getSellerPagesPerCountry(itemCount = getLoadedWantDistinctItemCount()) {
   const normalizedItemCount = Math.max(0, parseInt(itemCount, 10) || 0);
   if (normalizedItemCount < 20) return 4;
   if (normalizedItemCount <= 40) return 3;
@@ -1479,17 +1479,6 @@ function isSellerScopeLikelyCapped(result, minimumSellerCount = 300) {
   return (result.totalSellers || 0) >= minimumSellerCount;
 }
 
-function hasPowerSellerFilterOption(availableSellerFilters) {
-  const sellerTypeOptions = Array.isArray(availableSellerFilters?.sellerType)
-    ? availableSellerFilters.sellerType
-    : [];
-  return sellerTypeOptions.some((entry) => {
-    const value = String(entry?.value || '').trim();
-    const label = String(entry?.label || '').trim();
-    return value === '2' || /power\s+seller/i.test(label);
-  });
-}
-
 function mergeSellerScopeResults(baseResult, partitionResults) {
   const allResults = [baseResult, ...(partitionResults || [])].filter(Boolean);
   const seedResult = baseResult || partitionResults?.[0] || {};
@@ -1558,13 +1547,9 @@ function describeSellerScope({ sellerCountryIds, sellerTypeId }) {
     parts.push('all seller countries');
   }
 
-  if (sellerTypeId === getCardmarketSellerTypeId('Power Seller')) {
-    parts.push('Power Seller subset');
-  } else {
-    const explicitSellerType = sellerTypeFilterEl?.value || '';
-    const normalizedSellerType = normalizeSellerType(explicitSellerType);
-    if (normalizedSellerType) parts.push(`${normalizedSellerType} sellers`);
-  }
+  const explicitSellerType = sellerTypeFilterEl?.value || '';
+  const normalizedSellerType = normalizeSellerType(explicitSellerType);
+  if (normalizedSellerType) parts.push(`${normalizedSellerType} sellers`);
 
   return parts.join(', ');
 }
@@ -1607,36 +1592,7 @@ async function executeSellerScopeScrape({
     requestFilters,
     requestContext,
   });
-  if (!scopeResult) return null;
-
-  const powerSellerTypeId = getCardmarketSellerTypeId('Power Seller');
-  const shouldRetryWithPowerSeller = !sellerTypeId
-    && hasPowerSellerFilterOption(scopeResult.availableSellerFilters)
-    && isSellerScopeLikelyCapped(scopeResult, 300);
-
-  if (shouldRetryWithPowerSeller) {
-    if (logPowerSellerFallback) {
-      appendStatus(`${partitionLabel} looks capped. Applying Power Seller subset.`, 'good');
-    }
-    appendStatus(`Querying seller scope: ${describeSellerScope({ sellerCountryIds, sellerTypeId: powerSellerTypeId })}.`);
-    const powerSellerResult = await scrapeSingleWantItemSellers({
-      item,
-      delay: delayMs,
-      maxSellerPages,
-      previewLimit,
-      requestFilters: {
-        ...requestFilters,
-        sellerTypeId: powerSellerTypeId,
-      },
-      requestContext,
-    });
-    if (powerSellerResult) {
-      powerSellerResult.powerSellerFallbackApplied = true;
-      scopeResult = powerSellerResult;
-    }
-  }
-
-  return scopeResult;
+  return scopeResult || null;
 }
 
 async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPartitionRetry, onScopeStart }) {

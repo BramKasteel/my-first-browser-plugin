@@ -555,17 +555,6 @@ function isSellerScopeLikelyCapped(result, minimumSellerCount = 300) {
   return (result.totalSellers || 0) >= minimumSellerCount;
 }
 
-function hasPowerSellerFilterOption(availableSellerFilters) {
-  const sellerTypeOptions = Array.isArray(availableSellerFilters?.sellerType)
-    ? availableSellerFilters.sellerType
-    : [];
-  return sellerTypeOptions.some((entry) => {
-    const value = String(entry?.value || '').trim();
-    const label = String(entry?.label || '').trim();
-    return value === '2' || /power\s+seller/i.test(label);
-  });
-}
-
 function mergeSellerScopeResults(baseResult, partitionResults) {
   const allResults = [baseResult, ...(partitionResults || [])].filter(Boolean);
   const seedResult = baseResult || partitionResults?.[0] || {};
@@ -634,13 +623,9 @@ function describeSellerScope({ sellerCountryIds, sellerTypeId }) {
     parts.push('all seller countries');
   }
 
-  if (sellerTypeId === getCardmarketSellerTypeId('Power Seller')) {
-    parts.push('Power Seller subset');
-  } else {
-    const explicitSellerType = sellerTypeFilterEl?.value || '';
-    const normalizedSellerType = normalizeSellerType(explicitSellerType);
-    if (normalizedSellerType) parts.push(`${normalizedSellerType} sellers`);
-  }
+  const explicitSellerType = sellerTypeFilterEl?.value || '';
+  const normalizedSellerType = normalizeSellerType(explicitSellerType);
+  if (normalizedSellerType) parts.push(`${normalizedSellerType} sellers`);
 
   return parts.join(', ');
 }
@@ -648,6 +633,7 @@ function describeSellerScope({ sellerCountryIds, sellerTypeId }) {
 async function executeSellerScopeScrape({
   item,
   delayMs,
+  maxSellerPages,
   previewLimit,
   requestContext,
   requestLanguageId,
@@ -677,39 +663,12 @@ async function executeSellerScopeScrape({
   let scopeResult = await scrapeSingleWantItemSellers({
     item,
     delay: delayMs,
+    maxSellerPages,
     previewLimit,
     requestFilters,
     requestContext,
   });
-  if (!scopeResult) return null;
-
-  const powerSellerTypeId = getCardmarketSellerTypeId('Power Seller');
-  const shouldRetryWithPowerSeller = !sellerTypeId
-    && hasPowerSellerFilterOption(scopeResult.availableSellerFilters)
-    && isSellerScopeLikelyCapped(scopeResult, 300);
-
-  if (shouldRetryWithPowerSeller) {
-    if (logPowerSellerFallback) {
-      appendStatus(`${partitionLabel} looks capped. Applying Power Seller subset.`, 'good');
-    }
-    appendStatus(`Querying seller scope: ${describeSellerScope({ sellerCountryIds, sellerTypeId: powerSellerTypeId })}.`);
-    const powerSellerResult = await scrapeSingleWantItemSellers({
-      item,
-      delay: delayMs,
-      previewLimit,
-      requestFilters: {
-        ...requestFilters,
-        sellerTypeId: powerSellerTypeId,
-      },
-      requestContext,
-    });
-    if (powerSellerResult) {
-      powerSellerResult.powerSellerFallbackApplied = true;
-      scopeResult = powerSellerResult;
-    }
-  }
-
-  return scopeResult;
+  return scopeResult || null;
 }
 
 async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPartitionRetry, onScopeStart }) {
@@ -721,6 +680,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
   const sellerReputationId = getCardmarketSellerReputationId(sellerReputationFilterEl.value);
   const maxShippingTimeId = getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value);
   const sellerTypeId = getCardmarketSellerTypeId(sellerTypeFilterEl.value);
+  const maxSellerPages = getSellerPagesPerCountry();
   const baseRequestFilters = {
     languageId: requestLanguageId,
     isFoil: requestIsFoil,
@@ -746,6 +706,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
       const scopeResult = await executeSellerScopeScrape({
         item,
         delayMs,
+        maxSellerPages,
         previewLimit: 12,
         requestContext,
         requestLanguageId,
@@ -770,6 +731,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
     const baseResult = await scrapeSingleWantItemSellers({
       item,
       delay: delayMs,
+      maxSellerPages,
       previewLimit: 12,
       requestFilters: baseRequestFilters,
       requestContext,
@@ -795,6 +757,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
         const scopeResult = await executeSellerScopeScrape({
           item,
           delayMs,
+          maxSellerPages,
           previewLimit: 12,
           requestContext,
           requestLanguageId,
