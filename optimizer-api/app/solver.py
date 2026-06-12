@@ -438,7 +438,7 @@ def _prune_small_nonbest_sellers(
     drop_seller_ids = {
         seller_id
         for seller_id, item_ids in seller_item_ids.items()
-        if len(item_ids) <= 6 and seller_id not in seller_has_best_price_offer
+        if seller_id not in seller_has_best_price_offer
     }
 
     return [offer for offer in offers if offer.seller_id not in drop_seller_ids]
