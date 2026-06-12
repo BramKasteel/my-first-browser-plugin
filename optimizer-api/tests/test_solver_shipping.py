@@ -15,7 +15,6 @@ from app.shipping import (
 from app.solver import (
     MAX_OFFERS_PER_ITEM,
     MISSING_ROUTE_DATA_PENALTY_CENTS,
-    _format_selected_offer_rank_analysis,
     _item_offer_price_stats,
     _prune_cheapest_single_item_sellers,
     _prune_dominated_offers_per_seller,
@@ -289,12 +288,11 @@ def test_selected_offer_rank_analysis_reports_cheaper_and_pricier_skips(
     )
 
     response = optimize_order(request)
-    analysis_lines = _format_selected_offer_rank_analysis(request, response)
+    selected_item = response.cart.sellers[0].items[0]
 
     assert response.allocations[0].offer_id == "offer-2"
-    assert analysis_lines == [
-        "- Card: bought 1.20 EUR from Local Seller [seller-2], rank 2/3 by unit price; skipped 1 cheaper, 0 same-price, 1 pricier"
-    ]
+    assert selected_item.price_rank == 2
+    assert selected_item.price_rank_total == 3
 
 
 def test_prune_dominated_offers_drops_more_expensive_duplicate() -> None:

@@ -112,6 +112,32 @@ def _item_offer_price_stats(
     return stats_by_item
 
 
+def _selected_offer_price_ranks(
+    offers: list[Offer],
+    selected_offer_ids: set[str],
+) -> dict[str, tuple[int, int]]:
+    offers_by_item: dict[str, list[Offer]] = defaultdict(list)
+    offer_by_id: dict[str, Offer] = {}
+    for offer in offers:
+        offers_by_item[offer.item_id].append(offer)
+        offer_by_id[offer.offer_id] = offer
+
+    ranks_by_offer_id: dict[str, tuple[int, int]] = {}
+    for offer_id in selected_offer_ids:
+        selected_offer = offer_by_id.get(offer_id)
+        if selected_offer is None:
+            continue
+        item_offers = offers_by_item[selected_offer.item_id]
+        cheaper_count = sum(
+            1
+            for offer in item_offers
+            if offer.unit_price_cents < selected_offer.unit_price_cents
+        )
+        ranks_by_offer_id[offer_id] = (cheaper_count + 1, len(item_offers))
+
+    return ranks_by_offer_id
+
+
 def _selection_shipping_cost_cents(
     *,
     seller_country: str,
@@ -579,6 +605,10 @@ def optimize_order(
         )
 
     solution_status, selected_offer_quantities = solution
+    selected_offer_ranks = _selected_offer_price_ranks(
+        request.offers,
+        set(selected_offer_quantities),
+    )
 
     allocations = []
     cart_items_by_seller = defaultdict(list)
@@ -623,6 +653,8 @@ def optimize_order(
                 quantity=quantity,
                 unit_price=offer.unit_price,
                 line_total=_from_cents(line_total),
+                price_rank=selected_offer_ranks.get(offer.offer_id, (None, None))[0],
+                price_rank_total=selected_offer_ranks.get(offer.offer_id, (None, None))[1],
                 condition=offer.condition,
                 language=offer.language,
             )
@@ -714,79 +746,6 @@ def _make_file_log_callback(log_file) -> Callable[[str], None]:
     return write_log
 
 
-def _format_selected_offer_rank_analysis(
-    request: OptimizationRequest,
-    response: OptimizationResponse,
-) -> list[str]:
-    if not response.allocations:
-        return []
-
-    item_map = request.item_map()
-    seller_map = request.seller_map()
-    offer_by_id = {offer.offer_id: offer for offer in request.offers}
-    offers_by_item: dict[str, list[Offer]] = defaultdict(list)
-    for offer in request.offers:
-        offers_by_item[offer.item_id].append(offer)
-
-    selected_offer_ids = {allocation.offer_id for allocation in response.allocations}
-    lines = []
-    for allocation in response.allocations:
-        selected_offer = offer_by_id[allocation.offer_id]
-        item_offers = offers_by_item[selected_offer.item_id]
-        cheaper_count = sum(
-            1
-            for offer in item_offers
-            if offer.unit_price_cents < selected_offer.unit_price_cents
-        )
-        same_price_count = sum(
-            1
-            for offer in item_offers
-            if offer.offer_id != selected_offer.offer_id
-            and offer.unit_price_cents == selected_offer.unit_price_cents
-        )
-        pricier_count = sum(
-            1
-            for offer in item_offers
-            if offer.unit_price_cents > selected_offer.unit_price_cents
-        )
-
-        cheaper_unbought = sum(
-            1
-            for offer in item_offers
-            if offer.offer_id not in selected_offer_ids
-            and offer.unit_price_cents < selected_offer.unit_price_cents
-        )
-        same_price_unbought = sum(
-            1
-            for offer in item_offers
-            if offer.offer_id not in selected_offer_ids
-            and offer.unit_price_cents == selected_offer.unit_price_cents
-        )
-        pricier_unbought = sum(
-            1
-            for offer in item_offers
-            if offer.offer_id not in selected_offer_ids
-            and offer.unit_price_cents > selected_offer.unit_price_cents
-        )
-
-        rank = cheaper_count + 1
-        seller = seller_map[selected_offer.seller_id]
-        item = item_map[selected_offer.item_id]
-        line = (
-            f"- {item.name}: bought {selected_offer.unit_price:.2f} {request.currency} "
-            f"from {seller.name} [{selected_offer.seller_id}], rank {rank}/{len(item_offers)} "
-            f"by unit price; skipped {cheaper_unbought} cheaper, "
-            f"{same_price_unbought} same-price, {pricier_unbought} pricier"
-        )
-        if same_price_count > 0:
-            line += f" (ties at same price: {same_price_count})"
-        if allocation.quantity > 1:
-            line += f"; bought qty {allocation.quantity}"
-        lines.append(line)
-
-    return lines
-
-
 def _run_big_list_debug_solve() -> Path:
     project_root = Path(__file__).resolve().parents[1]
     fixture_path = project_root / "tests" / "fixtures" / "requests" / "big_list.json"
@@ -799,7 +758,6 @@ def _run_big_list_debug_solve() -> Path:
     payload = json.loads(fixture_path.read_text(encoding="utf-8"))
     request = OptimizationRequest.model_validate(payload)
     solver_random_seed = random.randint(1, 2_147_483_647)
-    analysis_lines: list[str] = []
 
     with log_path.open("w", encoding="utf-8") as log_file:
         log_file.write(f"fixture: {fixture_path}\n")
@@ -816,14 +774,6 @@ def _run_big_list_debug_solve() -> Path:
         log_file.write(response.model_dump_json(indent=2))
         log_file.write("\n")
 
-        analysis_lines = _format_selected_offer_rank_analysis(request, response)
-        log_file.write("\n=== Bought item price ranks ===\n")
-        if analysis_lines:
-            log_file.write("\n".join(analysis_lines))
-            log_file.write("\n")
-        else:
-            log_file.write("No bought-item rank analysis available.\n")
-
     print(f"Solver log written to {log_path}")
     print(f"Solver random seed: {solver_random_seed}")
     print(
@@ -833,10 +783,6 @@ def _run_big_list_debug_solve() -> Path:
         f"sellers={response.cart.total_sellers}",
         f"units={response.cart.total_units}",
     )
-    if analysis_lines:
-        print("Bought item price ranks:")
-        for line in analysis_lines:
-            print(line)
     return log_path
 
 

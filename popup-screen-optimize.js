@@ -59,6 +59,9 @@ function renderOptimizationResult(result) {
       line.textContent = [
         `${item.quantity}x ${item.item_name || item.item_id}`,
         `offer=${item.offer_id}`,
+        Number.isFinite(item.price_rank) && Number.isFinite(item.price_rank_total)
+          ? `rank=${item.price_rank}/${item.price_rank_total}`
+          : null,
         `unit=${formatCurrencyAmount(item.unit_price, result.currency)}`,
         `line=${formatCurrencyAmount(item.line_total, result.currency)}`,
         item.language ? `lang=${item.language}` : null,

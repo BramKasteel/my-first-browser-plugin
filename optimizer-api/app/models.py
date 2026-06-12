@@ -217,6 +217,8 @@ class CartItemResult(BaseModel):
     quantity: int = Field(ge=1)
     unit_price: float = Field(ge=0)
     line_total: float = Field(ge=0)
+    price_rank: int | None = Field(default=None, ge=1)
+    price_rank_total: int | None = Field(default=None, ge=1)
     condition: BoundedDescriptor | None = None
     language: BoundedDescriptor | None = None
 
