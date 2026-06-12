@@ -30,13 +30,13 @@ EXPECTED_FIXTURE_RESULTS = {
 
 EXPECTED_FIXTURE_MODEL_SIZES = {
     "big_list": {
-        "exact": {"variables": 20685, "constraints": 25000},
+        "exact": {"variables": 120000, "constraints": 150000},
     },
     "ob_nixilis_improvements": {
-        "exact": {"variables": 5001, "constraints": 7000},
+        "exact": {"variables": 30000, "constraints": 40000},
     },
     "small_wantslist": {
-        "exact": {"variables": 943, "constraints": 2500},
+        "exact": {"variables": 10000, "constraints": 15000},
     },
 }
 

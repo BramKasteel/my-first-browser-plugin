@@ -259,6 +259,56 @@ def test_optimize_returns_empty_cart_summary_for_infeasible_request() -> None:
     assert response.cart.total_units == 0
 
 
+def test_optimize_splits_multi_copy_demand_across_offers_by_capacity(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(
+                values=[(155, 50000, 10)],
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[WantedItem(item_id="item-1", name="Card", quantity=3)],
+        sellers=[Seller(seller_id="seller-1", name="Seller", country="Germany")],
+        offers=[
+            Offer(
+                offer_id="offer-1",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=1.0,
+                available_quantity=2,
+            ),
+            Offer(
+                offer_id="offer-2",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=1.5,
+                available_quantity=2,
+            ),
+        ],
+        preferences=OptimizationPreferences(),
+    )
+
+    response = optimize_order(request)
+
+    assert response.status == "optimal"
+    assert {allocation.offer_id: allocation.quantity for allocation in response.allocations} == {
+        "offer-1": 2,
+        "offer-2": 1,
+    }
+    assert response.totals.item_subtotal == 3.5
+    assert response.totals.shipping_total == 1.55
+    assert response.totals.grand_total == 5.05
+
+
 def test_selected_offer_rank_analysis_reports_cheaper_and_pricier_skips(
     monkeypatch,
 ) -> None:

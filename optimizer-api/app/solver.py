@@ -42,12 +42,6 @@ def _capped_offer_quantity(offer: Offer, item_map: dict[str, WantedItem]) -> int
     return min(offer.available_quantity, item_map[offer.item_id].quantity)
 
 
-def _new_quantity_var(cp_model_instance, *, upper_bound: int, name: str):
-    if upper_bound == 1:
-        return cp_model_instance.NewBoolVar(name)
-    return cp_model_instance.NewIntVar(0, upper_bound, name)
-
-
 def _new_solver(
     cp_model,
     *,
@@ -208,29 +202,42 @@ def _solve_exact_shipping_order(
 ) -> tuple[str, dict[str, int]] | None:
     model = cp_model.CpModel()
 
-    offer_vars = {}
     seller_active_vars = {}
     seller_tier_candidates = {}
     seller_value_upper_bounds = {}
     seller_unit_upper_bounds = {}
+    capped_offer_quantities = {}
+    item_slot_offer_vars: dict[tuple[str, int], list[object]] = defaultdict(list)
+    offer_assignment_vars: dict[str, list[object]] = defaultdict(list)
+    seller_assignment_vars: dict[str, list[object]] = defaultdict(list)
 
     seller_offers = defaultdict(list)
     for offer in usable_offers:
         seller_offers[offer.seller_id].append(offer)
-        offer_vars[offer.offer_id] = _new_quantity_var(
-            model,
-            upper_bound=_capped_offer_quantity(offer, item_map),
-            name=f"qty_{offer.offer_id}",
-        )
+        capped_offer_quantities[offer.offer_id] = _capped_offer_quantity(offer, item_map)
 
     for seller_id, offers in seller_offers.items():
         seller_value_upper_bounds[seller_id] = sum(
-            offer.unit_price_cents * _capped_offer_quantity(offer, item_map)
+            offer.unit_price_cents * capped_offer_quantities[offer.offer_id]
             for offer in offers
         )
         seller_unit_upper_bounds[seller_id] = sum(
-            _capped_offer_quantity(offer, item_map) for offer in offers
+            capped_offer_quantities[offer.offer_id] for offer in offers
         )
+
+    for item in request.items:
+        eligible_offers = [
+            offer for offer in usable_offers if offer.item_id == item.item_id
+        ]
+        for slot_index in range(item.quantity):
+            slot_key = (item.item_id, slot_index)
+            for offer in eligible_offers:
+                assign_var = model.NewBoolVar(
+                    f"assign_{item.item_id}_{slot_index}_{offer.offer_id}"
+                )
+                item_slot_offer_vars[slot_key].append(assign_var)
+                offer_assignment_vars[offer.offer_id].append(assign_var)
+                seller_assignment_vars[offer.seller_id].append(assign_var)
 
     for seller_id in seller_offers:
         route_tiers = route_book.lookup_tiers(
@@ -245,35 +252,42 @@ def _solve_exact_shipping_order(
         seller_tier_candidates[seller_id] = tier_candidates
 
     for item in request.items:
+        for slot_index in range(item.quantity):
+            model.AddExactlyOne(item_slot_offer_vars[(item.item_id, slot_index)])
+
+    for offer in usable_offers:
         model.Add(
-            sum(
-                offer_vars[offer.offer_id]
-                for offer in usable_offers
-                if offer.item_id == item.item_id
-            )
-            == item.quantity
+            sum(offer_assignment_vars[offer.offer_id])
+            <= capped_offer_quantities[offer.offer_id]
         )
 
     objective_terms = [
-        offer.unit_price_cents * offer_vars[offer.offer_id] for offer in usable_offers
+        offer.unit_price_cents * assign_var
+        for offer in usable_offers
+        for assign_var in offer_assignment_vars[offer.offer_id]
     ]
 
     seller_shipping_tier_choice_vars = {}
-    seller_inactive_literals = {}
 
     for seller_id, offers in seller_offers.items():
         active = seller_active_vars[seller_id]
         tier_candidates = seller_tier_candidates[seller_id]
+        seller_assignments = seller_assignment_vars[seller_id]
+
+        for assign_var in seller_assignments:
+            model.AddImplication(assign_var, active)
+        model.AddBoolOr(seller_assignments).OnlyEnforceIf(active)
 
         if tier_candidates:
             total_value_expr = sum(
-                offer.unit_price_cents * offer_vars[offer.offer_id] for offer in offers
+                offer.unit_price_cents * assign_var
+                for offer in offers
+                for assign_var in offer_assignment_vars[offer.offer_id]
             )
-            total_units = sum(offer_vars[offer.offer_id] for offer in offers)
+            total_units = sum(seller_assignments)
 
             if len(tier_candidates) == 1:
                 tier = tier_candidates[0]
-                seller_inactive_literals[seller_id] = [active.Not()]
                 model.Add(total_value_expr <= tier.max_value_cents).OnlyEnforceIf(
                     active
                 )
@@ -299,7 +313,6 @@ def _solve_exact_shipping_order(
                 tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
             )
             model.Add(active_tier_count == active)
-            seller_inactive_literals[seller_id] = [active.Not()]
 
             objective_terms.append(
                 sum(
@@ -310,25 +323,6 @@ def _solve_exact_shipping_order(
             continue
 
         raise ValueError('No tier for seller')
-
-    for seller_id, offers in seller_offers.items():
-        active = seller_active_vars[seller_id]
-        inactive_literals = seller_inactive_literals[seller_id]
-        total_units = sum(
-            offer_vars[offer.offer_id] for offer in offers
-        )
-
-        # When seller is inactive, every quantity for seller must be zero.
-        for offer in offers:
-            model.Add(offer_vars[offer.offer_id] == 0).OnlyEnforceIf(inactive_literals)
-
-        # Any active seller choice must buy at least one unit.
-        if seller_id in seller_shipping_tier_choice_vars:
-            for _, tier_var in seller_shipping_tier_choice_vars[seller_id]:
-                model.Add(total_units >= 1).OnlyEnforceIf(tier_var)
-            continue
-
-        model.Add(total_units >= 1).OnlyEnforceIf(active)
 
     # if request.preferences.max_sellers is not None:
     #     model.Add(sum(seller_active_vars.values()) <= request.preferences.max_sellers)
@@ -346,9 +340,13 @@ def _solve_exact_shipping_order(
 
     solution_status = "optimal" if status == cp_model.OPTIMAL else "feasible"
     selected_offer_quantities = {
-        offer.offer_id: solver.Value(offer_vars[offer.offer_id])
+        offer.offer_id: sum(
+            solver.Value(assign_var) for assign_var in offer_assignment_vars[offer.offer_id]
+        )
         for offer in usable_offers
-        if solver.Value(offer_vars[offer.offer_id]) > 0
+        if sum(
+            solver.Value(assign_var) for assign_var in offer_assignment_vars[offer.offer_id]
+        ) > 0
     }
     return solution_status, selected_offer_quantities
 
