@@ -210,7 +210,6 @@ def _solve_exact_shipping_order(
 
     offer_vars = {}
     seller_active_vars = {}
-    seller_active_exprs = {}
     seller_tier_candidates = {}
     seller_value_upper_bounds = {}
     seller_unit_upper_bounds = {}
@@ -241,14 +240,9 @@ def _solve_exact_shipping_order(
             seller_unit_upper_bound=seller_unit_upper_bounds[seller_id],
         )
 
+        seller_active_vars[seller_id] = model.NewBoolVar(f"seller_active_{seller_id}")
         tier_candidates = list(route_tiers.tiers)
         seller_tier_candidates[seller_id] = tier_candidates
-
-        if len(tier_candidates) <= 1:
-            seller_active_vars[seller_id] = model.NewBoolVar(
-                f"seller_active_{seller_id}"
-            )
-            seller_active_exprs[seller_id] = seller_active_vars[seller_id]
 
     for item in request.items:
         model.Add(
@@ -268,7 +262,7 @@ def _solve_exact_shipping_order(
     seller_inactive_literals = {}
 
     for seller_id, offers in seller_offers.items():
-        active = seller_active_exprs.get(seller_id)
+        active = seller_active_vars[seller_id]
         tier_candidates = seller_tier_candidates[seller_id]
 
         if tier_candidates:
@@ -298,17 +292,14 @@ def _solve_exact_shipping_order(
                 )
                 model.Add(total_units <= tier.max_units).OnlyEnforceIf(tier_var)
 
-            active = sum(
+            active_tier_count = sum(
                 tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
             )
             model.AddAtMostOne(
                 tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
             )
-            seller_active_exprs[seller_id] = active
-            seller_inactive_literals[seller_id] = [
-                tier_var.Not()
-                for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
-            ]
+            model.Add(active_tier_count == active)
+            seller_inactive_literals[seller_id] = [active.Not()]
 
             objective_terms.append(
                 sum(
@@ -318,19 +309,16 @@ def _solve_exact_shipping_order(
             )
             continue
 
-        objective_terms.append(
-            MISSING_ROUTE_DATA_PENALTY_CENTS * active
-        )  # If no tier candidates
-        seller_inactive_literals[seller_id] = [active.Not()]
+        raise ValueError('No tier for seller')
 
     for seller_id, offers in seller_offers.items():
-        active = seller_active_exprs[seller_id]
+        active = seller_active_vars[seller_id]
         inactive_literals = seller_inactive_literals[seller_id]
         total_units = sum(
             offer_vars[offer.offer_id] for offer in offers
-        )  # TODO: ORTOOLS native
+        )
 
-        # When seller stays inactive, every quantity for seller must be zero.
+        # When seller is inactive, every quantity for seller must be zero.
         for offer in offers:
             model.Add(offer_vars[offer.offer_id] == 0).OnlyEnforceIf(inactive_literals)
 
@@ -343,7 +331,7 @@ def _solve_exact_shipping_order(
         model.Add(total_units >= 1).OnlyEnforceIf(active)
 
     # if request.preferences.max_sellers is not None:
-    #     model.Add(sum(seller_active_exprs.values()) <= request.preferences.max_sellers)
+    #     model.Add(sum(seller_active_vars.values()) <= request.preferences.max_sellers)
 
     model.Minimize(sum(objective_terms))
     solver = _new_solver(
