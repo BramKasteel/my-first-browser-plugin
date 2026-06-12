@@ -99,7 +99,7 @@ const MIN_SELLER_DELAY_MS = 250;
 const OPTIMIZER_WARMUP_THROTTLE_MS = 90 * 1000;
 const WANT_LIST_RETRY_DELAY_MS = 2000;
 const DEFAULT_SELLER_COUNTRIES = [];
-const MAX_WANT_LIST_ITEMS = 70;
+const MAX_WANT_LIST_ITEMS = 100;
 const SINGLE_COUNTRY_WANT_LIST_THRESHOLD = 30;
 const MAX_SELLER_COUNTRIES = 2;
 const DEFAULT_OPTIMIZER_API_URL = textOf(window.APP_CONFIG?.optimizerApiUrl);
@@ -253,6 +253,14 @@ function getCurrentSellerFilterState() {
 
 function getLoadedWantItemCount() {
   return Array.isArray(latestExtractedItems) ? latestExtractedItems.length : 0;
+}
+
+function getSellerPagesPerCountry(itemCount = getLoadedWantItemCount()) {
+  const normalizedItemCount = Math.max(0, parseInt(itemCount, 10) || 0);
+  if (normalizedItemCount < 20) return 4;
+  if (normalizedItemCount <= 40) return 3;
+  if (normalizedItemCount <= 60) return 2;
+  return 1;
 }
 
 function buildDistinctWantItemKey(item) {
@@ -1569,6 +1577,7 @@ function describeSellerScope({ sellerCountryIds, sellerTypeId }) {
 async function executeSellerScopeScrape({
   item,
   delayMs,
+  maxSellerPages,
   previewLimit,
   requestContext,
   requestLanguageId,
@@ -1598,6 +1607,7 @@ async function executeSellerScopeScrape({
   let scopeResult = await scrapeSingleWantItemSellers({
     item,
     delay: delayMs,
+    maxSellerPages,
     previewLimit,
     requestFilters,
     requestContext,
@@ -1617,6 +1627,7 @@ async function executeSellerScopeScrape({
     const powerSellerResult = await scrapeSingleWantItemSellers({
       item,
       delay: delayMs,
+      maxSellerPages,
       previewLimit,
       requestFilters: {
         ...requestFilters,
@@ -1642,6 +1653,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
   const sellerReputationId = getCardmarketSellerReputationId(sellerReputationFilterEl.value);
   const maxShippingTimeId = getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value);
   const sellerTypeId = getCardmarketSellerTypeId(sellerTypeFilterEl.value);
+  const maxSellerPages = getSellerPagesPerCountry();
   const baseRequestFilters = {
     languageId: requestLanguageId,
     isFoil: requestIsFoil,
@@ -1685,6 +1697,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
       const scopeResult = await executeSellerScopeScrape({
         item,
         delayMs,
+        maxSellerPages,
         previewLimit: 12,
         requestContext,
         requestLanguageId,
@@ -1721,6 +1734,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
     const baseResult = await scrapeSingleWantItemSellers({
       item,
       delay: delayMs,
+      maxSellerPages,
       previewLimit: 12,
       requestFilters: baseRequestFilters,
       requestContext,
@@ -1746,6 +1760,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
         const scopeResult = await executeSellerScopeScrape({
           item,
           delayMs,
+          maxSellerPages,
           previewLimit: 12,
           requestContext,
           requestLanguageId,
@@ -1775,7 +1790,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
   };
 }
 
-async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {}, maxSellerPages = 20, maxFetchAttempts = 4, jitterRatio, requestContext }) {
+async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {}, maxSellerPages = 4, maxFetchAttempts = 4, jitterRatio, requestContext }) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const effectiveJitterRatio = Number.isFinite(Number(jitterRatio)) ? Number(jitterRatio) : 0.15;
   const applyLocalJitter = (baseMs) => {
@@ -1786,7 +1801,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     return Math.max(0, Math.round(jittered));
   };
   const SELLER_PAGE_SIZE_HINT = 50;
-  const MAX_SELLER_PAGES = Math.max(1, Math.min(20, parseInt(maxSellerPages, 10) || 20));
+  const MAX_SELLER_PAGES = Math.max(1, Math.min(6, parseInt(maxSellerPages, 10) || 4));
   const runtimeContext = requestContext || parseCardmarketRequestContext(item?.productUrl) || {
     origin: 'https://www.cardmarket.com',
     lang: 'en',

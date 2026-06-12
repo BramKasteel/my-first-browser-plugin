@@ -568,10 +568,10 @@ test.describe('Want list scraping flow', () => {
     assertNoExtensionErrors(extensionErrors);
   });
 
-  test('enforces want list size limits for seller countries and blocks lists above 70 distinct items', async ({ page, context, extensionId, extensionErrors }) => {
+  test('enforces want list size limits for seller countries and blocks lists above 100 distinct items', async ({ page, context, extensionId, extensionErrors }) => {
     test.skip(
       !hasWantListSizeLimitConfig(),
-      'Set CARDMARKET_WANTLIST_UNDER_30_NAME/_DISTINCT_COUNT, CARDMARKET_WANTLIST_31_TO_70_NAME/_DISTINCT_COUNT, and CARDMARKET_WANTLIST_OVER_70_NAME/_DISTINCT_COUNT in .env.playwright.local before running this live limit test.',
+      'Set CARDMARKET_WANTLIST_UNDER_30_NAME/_DISTINCT_COUNT, CARDMARKET_WANTLIST_31_TO_100_NAME/_DISTINCT_COUNT, and CARDMARKET_WANTLIST_OVER_100_NAME/_DISTINCT_COUNT in .env.playwright.local before running this live limit test.',
     );
 
     test.setTimeout(300_000);
@@ -617,14 +617,14 @@ test.describe('Want list scraping flow', () => {
     await expect(popupPage.locator('#sellerLocationFilterList')).toBeHidden();
 
     await selectWantListAndWaitForLoad(popupPage, {
-      wantListName: sizeConfig.between31And70.wantListName,
-      expectedDistinctCount: sizeConfig.between31And70.expectedDistinctCount,
+      wantListName: sizeConfig.between31And100.wantListName,
+      expectedDistinctCount: sizeConfig.between31And100.expectedDistinctCount,
     });
 
     snapshot = await readPopupSnapshot(popupPage);
-    expect(snapshot.extractedItems.distinctCount).toBe(sizeConfig.between31And70.expectedDistinctCount);
+    expect(snapshot.extractedItems.distinctCount).toBe(sizeConfig.between31And100.expectedDistinctCount);
     expect(snapshot.wantListConstraints.isBlocked).toBe(false);
-    expect(snapshot.wantListConstraints.distinctItemCount).toBe(sizeConfig.between31And70.expectedDistinctCount);
+    expect(snapshot.wantListConstraints.distinctItemCount).toBe(sizeConfig.between31And100.expectedDistinctCount);
     expect(snapshot.wantListConstraints.maxSellerCountries).toBe(1);
     expect(snapshot.sellerFilters.sellerCountries).toHaveLength(1);
     await expect(popupPage.locator('#confirmWantList')).toBeEnabled();
@@ -650,18 +650,18 @@ test.describe('Want list scraping flow', () => {
     await expect(popupPage.locator('#sellerCountryFilterInput')).toBeDisabled();
 
     await selectWantListAndWaitForLoad(popupPage, {
-      wantListName: sizeConfig.over70.wantListName,
-      expectedDistinctCount: sizeConfig.over70.expectedDistinctCount,
+      wantListName: sizeConfig.over100.wantListName,
+      expectedDistinctCount: sizeConfig.over100.expectedDistinctCount,
     });
 
     snapshot = await readPopupSnapshot(popupPage);
-    expect(snapshot.extractedItems.distinctCount).toBe(sizeConfig.over70.expectedDistinctCount);
+    expect(snapshot.extractedItems.distinctCount).toBe(sizeConfig.over100.expectedDistinctCount);
     expect(snapshot.wantListConstraints.isBlocked).toBe(true);
-    expect(snapshot.wantListConstraints.distinctItemCount).toBe(sizeConfig.over70.expectedDistinctCount);
+    expect(snapshot.wantListConstraints.distinctItemCount).toBe(sizeConfig.over100.expectedDistinctCount);
     expect(snapshot.controls.confirmWantListDisabled).toBe(true);
     expect(snapshot.controls.scrapeAllItemsDisabled).toBe(true);
-    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Seller scrape disabled above 70');
-    await expect(popupPage.locator('#wantListWarning')).toContainText('Seller scrape locked above 70');
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Seller scrape disabled above 100');
+    await expect(popupPage.locator('#wantListWarning')).toContainText('Seller scrape locked above 100');
     await expect(popupPage.locator('[data-workflow-step="sellers"]')).toBeDisabled();
     await expect(popupPage.locator('#confirmWantList')).toBeDisabled();
     await expect(popupPage.locator('#scrapeAllItems')).toBeDisabled();

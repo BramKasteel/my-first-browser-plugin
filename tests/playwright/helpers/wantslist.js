@@ -25,21 +25,33 @@ function hasExpectedWantListConfig() {
 
 function readWantListSizeLimitConfig() {
   const under30DistinctCount = Number.parseInt(String(process.env.CARDMARKET_WANTLIST_UNDER_30_DISTINCT_COUNT || process.env.CARDMARKET_WANTLIST_UNDER_30_COUNT || ''), 10);
-  const between31And70DistinctCount = Number.parseInt(String(process.env.CARDMARKET_WANTLIST_31_TO_70_DISTINCT_COUNT || process.env.CARDMARKET_WANTLIST_31_TO_70_COUNT || ''), 10);
-  const over70DistinctCount = Number.parseInt(String(process.env.CARDMARKET_WANTLIST_OVER_70_DISTINCT_COUNT || process.env.CARDMARKET_WANTLIST_OVER_70_COUNT || ''), 10);
+  const between31And100DistinctCount = Number.parseInt(String(
+    process.env.CARDMARKET_WANTLIST_31_TO_100_DISTINCT_COUNT
+    || process.env.CARDMARKET_WANTLIST_31_TO_100_COUNT
+    || process.env.CARDMARKET_WANTLIST_31_TO_70_DISTINCT_COUNT
+    || process.env.CARDMARKET_WANTLIST_31_TO_70_COUNT
+    || ''
+  ), 10);
+  const over100DistinctCount = Number.parseInt(String(
+    process.env.CARDMARKET_WANTLIST_OVER_100_DISTINCT_COUNT
+    || process.env.CARDMARKET_WANTLIST_OVER_100_COUNT
+    || process.env.CARDMARKET_WANTLIST_OVER_70_DISTINCT_COUNT
+    || process.env.CARDMARKET_WANTLIST_OVER_70_COUNT
+    || ''
+  ), 10);
 
   return {
     under30: {
       wantListName: normalizeName(process.env.CARDMARKET_WANTLIST_UNDER_30_NAME || ''),
       expectedDistinctCount: Number.isFinite(under30DistinctCount) ? under30DistinctCount : 0,
     },
-    between31And70: {
-      wantListName: normalizeName(process.env.CARDMARKET_WANTLIST_31_TO_70_NAME || ''),
-      expectedDistinctCount: Number.isFinite(between31And70DistinctCount) ? between31And70DistinctCount : 0,
+    between31And100: {
+      wantListName: normalizeName(process.env.CARDMARKET_WANTLIST_31_TO_100_NAME || process.env.CARDMARKET_WANTLIST_31_TO_70_NAME || ''),
+      expectedDistinctCount: Number.isFinite(between31And100DistinctCount) ? between31And100DistinctCount : 0,
     },
-    over70: {
-      wantListName: normalizeName(process.env.CARDMARKET_WANTLIST_OVER_70_NAME || ''),
-      expectedDistinctCount: Number.isFinite(over70DistinctCount) ? over70DistinctCount : 0,
+    over100: {
+      wantListName: normalizeName(process.env.CARDMARKET_WANTLIST_OVER_100_NAME || process.env.CARDMARKET_WANTLIST_OVER_70_NAME || ''),
+      expectedDistinctCount: Number.isFinite(over100DistinctCount) ? over100DistinctCount : 0,
     },
   };
 }
@@ -49,11 +61,11 @@ function hasWantListSizeLimitConfig() {
   return !!config.under30.wantListName
     && config.under30.expectedDistinctCount > 0
     && config.under30.expectedDistinctCount < 30
-    && !!config.between31And70.wantListName
-    && config.between31And70.expectedDistinctCount > 30
-    && config.between31And70.expectedDistinctCount <= 70
-    && !!config.over70.wantListName
-    && config.over70.expectedDistinctCount > 70;
+    && !!config.between31And100.wantListName
+    && config.between31And100.expectedDistinctCount > 30
+    && config.between31And100.expectedDistinctCount <= 100
+    && !!config.over100.wantListName
+    && config.over100.expectedDistinctCount > 100;
 }
 
 function assertWantListSizeLimitConfig() {
@@ -63,12 +75,12 @@ function assertWantListSizeLimitConfig() {
     throw new Error('Set CARDMARKET_WANTLIST_UNDER_30_NAME and CARDMARKET_WANTLIST_UNDER_30_DISTINCT_COUNT (<30) in .env.playwright.local.');
   }
 
-  if (!config.between31And70.wantListName || config.between31And70.expectedDistinctCount <= 30 || config.between31And70.expectedDistinctCount > 70) {
-    throw new Error('Set CARDMARKET_WANTLIST_31_TO_70_NAME and CARDMARKET_WANTLIST_31_TO_70_DISTINCT_COUNT (31-70) in .env.playwright.local.');
+  if (!config.between31And100.wantListName || config.between31And100.expectedDistinctCount <= 30 || config.between31And100.expectedDistinctCount > 100) {
+    throw new Error('Set CARDMARKET_WANTLIST_31_TO_100_NAME and CARDMARKET_WANTLIST_31_TO_100_DISTINCT_COUNT (31-100) in .env.playwright.local.');
   }
 
-  if (!config.over70.wantListName || config.over70.expectedDistinctCount <= 70) {
-    throw new Error('Set CARDMARKET_WANTLIST_OVER_70_NAME and CARDMARKET_WANTLIST_OVER_70_DISTINCT_COUNT (>70) in .env.playwright.local.');
+  if (!config.over100.wantListName || config.over100.expectedDistinctCount <= 100) {
+    throw new Error('Set CARDMARKET_WANTLIST_OVER_100_NAME and CARDMARKET_WANTLIST_OVER_100_DISTINCT_COUNT (>100) in .env.playwright.local.');
   }
 
   return config;
