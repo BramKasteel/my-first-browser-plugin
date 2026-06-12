@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -52,11 +53,14 @@ def _new_solver(
     cp_model,
     *,
     max_time_seconds: float | None,
+    random_seed: int | None = None,
     log_callback: Callable[[str], None] | None = None,
 ):
     solver = cp_model.CpSolver()
     if max_time_seconds is not None:
         solver.parameters.max_time_in_seconds = max_time_seconds
+    if random_seed is not None:
+        solver.parameters.random_seed = random_seed
     solver.parameters.absolute_gap_limit = SOLVER_ABSOLUTE_GAP_LIMIT
     solver.parameters.num_search_workers = SOLVER_NUM_SEARCH_WORKERS
     solver.parameters.log_search_progress = True
@@ -204,6 +208,7 @@ def _solve_exact_shipping_order(
     item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
     route_book: shipping.ShippingRouteBook,
+    solver_random_seed: int | None = None,
     solver_log_callback: Callable[[str], None] | None = None,
 ) -> tuple[str, dict[str, int]] | None:
     model = cp_model.CpModel()
@@ -337,6 +342,7 @@ def _solve_exact_shipping_order(
     solver = _new_solver(
         cp_model,
         max_time_seconds=MAX_TIME_SECONDS,
+        random_seed=solver_random_seed,
         log_callback=solver_log_callback,
     )
     status = solver.Solve(model)
@@ -524,6 +530,7 @@ def prune_all(request: OptimizationRequest):
 def optimize_order(
     request: OptimizationRequest,
     *,
+    solver_random_seed: int | None = None,
     solver_log_callback: Callable[[str], None] | None = None,
 ) -> OptimizationResponse:
     usable_offers = prune_all(request)
@@ -559,6 +566,7 @@ def optimize_order(
         item_map=item_map,
         seller_map=seller_map,
         route_book=route_book,
+        solver_random_seed=solver_random_seed,
         solver_log_callback=solver_log_callback,
     )
     if solution is None:
@@ -790,14 +798,17 @@ def _run_big_list_debug_solve() -> Path:
 
     payload = json.loads(fixture_path.read_text(encoding="utf-8"))
     request = OptimizationRequest.model_validate(payload)
+    solver_random_seed = random.randint(1, 2_147_483_647)
     analysis_lines: list[str] = []
 
     with log_path.open("w", encoding="utf-8") as log_file:
         log_file.write(f"fixture: {fixture_path}\n")
         log_file.write(f"timestamp: {datetime.now().isoformat(timespec='seconds')}\n\n")
+        log_file.write(f"solver_random_seed: {solver_random_seed}\n\n")
 
         response = optimize_order(
             request,
+            solver_random_seed=solver_random_seed,
             solver_log_callback=_make_file_log_callback(log_file),
         )
 
@@ -814,6 +825,7 @@ def _run_big_list_debug_solve() -> Path:
             log_file.write("No bought-item rank analysis available.\n")
 
     print(f"Solver log written to {log_path}")
+    print(f"Solver random seed: {solver_random_seed}")
     print(
         "Result:",
         response.status,
