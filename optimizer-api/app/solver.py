@@ -253,6 +253,17 @@ def _solve_exact_shipping_order(
             )
             == item.quantity
         )
+        model.Add(
+            sum(
+                seller_active_vars[seller_id]
+                for seller_id in {
+                    offer.seller_id
+                    for offer in usable_offers
+                    if offer.item_id == item.item_id
+                }
+            )
+            >= 1
+        )
 
     objective_terms = [
         offer.unit_price_cents * offer_vars[offer.offer_id] for offer in usable_offers
