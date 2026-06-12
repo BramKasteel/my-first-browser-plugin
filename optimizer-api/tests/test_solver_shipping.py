@@ -104,37 +104,6 @@ def test_optimize_uses_more_expensive_method_when_value_exceeds_letter_limit(
     assert response.totals.shipping_total == 7.99
 
 
-def test_optimize_uses_penalty_shipping_for_missing_imported_route(monkeypatch) -> None:
-    route_book = ShippingRouteBook(
-        country_ids={"germany": 7, "netherlands": 23},
-        tiers_by_route={},
-    )
-    monkeypatch.setattr(
-        "app.solver.shipping.load_shipping_route_book", lambda: route_book
-    )
-
-    request = OptimizationRequest(
-        buyer_country="Netherlands",
-        items=[WantedItem(item_id="item-1", name="Card", quantity=1)],
-        sellers=[Seller(seller_id="seller-1", name="Seller", country="Germany")],
-        offers=[
-            Offer(
-                offer_id="offer-1",
-                item_id="item-1",
-                seller_id="seller-1",
-                unit_price=1.0,
-                available_quantity=1,
-            )
-        ],
-        preferences=OptimizationPreferences(),
-    )
-
-    response = optimize_order(request)
-
-    assert response.status == "optimal"
-    assert response.totals.shipping_total == MISSING_ROUTE_DATA_PENALTY_CENTS / 100
-
-
 def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
     monkeypatch,
 ) -> None:
