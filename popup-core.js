@@ -1802,6 +1802,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
   };
   const SELLER_PAGE_SIZE_HINT = 50;
   const MAX_SELLER_PAGES = Math.max(1, Math.min(6, parseInt(maxSellerPages, 10) || 4));
+  const MAX_SELLER_ROWS = Math.max(SELLER_PAGE_SIZE_HINT, MAX_SELLER_PAGES * SELLER_PAGE_SIZE_HINT);
   const runtimeContext = requestContext || parseCardmarketRequestContext(item?.productUrl) || {
     origin: 'https://www.cardmarket.com',
     lang: 'en',
@@ -1867,18 +1868,21 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
         : null;
 
       let addedThisPage = 0;
-      rowEls.forEach((el) => {
+      for (const el of rowEls) {
+        if (sellers.length >= MAX_SELLER_ROWS) break;
         const seller = parseSellerRow(el);
-        if (seller.buyBlocked) return;
-        if (!seller.articleId || seen.has(seller.articleId)) return;
+        if (seller.buyBlocked) continue;
+        if (!seller.articleId || seen.has(seller.articleId)) continue;
         seen.add(seller.articleId);
         sellers.push(seller);
         addedThisPage += 1;
-      });
+      }
 
       pagesFetched += 1;
       pageResolved = true;
-      if (!addedThisPage) {
+      if (sellers.length >= MAX_SELLER_ROWS) {
+        page = 999;
+      } else if (!addedThisPage) {
         page = 999;
       } else {
         page += 1;
