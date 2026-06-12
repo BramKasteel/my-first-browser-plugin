@@ -90,6 +90,7 @@ let lastOptimizerWarmupAt = 0;
 let wantListRetryTimer = null;
 let sellerRequestDelayMs = 250;
 const sellerExpansionFilterCache = new Map();
+const sellerPageHtmlCache = new Map();
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
@@ -1384,21 +1385,12 @@ function matchExpansionIds(requestedExpansionNames, availableExpansionFilters) {
 async function fetchAvailableExpansionFiltersForItem({ item, requestContext, requestFilters = {} }) {
   const runtimeContext = requestContext || parseCardmarketRequestContext(item?.productUrl);
   if (!runtimeContext) return { options: [], rateLimited: false };
+  if (!item?.productUrl) return { options: [], rateLimited: false };
 
   const sanitizedFilters = { ...requestFilters };
   delete sanitizedFilters.expansionIds;
 
-  const candidateUrls = [];
-  if (item?.productUrl) {
-    candidateUrls.push(buildSellerRequestUrl(item.productUrl, sanitizedFilters, runtimeContext.origin));
-  }
-  if (textOf(item?.idProduct)) {
-    candidateUrls.push(buildSellerRequestUrl(
-      `/${runtimeContext.lang}/${runtimeContext.game}/Stock/Offers/Singles?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`,
-      sanitizedFilters,
-      runtimeContext.origin,
-    ));
-  }
+  const candidateUrls = [buildSellerRequestUrl(item.productUrl, sanitizedFilters, runtimeContext.origin)];
 
   const seenUrls = new Set();
   for (const candidateUrl of candidateUrls) {
@@ -1411,6 +1403,9 @@ async function fetchAvailableExpansionFiltersForItem({ item, requestContext, req
       }
       if (!response.ok) continue;
       const html = await response.text();
+      if (!/cf-mitigated|cf-chl-bypass|Just a moment|Checking your browser|cf-browser-verification|Cloudflare Ray ID/i.test(html)) {
+        sellerPageHtmlCache.set(candidateUrl, html);
+      }
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const options = inspectAvailableExpansionFiltersInDocument(doc);
       if (options.length) {
@@ -1709,18 +1704,6 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
         logPowerSellerFallback: logPartitionRetry,
         onScopeStart,
       });
-    if (!cleaned) return '';
-    cleaned = cleaned
-      .replace(/\bView\s*\/??\s*Edit\s*List\b.*$/i, '')
-      .replace(/\bView\b.*$/i, '')
-      .replace(/\bEdit\s*List\b.*$/i, '')
-      .replace(/\s+Wants\s*\(\d+\s*cards?\)\s*$/i, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (normalizedId) {
-      cleaned = cleaned.replace(new RegExp(`\\b${normalizedId}\\b`, 'g'), '').replace(/\s+/g, ' ').trim();
-    }
-    return cleaned;
       if (scopeResult) {
         scopeResult.partitionLabel = scope.label;
         partitionResults.push(scopeResult);
@@ -1791,6 +1774,20 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
 }
 
 async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {}, maxSellerPages = 4, maxFetchAttempts = 4, jitterRatio, requestContext }) {
+  if (!item?.productUrl) {
+    return {
+      error: 'Missing Cardmarket product URL for seller scrape. Re-extract want items from the Cardmarket want list and try again.',
+      item,
+      sellers: [],
+      totalSellers: 0,
+      pagesFetched: 0,
+      marketPath: '',
+      attemptedUrls: [],
+      debugSnippet: '',
+      rateLimited: false,
+    };
+  }
+
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const effectiveJitterRatio = Number.isFinite(Number(jitterRatio)) ? Number(jitterRatio) : 0.15;
   const applyLocalJitter = (baseMs) => {
@@ -1919,22 +1916,8 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
   };
 
   function buildInitialBaseCandidates() {
-    const candidates = [];
-    const productIdUrl = buildSellerRequestUrl(
-      `${marketPath}?${new URLSearchParams({ idProduct: String(item.idProduct), sortBy: 'name_asc' }).toString()}`,
-      requestFilters,
-      origin,
-    );
-    candidates.push({
-      url: productIdUrl,
-      currentRequest: { url: productIdUrl, method: 'GET' },
-      label: 'stockOffersByProductId',
-    });
-    if (item.productUrl) {
-      const productUrl = buildSellerRequestUrl(item.productUrl, requestFilters, origin);
-      candidates.push({ url: productUrl, currentRequest: { url: productUrl, method: 'GET' }, label: 'productUrl' });
-    }
-    return candidates;
+    const productUrl = buildSellerRequestUrl(item.productUrl, requestFilters, origin);
+    return [{ url: productUrl, currentRequest: { url: productUrl, method: 'GET' }, label: 'productUrl' }];
   }
 
   function mergeCandidates(existing, discovered) {
@@ -2169,6 +2152,21 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
   }
 
   async function fetchWithRetry(request) {
+    if ((request.method || 'GET').toUpperCase() === 'GET' && sellerPageHtmlCache.has(request.url)) {
+      const html = sellerPageHtmlCache.get(request.url) || '';
+      sellerPageHtmlCache.delete(request.url);
+      if (/cf-mitigated|cf-chl-bypass|Just a moment|Checking your browser|cf-browser-verification|Cloudflare Ray ID/i.test(html)) {
+        rateLimited = true;
+        return { error: 'Cardmarket returned a Cloudflare challenge page.' };
+      }
+      const ajaxMeta = parseAjaxResponseMeta(html);
+      if (ajaxMeta) {
+        const rowsHtml = ajaxMeta.rowsHtml || '<div></div>';
+        return { html: rowsHtml, doc: new DOMParser().parseFromString(rowsHtml, 'text/html'), ajaxMeta };
+      }
+      return { html, doc: new DOMParser().parseFromString(html, 'text/html'), ajaxMeta: null };
+    }
+
     let res = null;
     for (let attempt = 0; attempt < Math.max(1, parseInt(maxFetchAttempts, 10) || 1); attempt += 1) {
       try {
