@@ -259,7 +259,6 @@ def _solve_exact_shipping_order(
     ]
 
     seller_shipping_tier_choice_vars = {}
-    seller_inactive_literals = {}
 
     for seller_id, offers in seller_offers.items():
         active = seller_active_vars[seller_id]
@@ -270,10 +269,12 @@ def _solve_exact_shipping_order(
                 offer.unit_price_cents * offer_vars[offer.offer_id] for offer in offers
             )
             total_units = sum(offer_vars[offer.offer_id] for offer in offers)
+            unit_upper_bound = seller_unit_upper_bounds[seller_id]
 
             if len(tier_candidates) == 1:
                 tier = tier_candidates[0]
-                seller_inactive_literals[seller_id] = [active.Not()]
+                model.Add(total_units <= unit_upper_bound * active)
+                model.Add(total_units >= active)
                 model.Add(total_value_expr <= tier.max_value_cents).OnlyEnforceIf(
                     active
                 )
@@ -299,7 +300,8 @@ def _solve_exact_shipping_order(
                 tier_var for _, tier_var in seller_shipping_tier_choice_vars[seller_id]
             )
             model.Add(active_tier_count == active)
-            seller_inactive_literals[seller_id] = [active.Not()]
+            model.Add(total_units <= unit_upper_bound * active)
+            model.Add(total_units >= active)
 
             objective_terms.append(
                 sum(
@@ -310,25 +312,6 @@ def _solve_exact_shipping_order(
             continue
 
         raise ValueError('No tier for seller')
-
-    for seller_id, offers in seller_offers.items():
-        active = seller_active_vars[seller_id]
-        inactive_literals = seller_inactive_literals[seller_id]
-        total_units = sum(
-            offer_vars[offer.offer_id] for offer in offers
-        )
-
-        # When seller is inactive, every quantity for seller must be zero.
-        for offer in offers:
-            model.Add(offer_vars[offer.offer_id] == 0).OnlyEnforceIf(inactive_literals)
-
-        # Any active seller choice must buy at least one unit.
-        if seller_id in seller_shipping_tier_choice_vars:
-            for _, tier_var in seller_shipping_tier_choice_vars[seller_id]:
-                model.Add(total_units >= 1).OnlyEnforceIf(tier_var)
-            continue
-
-        model.Add(total_units >= 1).OnlyEnforceIf(active)
 
     # if request.preferences.max_sellers is not None:
     #     model.Add(sum(seller_active_vars.values()) <= request.preferences.max_sellers)
