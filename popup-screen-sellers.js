@@ -593,7 +593,7 @@ async function executeSellerScopeScrape({
   return scopeResult || null;
 }
 
-async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPartitionRetry, onScopeStart }) {
+async function scrapeWantItemSellerData({ requestContext, item, delayMs, onScopeStart }) {
   await ensureSellerScrapeNotCoolingDown();
 
   const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(item));
@@ -651,10 +651,6 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
       availableSellerFilters: preferredResult.availableSellerFilters,
     });
     if (bargainCountryIds.length) {
-      if (logPartitionRetry) {
-        const bargainCountryNames = bargainCountryIds.map((countryId) => getCountryNameById(countryId) || `country:${countryId}`);
-        appendStatus(`Checking bargains in other countries: ${bargainCountryNames.join(', ')}.`, 'good');
-      }
       const bargainResult = await executeSellerScopeScrape({
         item,
         delayMs,
@@ -682,6 +678,144 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
   }
 
   return { filteredResult: result };
+}
+
+function parseSellerRow(el) {
+  const row = {};
+  const idMatch = (el.id || '').match(/articleRow(\d+)/);
+  row.articleId = idMatch ? idMatch[1] : '';
+  const actionButton = el.querySelector('.btn.btn-grey, .btn[title], .btn[aria-label], button[title], button[aria-label]');
+  const actionTitle = textOf(actionButton?.getAttribute('title') || actionButton?.getAttribute('aria-label') || '');
+  row.buyBlockedReason = actionTitle;
+  row.buyBlocked = /you cannot buy the offered item|does not ship to your country|blacklist/i.test(actionTitle)
+    || actionButton?.classList?.contains('btn-grey')
+    || false;
+
+  const sellerColumn = el.querySelector('.col-seller') || el;
+  const sellerLink = sellerColumn.querySelector('a[href*="/Users/"]') || el.querySelector('a[href*="/Users/"]');
+  row.sellerName = textOf(sellerLink?.textContent);
+  row.sellerUrl = sellerLink?.getAttribute('href')
+    ? (sellerLink.getAttribute('href').startsWith('http') ? sellerLink.getAttribute('href') : `https://www.cardmarket.com${sellerLink.getAttribute('href')}`)
+    : '';
+  row.location = extractSellerLocation(sellerColumn, row.sellerName);
+  row.condition = textOf(el.querySelector('.article-condition .badge, .article-condition')?.textContent);
+
+  const expansionLink = el.querySelector('a[href*="/Expansions/"]');
+  row.expansionName = textOf(
+    expansionLink?.getAttribute('aria-label')
+    || expansionLink?.getAttribute('title')
+    || expansionLink?.textContent
+    || ''
+  );
+
+  const languageNode = [...el.querySelectorAll('span[aria-label], span[data-bs-original-title], span[data-original-title], span[title]')]
+    .find((node) => /^(Deutsch|Englisch|Französisch|Italienisch|Spanisch|Portugiesisch|Japanisch|Koreanisch|Chinesisch|Russisch|S-Chinesisch|T-Chinesisch|English|German|French|Italian|Spanish|Portuguese|Japanese|Korean|Chinese|Russian)$/
+      .test(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || ''));
+  row.language = textOf(
+    languageNode?.getAttribute('aria-label')
+    || languageNode?.getAttribute('data-bs-original-title')
+    || languageNode?.getAttribute('data-original-title')
+    || languageNode?.getAttribute('title')
+  );
+
+  const priceNode = el.querySelector('.col-offer .price-container .color-primary, .col-offer .color-primary, .mobile-offer-container .color-primary');
+  let price = textOf(priceNode?.textContent).replace(/\s*€\s*$/, '');
+  if (!price) {
+    el.querySelectorAll('.color-primary').forEach((node) => {
+      if (price || node.children.length > 0) return;
+      const match = textOf(node.textContent).match(/^(\d{1,3}(?:\.\d{3})*,\d{2})\s*€?$/);
+      if (match) price = match[1];
+    });
+  }
+  row.price = price;
+
+  let displayCount = '';
+  el.querySelectorAll('.item-count').forEach((node) => {
+    if (displayCount) return;
+    const countText = textOf(node.textContent);
+    if (/^\d+$/.test(countText)) displayCount = countText;
+  });
+  row.amount = el.querySelector('input.amount-input, input[name^="groupCountAmount"]')?.getAttribute('max') || displayCount || '';
+  row.reverse = /Reverse\s*Holo/i.test(el.textContent || '');
+  return row;
+}
+
+function extractSellerLocation(sellerColumn, sellerName) {
+  const explicitLocationNode = sellerColumn.querySelector('[aria-label^="Item location:" i], [data-bs-original-title^="Item location:" i], [data-original-title^="Item location:" i], [title^="Item location:" i]');
+  if (explicitLocationNode) {
+    const explicitLabel = textOf(
+      explicitLocationNode.getAttribute('aria-label')
+      || explicitLocationNode.getAttribute('data-bs-original-title')
+      || explicitLocationNode.getAttribute('data-original-title')
+      || explicitLocationNode.getAttribute('title')
+      || ''
+    );
+    const explicitCountry = extractCountryFromLabel(explicitLabel, { allowShortCodes: true });
+    if (explicitCountry) return explicitCountry;
+  }
+
+  const candidateNodes = [...sellerColumn.querySelectorAll('[class*="flag" i], [class*="country" i], img[alt], [aria-label], [data-bs-original-title], [data-original-title], [title]')];
+  for (const node of candidateNodes) {
+    const label = textOf(
+      node.getAttribute('aria-label')
+      || node.getAttribute('data-bs-original-title')
+      || node.getAttribute('data-original-title')
+      || node.getAttribute('title')
+      || node.getAttribute('alt')
+      || ''
+    );
+    if (!label) continue;
+    if (sellerName && label === sellerName) continue;
+    if (/seller|user|account|profile|outstanding|very good|good|professional|private|powerseller/i.test(label)) continue;
+
+    const country = extractCountryFromLabel(label, {
+      allowShortCodes: /item\s+location|ships?\s+from|country/i.test(label) || isLikelyCountryIndicatorNode(node),
+    });
+    if (country) return country;
+  }
+
+  return '';
+}
+
+function isLikelyCountryIndicatorNode(node) {
+  if (!node || typeof node.matches !== 'function') return false;
+  if (node.matches('[class*="flag" i], [class*="country" i], img[alt], [data-country], [data-country-name]')) return true;
+  return !!node.closest?.('[class*="flag" i], [class*="country" i], [data-country], [data-country-name]');
+}
+
+function extractCountryFromLabel(label, { allowShortCodes = false } = {}) {
+  const itemLocationMatch = textOf(label).match(/item\s+location\s*:\s*(.+)$/i);
+  if (itemLocationMatch) {
+    const explicitMatch = normalizeCountryNameLocal(itemLocationMatch[1], { allowShortCodes: true });
+    if (explicitMatch) return explicitMatch;
+  }
+
+  const directMatch = normalizeCountryNameLocal(label, { allowShortCodes });
+  if (directMatch) return directMatch;
+
+  const stripped = textOf(label)
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[():|]/g, ' ')
+    .replace(/ships?\s+from/gi, ' ')
+    .replace(/item\s+location/gi, ' ')
+    .replace(/country/gi, ' ');
+  const words = stripped.split(/\s+/).filter(Boolean);
+  for (let size = Math.min(3, words.length); size >= 1; size -= 1) {
+    for (let index = 0; index <= words.length - size; index += 1) {
+      const chunk = words.slice(index, index + size).join(' ');
+      const country = normalizeCountryNameLocal(chunk, { allowShortCodes });
+      if (country) return country;
+    }
+  }
+
+  return '';
+}
+
+function normalizeCountryNameLocal(value, { allowShortCodes = false } = {}) {
+  const normalized = textOf(value).toLowerCase();
+  if (!normalized) return '';
+  if (!allowShortCodes && /^[a-z]{2}$/i.test(normalized)) return '';
+  return normalizeCountryName(normalized);
 }
 
 async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestFilters = {}, maxSellerPages = 4, maxFetchAttempts = 4, jitterRatio, requestContext }) {
@@ -1175,101 +1309,6 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     return urls;
   }
 
-  function parseSellerRow(el) {
-    const row = {};
-    const idMatch = (el.id || '').match(/articleRow(\d+)/);
-    row.articleId = idMatch ? idMatch[1] : '';
-    const actionButton = el.querySelector('.btn.btn-grey, .btn[title], .btn[aria-label], button[title], button[aria-label]');
-    const actionTitle = textOf(actionButton?.getAttribute('title') || actionButton?.getAttribute('aria-label') || '');
-    row.buyBlockedReason = actionTitle;
-    row.buyBlocked = /you cannot buy the offered item|does not ship to your country|blacklist/i.test(actionTitle) || actionButton?.classList?.contains('btn-grey') || false;
-    const sellerColumn = el.querySelector('.col-seller') || el;
-    const sellerLink = sellerColumn.querySelector('a[href*="/Users/"]') || el.querySelector('a[href*="/Users/"]');
-    row.sellerName = textOf(sellerLink?.textContent);
-    row.sellerUrl = sellerLink?.getAttribute('href') ? (sellerLink.getAttribute('href').startsWith('http') ? sellerLink.getAttribute('href') : `https://www.cardmarket.com${sellerLink.getAttribute('href')}`) : '';
-    row.location = extractSellerLocation(sellerColumn, row.sellerName);
-    row.condition = textOf(el.querySelector('.article-condition .badge, .article-condition')?.textContent);
-    const expansionLink = el.querySelector('a[href*="/Expansions/"]');
-    row.expansionName = textOf(expansionLink?.getAttribute('aria-label') || expansionLink?.getAttribute('title') || expansionLink?.textContent || '');
-    const languageNode = [...el.querySelectorAll('span[aria-label], span[data-bs-original-title], span[data-original-title], span[title]')]
-      .find((node) => /^(Deutsch|Englisch|Französisch|Italienisch|Spanisch|Portugiesisch|Japanisch|Koreanisch|Chinesisch|Russisch|S-Chinesisch|T-Chinesisch|English|German|French|Italian|Spanish|Portuguese|Japanese|Korean|Chinese|Russian)$/.test(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || ''));
-    row.language = textOf(languageNode?.getAttribute('aria-label') || languageNode?.getAttribute('data-bs-original-title') || languageNode?.getAttribute('data-original-title') || languageNode?.getAttribute('title'));
-    const priceNode = el.querySelector('.col-offer .price-container .color-primary, .col-offer .color-primary, .mobile-offer-container .color-primary');
-    let price = textOf(priceNode?.textContent).replace(/\s*€\s*$/, '');
-    if (!price) {
-      el.querySelectorAll('.color-primary').forEach((node) => {
-        if (price || node.children.length > 0) return;
-        const match = textOf(node.textContent).match(/^(\d{1,3}(?:\.\d{3})*,\d{2})\s*€?$/);
-        if (match) price = match[1];
-      });
-    }
-    row.price = price;
-    let displayCount = '';
-    el.querySelectorAll('.item-count').forEach((node) => {
-      if (displayCount) return;
-      const countText = textOf(node.textContent);
-      if (/^\d+$/.test(countText)) displayCount = countText;
-    });
-    row.amount = el.querySelector('input.amount-input, input[name^="groupCountAmount"]')?.getAttribute('max') || displayCount || '';
-    row.reverse = /Reverse\s*Holo/i.test(el.textContent || '');
-    return row;
-  }
-
-  function extractSellerLocation(sellerColumn, sellerName) {
-    const explicitLocationNode = sellerColumn.querySelector('[aria-label^="Item location:" i], [data-bs-original-title^="Item location:" i], [data-original-title^="Item location:" i], [title^="Item location:" i]');
-    if (explicitLocationNode) {
-      const explicitLabel = textOf(explicitLocationNode.getAttribute('aria-label') || explicitLocationNode.getAttribute('data-bs-original-title') || explicitLocationNode.getAttribute('data-original-title') || explicitLocationNode.getAttribute('title') || '');
-      const explicitCountry = extractCountryFromLabel(explicitLabel, { allowShortCodes: true });
-      if (explicitCountry) return explicitCountry;
-    }
-    const candidateNodes = [...sellerColumn.querySelectorAll('[class*="flag" i], [class*="country" i], img[alt], [aria-label], [data-bs-original-title], [data-original-title], [title]')];
-    for (const node of candidateNodes) {
-      const label = textOf(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || node.getAttribute('alt') || '');
-      if (!label) continue;
-      if (sellerName && label === sellerName) continue;
-      if (/seller|user|account|profile|outstanding|very good|good|professional|private|powerseller/i.test(label)) continue;
-      const country = extractCountryFromLabel(label, { allowShortCodes: /item\s+location|ships?\s+from|country/i.test(label) || isLikelyCountryIndicatorNode(node) });
-      if (country) return country;
-    }
-    return '';
-  }
-
-  function isLikelyCountryIndicatorNode(node) {
-    if (!node || typeof node.matches !== 'function') return false;
-    if (node.matches('[class*="flag" i], [class*="country" i], img[alt], [data-country], [data-country-name]')) return true;
-    return !!node.closest?.('[class*="flag" i], [class*="country" i], [data-country], [data-country-name]');
-  }
-
-  function extractCountryFromLabel(label, { allowShortCodes = false } = {}) {
-    const itemLocationMatch = textOf(label).match(/item\s+location\s*:\s*(.+)$/i);
-    if (itemLocationMatch) {
-      const explicitMatch = normalizeCountryNameLocal(itemLocationMatch[1], { allowShortCodes: true });
-      if (explicitMatch) return explicitMatch;
-    }
-    const directMatch = normalizeCountryNameLocal(label, { allowShortCodes });
-    if (directMatch) return directMatch;
-    const stripped = textOf(label).replace(/<[^>]+>/g, ' ').replace(/[():|]/g, ' ').replace(/ships?\s+from/gi, ' ').replace(/item\s+location/gi, ' ').replace(/country/gi, ' ');
-    const words = stripped.split(/\s+/).filter(Boolean);
-    for (let size = Math.min(3, words.length); size >= 1; size -= 1) {
-      for (let index = 0; index <= words.length - size; index += 1) {
-        const chunk = words.slice(index, index + size).join(' ');
-        const country = normalizeCountryNameLocal(chunk, { allowShortCodes });
-        if (country) return country;
-      }
-    }
-    return '';
-  }
-
-  function normalizeCountryNameLocal(value, { allowShortCodes = false } = {}) {
-    const normalized = textOf(value).toLowerCase();
-    if (!normalized) return '';
-    if (!allowShortCodes && /^[a-z]{2}$/i.test(normalized)) return '';
-    return normalizeCountryName(normalized);
-  }
-
-  function textOf(value) {
-    return String(value || '').trim().replace(/\s+/g, ' ');
-  }
 }
 
 async function handleScrapeAllItems() {
@@ -1367,7 +1406,6 @@ async function handleScrapeAllItems() {
           requestContext,
           item,
           delayMs,
-          logPartitionRetry: false,
           onScopeStart: ({ partitionLabel, sellerCountryIds }) => {
             const scopeName = partitionLabel
               || (sellerCountryIds?.length === 1 ? getCountryNameById(sellerCountryIds[0]) : '')
