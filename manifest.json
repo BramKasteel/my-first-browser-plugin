@@ -5,6 +5,7 @@
   "description": "Order you wanted cards for the lowest possible price: this plugin computes the optimal order for you.",
   "permissions": ["scripting", "tabs", "storage"],
   "host_permissions": [
+    "https://cardmarket.com/*",
     "https://www.cardmarket.com/*",
     "https://h2ilohl6ll.execute-api.eu-central-1.amazonaws.com/*"
   ],

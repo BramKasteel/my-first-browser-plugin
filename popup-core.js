@@ -848,7 +848,7 @@ function textOf(value) {
 }
 
 function isCardmarketUrl(url = '') {
-  return /^https:\/\/www\.cardmarket\.com\//.test(url);
+  return /^https:\/\/(?:www\.)?cardmarket\.com\//.test(url);
 }
 
 async function queryOpenCardmarketTabs() {
@@ -1396,7 +1396,7 @@ function wantsPageKind(pathname) {
 async function ensureCardmarketTab() {
   const tab = await getTargetTab();
   if (!tab?.id) throw new Error('No active browser tab available.');
-  if (!/https:\/\/www\.cardmarket\.com\//.test(tab.url || '')) {
+  if (!isCardmarketUrl(tab.url || '')) {
     throw new Error('Open a Cardmarket page in the active tab first.');
   }
   return tab;
@@ -1407,7 +1407,7 @@ function parseCardmarketRequestContext(urlValue) {
 
   try {
     const url = new URL(urlValue);
-    if (!/^https:\/\/www\.cardmarket\.com\//.test(url.toString())) {
+    if (!isCardmarketUrl(url.toString())) {
       return null;
     }
 
@@ -1433,7 +1433,7 @@ async function resolveSellerRequestContext(item) {
   throw new Error('Could not determine Cardmarket language and game for seller scrape. Re-extract want items from a Cardmarket want list first.');
 }
 
-function buildSellerRequestUrl(urlValue, activeFilters = {}, originValue = 'https://www.cardmarket.com') {
+function buildSellerRequestUrl(urlValue, activeFilters = {}, originValue = 'https://cardmarket.com') {
   const url = new URL(urlValue, originValue);
   if (activeFilters.expansionIds) {
     url.searchParams.set('idExpansion', activeFilters.expansionIds);
@@ -1915,7 +1915,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
   const MAX_SELLER_PAGES = Math.max(1, Math.min(6, parseInt(maxSellerPages, 10) || 4));
   const MAX_SELLER_ROWS = Math.max(SELLER_PAGE_SIZE_HINT, MAX_SELLER_PAGES * SELLER_PAGE_SIZE_HINT);
   const runtimeContext = requestContext || parseCardmarketRequestContext(item?.productUrl) || {
-    origin: 'https://www.cardmarket.com',
+    origin: 'https://cardmarket.com',
     lang: 'en',
     game: 'Magic',
   };

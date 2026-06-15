@@ -7,7 +7,7 @@ function getStorageArea() {
 }
 
 function isCardmarketUrl(url = '') {
-	return /^https:\/\/www\.cardmarket\.com\//.test(url);
+	return /^https:\/\/(?:www\.)?cardmarket\.com\//.test(url);
 }
 
 function getWorkspaceUrl({ autoStart = '' } = {}) {

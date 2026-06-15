@@ -495,7 +495,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
 
     function normalizeProductUrl(rawHref) {
       if (!rawHref) return '';
-      const absolute = rawHref.startsWith('http') ? rawHref : `https://www.cardmarket.com${rawHref}`;
+      const absolute = rawHref.startsWith('http') ? rawHref : `${location.origin}${rawHref}`;
       const url = new URL(absolute);
       url.search = '';
       url.hash = '';
