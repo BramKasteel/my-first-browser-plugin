@@ -109,7 +109,6 @@ const sellerPageHtmlCache = new Map();
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
 const POST_FILL_STATE_KEY = 'postFillDisabledSellerState';
-const DETACHED_TARGET_TAB_KEY = 'detachedTargetTabId';
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_SELLER_DELAY_MS = 250;
 const MIN_SELLER_DELAY_MS = 250;
@@ -1307,40 +1306,11 @@ async function getTargetTab() {
     try {
       return await chrome.tabs.get(forcedTabId);
     } catch {
-      // Fall through to live Cardmarket tab discovery.
+      return null;
     }
-  }
-
-  try {
-    const storageArea = await getStorageArea();
-    const stored = await storageArea.get(DETACHED_TARGET_TAB_KEY);
-    const storedTabId = Number.isInteger(stored?.[DETACHED_TARGET_TAB_KEY])
-      ? stored[DETACHED_TARGET_TAB_KEY]
-      : null;
-    if (Number.isInteger(storedTabId)) {
-      try {
-        const storedTab = await chrome.tabs.get(storedTabId);
-        if (storedTab?.url && /https:\/\/www\.cardmarket\.com\//.test(storedTab.url)) {
-          return storedTab;
-        }
-      } catch {
-        // Ignore stale stored tab ids and keep falling back.
-      }
-    }
-  } catch {
-    // Ignore storage lookup failures and keep falling back.
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.url && /https:\/\/www\.cardmarket\.com\//.test(tab.url)) {
-    return tab;
-  }
-
-  const cardmarketTabs = await chrome.tabs.query({ url: 'https://www.cardmarket.com/*' });
-  if (cardmarketTabs.length) {
-    return cardmarketTabs[0];
-  }
-
   return tab || null;
 }
 
@@ -1410,21 +1380,22 @@ async function openDetachedPopup({ autoStart = '' } = {}) {
     return;
   }
 
-  const createdWindow = await chrome.windows.create({
+  await chrome.windows.create({
     url: detachedPopupUrl,
     type: 'popup',
     width: 460,
     height: 920,
-    focused: true,
   });
+}
 
-  if (createdWindow?.id) {
-    await chrome.windows.update(createdWindow.id, { focused: true });
-  }
+async function autoDetachDefaultPopup() {
+  if (isDetached) return;
 
-  const createdTabId = createdWindow?.tabs?.[0]?.id;
-  if (createdTabId) {
-    await chrome.tabs.update(createdTabId, { active: true });
+  try {
+    await openDetachedPopup();
+    window.close();
+  } catch (error) {
+    appendStatus(`Could not open dedicated plugin window: ${error.message}`, 'bad');
   }
 }
 
