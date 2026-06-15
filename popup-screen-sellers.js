@@ -221,7 +221,6 @@ async function handleScrapeAllItems() {
   startRun('Scraping seller rows for all extracted want items...');
   setBusy(true);
   try {
-    void warmOptimizerApi(DEFAULT_OPTIMIZER_API_URL, { reason: 'seller scrape start' });
     appendStatus('Starting serial seller scrape for all extracted want items...', 'good');
     if (!latestExtractedItems.length) {
       throw new Error('Extract want items first so the popup has products to scrape.');
@@ -439,9 +438,6 @@ async function handleScrapeAllItems() {
     const optimizerPayload = buildOptimizerPayload(batchPayload);
     renderFrontendPayload(batchPayload);
     renderPayload(optimizerPayload);
-    if (optimizerPayload) {
-      void warmOptimizerApi(DEFAULT_OPTIMIZER_API_URL, { reason: 'seller scrape finished', force: true });
-    }
     setActiveWorkflowStep(optimizerPayload ? 'optimize' : 'sellers', { force: true });
     setActiveResultTab('sellers');
 
