@@ -496,7 +496,6 @@ test.describe('Want list scraping flow', () => {
     if (sellerFilterConfig.maxShippingTime) {
       await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.maxShippingTime);
     }
-    await expect(popupPage.locator('#optimizerInputItems li')).toHaveText(wantListConfig.expectedNames);
 
     optimizerPayload.offers.forEach((offer) => {
       expect(offer.unit_price).toBeGreaterThan(0);

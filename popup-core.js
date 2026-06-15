@@ -56,7 +56,6 @@ const optimizerSettingsBodyEl = document.getElementById('optimizerSettingsBody')
 const optimizerInputContextEl = document.getElementById('optimizerInputContext');
 const optimizerInputMetaEl = document.getElementById('optimizerInputMeta');
 const optimizerInputFiltersEl = document.getElementById('optimizerInputFilters');
-const optimizerInputItemsEl = document.getElementById('optimizerInputItems');
 const buyerCountryFieldEl = document.getElementById('buyerCountryField');
 const mainCartSummaryEl = document.getElementById('mainCartSummary');
 const mainCartSummaryGrandTotalEl = document.getElementById('mainCartSummaryGrandTotal');

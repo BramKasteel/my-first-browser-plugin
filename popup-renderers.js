@@ -19,7 +19,7 @@ function renderFrontendPayload(payload) {
 }
 
 function renderOptimizerInputContext() {
-  if (!optimizerInputContextEl || !optimizerInputMetaEl || !optimizerInputFiltersEl || !optimizerInputItemsEl) {
+  if (!optimizerInputContextEl || !optimizerInputMetaEl || !optimizerInputFiltersEl) {
     return;
   }
 
@@ -28,7 +28,6 @@ function renderOptimizerInputContext() {
     optimizerInputContextEl.hidden = true;
     optimizerInputMetaEl.textContent = 'No seller scrape summary yet.';
     optimizerInputFiltersEl.textContent = '';
-    optimizerInputItemsEl.replaceChildren();
     return;
   }
 
@@ -50,13 +49,6 @@ function renderOptimizerInputContext() {
 
   optimizerInputMetaEl.textContent = `${itemCount} item${itemCount === 1 ? '' : 's'} scraped, ${sellerCount} seller${sellerCount === 1 ? '' : 's'} found.`;
   optimizerInputFiltersEl.textContent = filterParts.join(' | ');
-
-  optimizerInputItemsEl.replaceChildren();
-  context.itemNames.forEach((itemName) => {
-    const itemEl = document.createElement('li');
-    itemEl.textContent = itemName;
-    optimizerInputItemsEl.appendChild(itemEl);
-  });
 }
 
 function renderSummary(rows) {

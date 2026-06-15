@@ -20,15 +20,22 @@
     }
 
     * { box-sizing: border-box; }
+    html {
+      max-height: 100vh;
+      overflow-y: auto;
+    }
+
     body {
       margin: 0;
       width: 420px;
       min-height: 520px;
+      max-height: 100vh;
       font-family: "Trebuchet MS", "Segoe UI", sans-serif;
       background:
         radial-gradient(circle at top right, rgba(217, 119, 6, 0.18), transparent 38%),
         linear-gradient(180deg, #0d1318 0%, var(--bg) 100%);
       color: var(--text);
+      overflow-y: auto;
     }
 
     body.detached {
@@ -1295,7 +1302,6 @@
           <section id="optimizerInputContext" class="step-highlight" hidden>
             <p id="optimizerInputMeta" class="panel-note">No seller scrape summary yet.</p>
             <p id="optimizerInputFilters" class="panel-note"></p>
-            <ul id="optimizerInputItems" class="item-list"></ul>
           </section>
           <label id="buyerCountryField" class="config-label seller-filter-field buyer-country-field" for="buyerCountry">
             <span>Buyer country</span>
