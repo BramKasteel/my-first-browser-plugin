@@ -21,24 +21,26 @@
 
     * { box-sizing: border-box; }
     html {
-      max-height: 100vh;
-      overflow: hidden;
+      height: 100vh;
     }
 
     body {
       margin: 0;
       width: 420px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
       font-family: "Trebuchet MS", "Segoe UI", sans-serif;
       background:
         radial-gradient(circle at top right, rgba(217, 119, 6, 0.18), transparent 38%),
         linear-gradient(180deg, #0d1318 0%, var(--bg) 100%);
       color: var(--text);
-      max-height: 100vh;
       overflow: hidden;
     }
 
     body.detached {
       width: auto;
+      height: auto;
       min-width: 420px;
       min-height: 100vh;
       resize: both;
@@ -46,16 +48,18 @@
     }
 
     main {
+      flex: 1 1 auto;
       padding: 18px;
       display: grid;
       gap: 14px;
-      min-height: 520px;
+      min-height: 0;
       max-height: 100vh;
       overflow-y: auto;
       overscroll-behavior: contain;
     }
 
     body.detached main {
+      flex: 0 0 auto;
       min-height: 100vh;
       max-height: none;
       overflow: visible;
