@@ -151,7 +151,6 @@ async function warmOptimizerApi(endpoint, { reason = '', force = false } = {}) {
   }
 }
 
-async function submitOptimizationRequest(endpoint) {
 async function submitOptimizationRequest(endpoint, { payloadOverride = null } = {}) {
   const requestPayload = payloadOverride || latestExtractPayload;
 
