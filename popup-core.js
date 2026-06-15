@@ -128,10 +128,10 @@ const SELLER_COUNTRY_OPTIONS = [
   'Austria',
   'Belgium',
   'Bulgaria',
-  'Canada',
+  // 'Canada', // No shipping routes in optimizer dataset.
   'Croatia',
   'Cyprus',
-  'Czechia',
+  // 'Czechia', // No shipping routes in optimizer dataset.
   'Denmark',
   'Estonia',
   'Finland',
@@ -323,9 +323,10 @@ function areSameCountries(left = [], right = []) {
 }
 
 function clampSellerCountriesToPolicy(countries, policy = getWantListSelectionPolicy()) {
+  const supportedCountries = new Set(SELLER_COUNTRY_OPTIONS.map((value) => normalizeCountryName(value)));
   const normalizedCountries = [...new Set((countries || [])
     .map((value) => normalizeCountryName(value))
-    .filter(Boolean))];
+    .filter((value) => value && supportedCountries.has(value)))];
   return normalizedCountries.slice(0, Math.min(MAX_SELLER_COUNTRIES, policy.maxSellerCountries));
 }
 
