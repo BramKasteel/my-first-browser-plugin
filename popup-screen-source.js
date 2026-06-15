@@ -339,6 +339,13 @@ async function handleExtractItems() {
       { label: 'Rows parsed', value: String(result.debug.parsedItems || 0) },
     ]);
     latestExtractedItems = result.items;
+    console.debug('[CM Expansion Debug] extracted want items', result.items.slice(0, 20).map((item) => ({
+      productName: item?.productName || '',
+      idProduct: item?.idProduct || '',
+      productUrl: item?.productUrl || '',
+      expansions: Array.isArray(item?.expansions) ? item.expansions : [],
+      languages: Array.isArray(item?.languages) ? item.languages : [],
+    })));
     const wantListPolicy = enforceWantListSelectionPolicy({ persist: true, announce: true });
     syncExtractButton();
     syncSellerScrapeButton();
