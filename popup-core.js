@@ -2198,7 +2198,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
 
   function inspectAvailableSellerFiltersInDocument(doc, currentUrl) {
     const textValue = (value) => String(value || '').trim().replace(/\s+/g, ' ');
-    const relevantFieldPattern = /^(sellerCountry|sellerType|sellerReputation|maxShippingTime|idExpansion|language|minCondition|extra\[.+\]|apply)$/i;
+    const relevantFieldPattern = /^(sellerCountry|sellerType|sellerReputation|maxShippingTime|idExpansion(?:\[.+\])?|language|minCondition|extra\[.+\]|apply)$/i;
     const filterForm = doc.querySelector('form[action*="Product_Filter_FilterMetacard"], form[action*="FilterMetacard"]');
     const nodes = [...doc.querySelectorAll('input[name], select[name], textarea[name]')]
       .filter((node) => relevantFieldPattern.test(node.name || ''));
