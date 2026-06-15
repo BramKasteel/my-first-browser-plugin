@@ -1480,6 +1480,92 @@ function normalizeExpansionFilterLabel(value) {
     .toLowerCase();
 }
 
+function stripExpansionFilterPrefix(value) {
+  return textOf(value).replace(/^(?:expansion|set)\s*[:\-]\s*/i, '').trim();
+}
+
+function stripTrailingExpansionVariantCodes(value) {
+  const tokens = textOf(value).split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) return textOf(value);
+
+  while (tokens.length > 1) {
+    const lastToken = tokens[tokens.length - 1];
+    const previousToken = tokens[tokens.length - 2] || '';
+    const lastIsMixedCode = /^[a-z]*\d[a-z0-9/-]*$/i.test(lastToken) || /^\d+\/\d+$/i.test(lastToken);
+    const previousIsMixedCode = /^[a-z]*\d[a-z0-9/-]*$/i.test(previousToken) || /^\d+\/\d+$/i.test(previousToken);
+    const lastIsNumericCollector = /^\d+$/.test(lastToken) && previousIsMixedCode;
+    if (!lastIsMixedCode && !lastIsNumericCollector) break;
+    tokens.pop();
+  }
+
+  return tokens.join(' ');
+}
+
+function buildExpansionTokenKey(value) {
+  const normalized = normalizeExpansionFilterLabel(value);
+  if (!normalized) return '';
+
+  const tokens = [...new Set(normalized.split(' ').filter(Boolean))];
+  if (!tokens.length) return '';
+  return tokens.sort().join(' ');
+}
+
+function buildExpansionMatchKeys(value) {
+  const baseValue = textOf(value);
+  if (!baseValue) return [];
+
+  const normalizedKeys = [];
+  const seenKeys = new Set();
+  const variants = new Set();
+  const queue = [baseValue];
+
+  while (queue.length) {
+    const currentValue = textOf(queue.shift());
+    if (!currentValue || variants.has(currentValue)) continue;
+    variants.add(currentValue);
+
+    const withoutPrefix = stripExpansionFilterPrefix(currentValue);
+    const withoutTrailingCodes = stripTrailingExpansionVariantCodes(currentValue);
+    const withoutCodeParens = currentValue.replace(/\s*\((?=[^)]*(?:\d|\/))[^)]*\)\s*$/i, '').trim();
+
+    [withoutPrefix, withoutTrailingCodes, withoutCodeParens].forEach((nextValue) => {
+      if (nextValue && !variants.has(nextValue)) queue.push(nextValue);
+    });
+  }
+
+  variants.forEach((variant) => {
+    const normalizedLabel = normalizeExpansionFilterLabel(variant);
+    if (normalizedLabel) {
+      const labelKey = `label:${normalizedLabel}`;
+      if (!seenKeys.has(labelKey)) {
+        seenKeys.add(labelKey);
+        normalizedKeys.push(labelKey);
+      }
+    }
+
+    const tokenKey = buildExpansionTokenKey(variant);
+    if (tokenKey) {
+      const keyedToken = `tokens:${tokenKey}`;
+      if (!seenKeys.has(keyedToken)) {
+        seenKeys.add(keyedToken);
+        normalizedKeys.push(keyedToken);
+      }
+    }
+  });
+
+  return normalizedKeys;
+}
+
+function getExpansionIdsForMatchKey(entriesByKey, matchKey) {
+  const candidates = entriesByKey.get(matchKey) || [];
+  if (!candidates.length) return [];
+
+  const canonicalLabels = [...new Set(candidates.map((entry) => entry.normalizedLabel).filter(Boolean))];
+  if (canonicalLabels.length !== 1) return [];
+
+  return [...new Set(candidates.map((entry) => entry.value).filter(Boolean))];
+}
+
 function inspectAvailableExpansionFiltersInDocument(doc) {
   const select = doc.querySelector('select[name="idExpansion"], select[name^="idExpansion"], select#idExpansion, select[name="expansion"]');
   if (!select) return [];
@@ -1515,19 +1601,26 @@ function matchExpansionIds(requestedExpansionNames, availableExpansionFilters) {
   const expansionIds = [];
   const matchedExpansionNames = [];
   const unmatchedExpansionNames = [];
-  const idsByLabel = new Map();
+  const entriesByKey = new Map();
 
   availableExpansionFilters.forEach((entry) => {
     const normalizedLabel = normalizeExpansionFilterLabel(entry?.label);
     const value = textOf(entry?.value);
     if (!normalizedLabel || !/^\d+$/.test(value) || value === '0') return;
-    if (!idsByLabel.has(normalizedLabel)) idsByLabel.set(normalizedLabel, []);
-    idsByLabel.get(normalizedLabel).push(value);
+
+    buildExpansionMatchKeys(entry?.label).forEach((matchKey) => {
+      if (!entriesByKey.has(matchKey)) entriesByKey.set(matchKey, []);
+      entriesByKey.get(matchKey).push({
+        value,
+        normalizedLabel,
+      });
+    });
   });
 
   requestedExpansionNames.forEach((name) => {
-    const normalizedName = normalizeExpansionFilterLabel(name);
-    const matchedIds = normalizedName ? idsByLabel.get(normalizedName) || [] : [];
+    const matchedIds = buildExpansionMatchKeys(name)
+      .map((matchKey) => getExpansionIdsForMatchKey(entriesByKey, matchKey))
+      .find((ids) => ids.length > 0) || [];
     if (!matchedIds.length) {
       unmatchedExpansionNames.push(name);
       return;
