@@ -399,7 +399,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
     function parseDesktopRow(row) {
       const checkbox = row.querySelector('input[name="checkWantsRow[]"][data-id-want], input[data-id-want]');
       const nameLink = row.querySelector('td.name a[href], a[href*="/Products/"]');
-      const expansionContainer = row.querySelector('td.expansion');
+      const expansionContainer = findExpansionContainer(row);
       const preview = row.querySelector('td.preview [data-bs-title], td.preview [data-bs-original-title], td.preview [title], [data-bs-title], [title]');
       const conditionBadge = row.querySelector('td.condition .article-condition .badge, td.condition .badge');
       const priceCell = row.querySelector('td.buyPrice');
@@ -439,7 +439,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
       const previewTitle = preview?.getAttribute('data-bs-title') || preview?.getAttribute('data-bs-original-title') || preview?.getAttribute('title') || '';
       const conditionBadge = row.querySelector('.article-condition .badge, .badge');
       const rawHref = nameLink?.getAttribute('href') || '';
-      const expansionContainer = getMobileFieldValueNode(row, 'Expansion');
+      const expansionContainer = getMobileFieldValueNode(row, 'Expansion') || findExpansionContainer(row);
       const productUrl = normalizeProductUrl(rawHref);
       const productIdMatch = previewTitle.match(/product-images\.s3\.cardmarket\.com\/\d+\/[^/]+\/(\d+)\//i)
         || rawHref.match(/\/(\d+)(?:[/?#]|$)/);
@@ -488,11 +488,16 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
         quantity: textOf(quantityInput?.value || row.querySelector('.want-amount')?.textContent).replace(/\s+/g, '') || '1',
         languages: extractSelectedLanguages(row),
         minCondition: extractSelectedCondition(row) || textOf(conditionBadge?.textContent),
-        expansions: extractSelectedExpansions(row),
+        expansions: extractSelectedExpansions(findExpansionContainer(row) || row),
         maxPrice: priceMatch?.[1] || '',
         isFoil: extractBooleanPreference(row, 'foil', /\bFoil\b/i, rowText),
         isReverseHolo: extractBooleanPreference(row, 'reverse', /Reverse\s*Holo/i, rowText),
       };
+    }
+
+    function findExpansionContainer(row) {
+      if (!row) return null;
+      return row.querySelector('td.expansion, [data-label="Expansion"], [class*="expansion" i], [aria-label*="Expansion" i]') || row;
     }
 
     function normalizeProductUrl(rawHref) {
