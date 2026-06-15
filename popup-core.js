@@ -23,6 +23,11 @@ const wantListPreviewEl = document.getElementById('wantListPreview');
 const wantListWarningEl = document.getElementById('wantListWarning');
 const wantListSelectEl = document.getElementById('wantListSelect');
 const wantListFieldEl = document.getElementById('wantListField');
+const sourceTabFieldEl = document.getElementById('sourceTabField');
+const sourceTabSelectEl = document.getElementById('sourceTabSelect');
+const refreshSourceTabsButton = document.getElementById('refreshSourceTabs');
+const bindSourceTabButton = document.getElementById('bindSourceTab');
+const sourceTabStatusEl = document.getElementById('sourceTabStatus');
 const confirmWantListButton = document.getElementById('confirmWantList');
 const summaryEl = document.getElementById('summary');
 const itemsEl = document.getElementById('items');
@@ -71,11 +76,13 @@ const heroDonateButton = document.getElementById('heroDonateButton');
 
 const urlParams = new URLSearchParams(window.location.search);
 const isDetached = urlParams.get('detached') === '1';
+const isWorkspace = urlParams.get('workspace') === '1';
 const autoStartMode = urlParams.get('autoStart') || '';
 const forcedTabId = urlParams.get('tabId') ? parseInt(urlParams.get('tabId'), 10) : null;
 const isE2e = urlParams.get('e2e') === '1';
+const isPersistentWorkspace = isDetached || isWorkspace;
 
-if (isDetached) {
+if (isPersistentWorkspace) {
   document.body.classList.add('detached');
 }
 
@@ -103,12 +110,15 @@ let currentPayloadLineageKey = '';
 let rememberedDisabledSellerIds = [];
 let postFillSellerChoices = [];
 let refillWarningActive = false;
+let boundSourceTabId = Number.isInteger(forcedTabId) ? forcedTabId : null;
+let availableSourceTabs = [];
 const sellerExpansionFilterCache = new Map();
 const sellerPageHtmlCache = new Map();
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
 const POST_FILL_STATE_KEY = 'postFillDisabledSellerState';
+const SOURCE_TAB_BINDING_KEY = 'workspaceSourceTabBinding';
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_SELLER_DELAY_MS = 250;
 const MIN_SELLER_DELAY_MS = 250;
@@ -836,6 +846,10 @@ function textOf(value) {
   return String(value || '').trim().replace(/\s+/g, ' ');
 }
 
+function isCardmarketUrl(url = '') {
+  return /^https:\/\/www\.cardmarket\.com\//.test(url);
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -853,7 +867,7 @@ function clearWantListRetry() {
 }
 
 function scheduleWantListRetry() {
-  if (wantListRetryTimer !== null || !isDetached) return;
+  if (wantListRetryTimer !== null || !isPersistentWorkspace) return;
   wantListRetryTimer = window.setTimeout(() => {
     wantListRetryTimer = null;
     refreshWantLists({ quiet: true }).catch(() => {});
@@ -1306,96 +1320,38 @@ async function getTargetTab() {
     try {
       return await chrome.tabs.get(forcedTabId);
     } catch {
-      return null;
     }
   }
 
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab || null;
-}
-
-function getDetachedPopupUrl({ autoStart = '', tabId = null } = {}) {
-  const params = new URLSearchParams({ detached: '1' });
-  if (autoStart) params.set('autoStart', autoStart);
-  if (Number.isInteger(tabId)) params.set('tabId', String(tabId));
-  return `${chrome.runtime.getURL('popup.html')}?${params.toString()}`;
-}
-
-function parseDetachedPopupUrl(url) {
-  if (!url) return null;
-
-  try {
-    const parsed = new URL(url);
-    const popupUrl = new URL(chrome.runtime.getURL('popup.html'));
-    if (parsed.origin !== popupUrl.origin || parsed.pathname !== popupUrl.pathname) {
-      return null;
+  if (Number.isInteger(boundSourceTabId)) {
+    try {
+      const boundTab = await chrome.tabs.get(boundSourceTabId);
+      if (isCardmarketUrl(boundTab?.url || '')) {
+        return boundTab;
+      }
+    } catch {
     }
-    if (parsed.searchParams.get('detached') !== '1') {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
   }
+
+  const openTabs = await chrome.tabs.query({ url: 'https://www.cardmarket.com/*' });
+  if (openTabs.length === 1) {
+    return openTabs[0] || null;
+  }
+
+  return null;
 }
 
-async function findDetachedPopupWindows() {
-  const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['popup'] });
-  return windows
-    .map((popupWindow) => {
-      const popupTab = popupWindow.tabs?.find((tab) => parseDetachedPopupUrl(tab.url));
-      if (!popupTab) return null;
-      return { popupWindow, popupTab };
-    })
-    .filter(Boolean);
-}
-
-async function focusDetachedPopup(entry, nextUrl) {
-  const currentUrl = entry.popupTab.url || '';
-  if (currentUrl !== nextUrl && entry.popupTab.id) {
-    await chrome.tabs.update(entry.popupTab.id, { url: nextUrl });
-  }
-
-  await chrome.windows.update(entry.popupWindow.id, { focused: true });
-  if (entry.popupTab.id) {
-    await chrome.tabs.update(entry.popupTab.id, { active: true });
-  }
-}
-
-async function openDetachedPopup({ autoStart = '' } = {}) {
-  const tab = await getTargetTab();
-  const targetTabId = tab?.id && /https:\/\/www\.cardmarket\.com\//.test(tab.url || '')
-    ? tab.id
-    : null;
-  const detachedPopupUrl = getDetachedPopupUrl({ autoStart, tabId: targetTabId });
-
-  await saveSellerSettings();
-
-  const detachedWindows = await findDetachedPopupWindows();
-  if (detachedWindows.length) {
-    const [primaryWindow, ...duplicateWindows] = detachedWindows;
-
-    await Promise.all(duplicateWindows.map(({ popupWindow }) => chrome.windows.remove(popupWindow.id)));
-    await focusDetachedPopup(primaryWindow, detachedPopupUrl);
-    return;
-  }
-
-  await chrome.windows.create({
-    url: detachedPopupUrl,
-    type: 'popup',
-    width: 460,
-    height: 920,
+async function openWorkspaceWindow({ autoStart = '' } = {}) {
+  const sourceTab = await getTargetTab().catch(() => null);
+  const response = await chrome.runtime.sendMessage({
+    type: 'workspace/open',
+    autoStart,
+    sourceTabId: sourceTab?.id || null,
+    sourceTabUrl: sourceTab?.url || '',
+    sourceTabTitle: sourceTab?.title || '',
   });
-}
-
-async function autoDetachDefaultPopup() {
-  if (isDetached) return;
-
-  try {
-    await openDetachedPopup();
-    window.close();
-  } catch (error) {
-    appendStatus(`Could not open dedicated plugin window: ${error.message}`, 'bad');
+  if (!response?.ok) {
+    throw new Error(response?.error || 'Could not open optimizer workspace window.');
   }
 }
 

@@ -1177,6 +1177,18 @@
             <h3 class="source-title">Select a wants list</h3>
             <div class="step-card-actions">
               <div class="config-row">
+                <div id="sourceTabField" class="config-label seller-filter-field want-list-field">
+                  <select id="sourceTabSelect">
+                    <option value="">Loading Cardmarket tabs...</option>
+                  </select>
+                </div>
+              </div>
+              <div class="actions">
+                <button id="refreshSourceTabs" class="secondary" type="button">Refresh tabs</button>
+                <button id="bindSourceTab" class="secondary" type="button">Use selected tab</button>
+              </div>
+              <p id="sourceTabStatus" class="inline-notice" hidden></p>
+              <div class="config-row">
                 <div id="wantListField" class="config-label seller-filter-field want-list-field">
                   <select id="wantListSelect">
                     <option value="">Loading want lists...</option>

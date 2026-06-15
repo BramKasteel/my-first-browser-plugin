@@ -44,6 +44,29 @@ async function saveDetachedBatchState(items) {
   });
 }
 
+async function loadSourceTabBinding() {
+  const storageArea = await getStorageArea();
+  const stored = await storageArea.get(SOURCE_TAB_BINDING_KEY);
+  return stored[SOURCE_TAB_BINDING_KEY] || null;
+}
+
+async function saveSourceTabBinding(binding) {
+  const storageArea = await getStorageArea();
+  if (!binding?.tabId) {
+    await storageArea.remove(SOURCE_TAB_BINDING_KEY);
+    return;
+  }
+
+  await storageArea.set({
+    [SOURCE_TAB_BINDING_KEY]: {
+      tabId: binding.tabId,
+      title: textOf(binding.title),
+      url: textOf(binding.url),
+      updatedAt: binding.updatedAt || new Date().toISOString(),
+    },
+  });
+}
+
 async function loadRememberedDisabledSellerIds(lineageKey) {
   if (!textOf(lineageKey)) return [];
 

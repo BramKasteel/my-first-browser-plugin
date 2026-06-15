@@ -1,6 +1,7 @@
 function getPopupSnapshot() {
   return {
     isDetached,
+    isWorkspace,
     isBusy: isUiBusy,
     runState: {
       active: isRunActive,
@@ -18,6 +19,10 @@ function getPopupSnapshot() {
     wantLists: {
       selectedWantListId,
       available: availableWantLists.map((entry) => ({ ...entry })),
+    },
+    sourceTab: {
+      boundSourceTabId,
+      available: availableSourceTabs.map((entry) => ({ ...entry })),
     },
     wantListConstraints: getWantListSelectionPolicy(),
     extractedItems: {

@@ -6,6 +6,123 @@ function hasSelectedWantList() {
   return !!textOf(selectedWantListId);
 }
 
+function formatSourceTabLabel(tab) {
+  const title = textOf(tab?.title) || 'Cardmarket tab';
+  const url = textOf(tab?.url);
+
+  try {
+    const parsed = new URL(url);
+    return `${title} (${parsed.pathname || '/'})`;
+  } catch {
+    return title;
+  }
+}
+
+function renderSourceTabOptions() {
+  if (!sourceTabSelectEl) return;
+
+  sourceTabSelectEl.replaceChildren();
+  if (!availableSourceTabs.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No open Cardmarket tabs found';
+    sourceTabSelectEl.appendChild(option);
+    sourceTabSelectEl.value = '';
+    if (bindSourceTabButton) bindSourceTabButton.disabled = true;
+    return;
+  }
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Choose Cardmarket tab';
+  placeholder.selected = !Number.isInteger(boundSourceTabId);
+  sourceTabSelectEl.appendChild(placeholder);
+
+  availableSourceTabs.forEach((tab) => {
+    const option = document.createElement('option');
+    option.value = String(tab.id);
+    option.textContent = formatSourceTabLabel(tab);
+    option.selected = tab.id === boundSourceTabId;
+    sourceTabSelectEl.appendChild(option);
+  });
+
+  sourceTabSelectEl.value = Number.isInteger(boundSourceTabId) ? String(boundSourceTabId) : '';
+  if (bindSourceTabButton) {
+    bindSourceTabButton.disabled = !textOf(sourceTabSelectEl.value);
+  }
+}
+
+function renderSourceTabStatus(message = '', tone = '') {
+  if (!sourceTabStatusEl) return;
+
+  sourceTabStatusEl.textContent = message;
+  sourceTabStatusEl.hidden = !message;
+  sourceTabStatusEl.classList.toggle('good', tone === 'good');
+  sourceTabStatusEl.classList.toggle('bad', tone === 'bad');
+}
+
+async function refreshSourceTabOptions({ announce = false } = {}) {
+  const tabs = await chrome.tabs.query({ url: 'https://www.cardmarket.com/*' });
+  availableSourceTabs = tabs.map((tab) => ({
+    id: tab.id,
+    title: textOf(tab.title),
+    url: textOf(tab.url),
+    active: tab.active === true,
+  }));
+
+  renderSourceTabOptions();
+
+  if (!availableSourceTabs.length) {
+    boundSourceTabId = null;
+    await saveSourceTabBinding(null);
+    renderSourceTabStatus('Open a Cardmarket tab, then bind it here.', 'bad');
+    return [];
+  }
+
+  if (Number.isInteger(boundSourceTabId) && availableSourceTabs.some((tab) => tab.id === boundSourceTabId)) {
+    const boundTab = availableSourceTabs.find((tab) => tab.id === boundSourceTabId) || null;
+    renderSourceTabStatus(boundTab ? `Connected to ${formatSourceTabLabel(boundTab)}.` : '', 'good');
+    return availableSourceTabs;
+  }
+
+  if (availableSourceTabs.length === 1) {
+    await bindSourceTabById(availableSourceTabs[0].id, { announce });
+    return availableSourceTabs;
+  }
+
+  renderSourceTabStatus('Choose which open Cardmarket tab should be used for want-list and cart actions.', '');
+  return availableSourceTabs;
+}
+
+async function loadSourceTabBindingIntoState() {
+  const stored = await loadSourceTabBinding();
+  boundSourceTabId = Number.isInteger(stored?.tabId) ? stored.tabId : null;
+}
+
+async function bindSourceTabById(tabId, { announce = true } = {}) {
+  const numericTabId = parseInt(tabId, 10);
+  if (!Number.isInteger(numericTabId)) {
+    throw new Error('Choose a Cardmarket tab first.');
+  }
+
+  const tab = await chrome.tabs.get(numericTabId);
+  if (!isCardmarketUrl(tab?.url || '')) {
+    throw new Error('Selected tab is no longer a Cardmarket page. Refresh tab list and choose again.');
+  }
+
+  boundSourceTabId = tab.id;
+  await saveSourceTabBinding({
+    tabId: tab.id,
+    title: tab.title,
+    url: tab.url,
+  });
+  await refreshSourceTabOptions();
+
+  if (announce) {
+    appendStatus(`Bound Cardmarket source tab: ${formatSourceTabLabel(tab)}.`, 'good');
+  }
+}
+
 function renderWantListState() {
   if (!wantListFieldEl) return;
 
@@ -153,12 +270,12 @@ async function refreshWantListWarning() {
   try {
     const tab = await getTargetTab();
     if (!tab?.url) {
-      renderWantListWarning('Open any Cardmarket page first so plugin can load your want lists.');
+      renderWantListWarning('Choose an open Cardmarket tab in the source selector first.');
       return;
     }
 
-    if (!/https:\/\/www\.cardmarket\.com\//.test(tab.url)) {
-      renderWantListWarning('Current tab not Cardmarket. Open any Cardmarket page first.');
+    if (!isCardmarketUrl(tab.url)) {
+      renderWantListWarning('Bound source tab is no longer a Cardmarket page. Rebind it.');
       return;
     }
 
@@ -181,6 +298,17 @@ async function refreshWantListWarning() {
     renderWantListWarning('');
   } catch {
     renderWantListWarning('Could not inspect current tab. Open Cardmarket page and retry.');
+  }
+}
+
+async function handleBindSourceTab() {
+  try {
+    await bindSourceTabById(sourceTabSelectEl?.value || '', { announce: true });
+    await refreshWantLists({ quiet: true });
+    await refreshWantListWarning();
+  } catch (error) {
+    renderSourceTabStatus(error.message, 'bad');
+    appendStatus(error.message, 'bad');
   }
 }
 

@@ -199,16 +199,16 @@ function getStoredSellerCountries(settings) {
 }
 
 async function handleScrapeAllItems() {
-  if (!isDetached) {
+  if (!isPersistentWorkspace) {
     try {
       if (!latestExtractedItems.length) {
         throw new Error('Extract want items first so the popup has products to scrape.');
       }
 
-      appendStatus('Opening batch scrape workspace so run keeps going after this popup closes...', 'good');
+      appendStatus('Opening optimizer workspace so run keeps going while you browse elsewhere...', 'good');
       finishRun('Opening batch scrape workspace.', 'good');
-        await saveDetachedBatchState(latestExtractedItems);
-      await openDetachedPopup({ autoStart: 'scrapeAll' });
+      await saveDetachedBatchState(latestExtractedItems);
+      await openWorkspaceWindow({ autoStart: 'scrapeAll' });
       window.close();
       return;
     } catch (error) {

@@ -46,6 +46,21 @@ postFillReoptimizeButton?.addEventListener('click', () => {
     appendStatus(error.message, 'bad');
   });
 });
+refreshSourceTabsButton?.addEventListener('click', () => {
+  refreshSourceTabOptions({ announce: false }).catch((error) => {
+    renderSourceTabStatus(error.message, 'bad');
+  });
+});
+bindSourceTabButton?.addEventListener('click', () => {
+  handleBindSourceTab().catch((error) => {
+    renderSourceTabStatus(error.message, 'bad');
+  });
+});
+sourceTabSelectEl?.addEventListener('change', () => {
+  if (bindSourceTabButton) {
+    bindSourceTabButton.disabled = !textOf(sourceTabSelectEl.value);
+  }
+});
 workflowStepButtons.forEach((button) => {
   button.addEventListener('click', () => {
     const stepName = button.dataset.workflowStep || 'source';
@@ -135,10 +150,20 @@ selectedSellerCountriesEl.addEventListener('click', (event) => {
   saveSellerSettings();
 });
 window.addEventListener('focus', () => {
+  refreshSourceTabOptions({ announce: false }).catch(() => {});
   refreshWantLists({ quiet: true }).catch(() => {});
   refreshWantListWarning().catch(() => {
     renderWantListWarning('Could not inspect current tab. Open Cardmarket page and retry.');
   });
+});
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (!changes[SOURCE_TAB_BINDING_KEY]) return;
+
+  loadSourceTabBindingIntoState()
+    .then(() => refreshSourceTabOptions({ announce: false }))
+    .then(() => refreshWantListWarning())
+    .catch(() => {});
 });
 
 renderSummary([
@@ -167,51 +192,49 @@ syncPostFillReoptimizeButton();
 renderStepActivity();
 renderWorkflow();
 scrapeAllItemsButton.textContent = 'Scrape sellers';
-appendStatus(isDetached
-  ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'
-  : 'Popup loaded. Opening dedicated plugin window so long scrapes keep running.');
+appendStatus(isPersistentWorkspace
+  ? 'Optimizer workspace loaded. It stays open while you browse other tabs.'
+  : 'Popup loaded. Use workspace mode for long-running scrapes.');
 
-if (!isDetached) {
-  autoDetachDefaultPopup();
-} else {
-  loadSellerSettings()
-    .then(() => refreshWantLists({ quiet: true }))
-    .then(() => {
-      if (!restoredWantListId || selectedWantListId !== restoredWantListId || !hasSelectedWantList() || hasLoadedWantItems()) {
-        return null;
-      }
+loadSellerSettings()
+  .then(() => loadSourceTabBindingIntoState())
+  .then(() => refreshSourceTabOptions({ announce: false }))
+  .then(() => refreshWantLists({ quiet: true }))
+  .then(() => {
+    if (!restoredWantListId || selectedWantListId !== restoredWantListId || !hasSelectedWantList() || hasLoadedWantItems()) {
+      return null;
+    }
 
-      return handleExtractItems();
-    })
-    .then(() => refreshWantListWarning())
-    .catch((error) => {
-      const message = error?.message || '';
-      if (/want list|wants overview|cardmarket/i.test(message)) {
-        appendStatus('Could not load Cardmarket want lists. Open Cardmarket tab; popup retries automatically.', 'bad');
-        return;
-      }
-      appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
-    })
-    .finally(() => {
-      if (isDetached && autoStartMode === 'scrapeAll') {
-        loadDetachedBatchState().then((items) => {
-          latestExtractedItems = items;
-          syncSellerScrapeButton();
-          renderWorkflow();
-          if (!latestExtractedItems.length) {
-            appendStatus('Batch scrape workspace could not auto-start because no extracted items were passed from popup.', 'bad');
-            return;
-          }
+    return handleExtractItems();
+  })
+  .then(() => refreshWantListWarning())
+  .catch((error) => {
+    const message = error?.message || '';
+    if (/want list|wants overview|cardmarket|source tab/i.test(message)) {
+      appendStatus('Could not load Cardmarket want lists yet. Bind an open Cardmarket tab; workspace retries automatically.', 'bad');
+      return;
+    }
+    appendStatus('Could not load saved seller scrape settings. Using safe defaults.', 'bad');
+  })
+  .finally(() => {
+    if (isPersistentWorkspace && autoStartMode === 'scrapeAll') {
+      loadDetachedBatchState().then((items) => {
+        latestExtractedItems = items;
+        syncSellerScrapeButton();
+        renderWorkflow();
+        if (!latestExtractedItems.length) {
+          appendStatus('Batch scrape workspace could not auto-start because no extracted items were passed from popup.', 'bad');
+          return;
+        }
 
-          renderItems(latestExtractedItems.slice(0, 8), latestExtractedItems.length);
-          renderSellers([], 0, latestExtractedItems[0]?.productName || 'the first item');
-          setActiveWorkflowStep('sellers', { force: true });
-          handleScrapeAllItems().catch((error) => {
-            appendStatus(error.message, 'bad');
-          });
-        }).catch(() => {
-          appendStatus('Batch scrape workspace could not load extracted items for auto-start.', 'bad');
+        renderItems(latestExtractedItems.slice(0, 8), latestExtractedItems.length);
+        renderSellers([], 0, latestExtractedItems[0]?.productName || 'the first item');
+        setActiveWorkflowStep('sellers', { force: true });
+        handleScrapeAllItems().catch((error) => {
+          appendStatus(error.message, 'bad');
         });
-      }
-    });
-}
+      }).catch(() => {
+        appendStatus('Batch scrape workspace could not load extracted items for auto-start.', 'bad');
+      });
+    }
+  });
