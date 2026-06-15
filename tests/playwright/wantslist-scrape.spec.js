@@ -565,6 +565,12 @@ test.describe('Want list scraping flow', () => {
       { timeout: 30_000 },
     );
 
+    await popupPage.waitForFunction(
+      () => window.__cmOptimizerTestApi.getSnapshot().workflow.activeStep === 'post-fill',
+      null,
+      { timeout: 10_000 },
+    );
+
     const cartAfterFill = await readShoppingCartState(page);
     const addedUnits = cartAfterFill.unitCount - cartBeforeFill.unitCount;
 

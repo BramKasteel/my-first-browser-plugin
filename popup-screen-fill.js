@@ -439,26 +439,44 @@ async function handleFillCart() {
 
   startRun('Posting optimized cart to Cardmarket...');
   setBusy(true);
+  let shouldAdvanceToPostFill = false;
   try {
     const payload = buildCartFillPayload(latestOptimizationResult);
     appendStatus(`Posting ${payload.articleCount} articles and ${payload.unitCount} units to Cardmarket cart.`);
     const result = await submitOptimizedCartInTab(payload);
-    if (textOf(result?.serverResultType) === 'error'
-      || (Array.isArray(result?.shortages) && result.shortages.length)
-      || Number(result?.missingSummaryUnits || 0) > 0) {
+    const serverRejected = textOf(result?.serverResultType) === 'error';
+    const hasShortages = Array.isArray(result?.shortages) && result.shortages.length > 0;
+    const missingSummaryUnits = Number(result?.missingSummaryUnits || 0);
+    const addedSummaryUnits = Number(result?.addedSummaryUnits || 0);
+    const likelyCartUpdated = !serverRejected && (addedSummaryUnits > 0 || !result?.cartVerified);
+
+    if (serverRejected || ((hasShortages || missingSummaryUnits > 0) && !likelyCartUpdated)) {
       throw new Error(buildCartFillFailureMessage(result) || 'Cardmarket rejected one or more cart rows.');
     }
+
     if (!result?.cartVerified) {
       appendStatus('Cardmarket cart posted, but extension could not verify final cart contents.', 'warn');
     }
+
     markCartAsFilled(result, latestOptimizationResult?.cart?.sellers || []);
+
+    shouldAdvanceToPostFill = true;
+
+    if (hasShortages || missingSummaryUnits > 0) {
+      appendStatus(buildCartFillFailureMessage(result) || 'Cardmarket cart changed, but final contents look incomplete.', 'warn');
+      finishRun('Optimized cart pushed to Cardmarket with verification warnings.', 'good');
+      return;
+    }
+
     appendStatus(`Cardmarket cart updated: ${result.articleCount} articles, ${result.unitCount} units.`, 'good');
     finishRun('Optimized cart pushed to Cardmarket.', 'good');
-    setActiveWorkflowStep('post-fill', { force: true });
   } catch (error) {
     appendStatus(error.message, 'bad');
     finishRun(error.message, 'bad');
   } finally {
     setBusy(false);
+    if (shouldAdvanceToPostFill) {
+      setActiveWorkflowStep('post-fill', { force: true });
+    }
   }
 }
