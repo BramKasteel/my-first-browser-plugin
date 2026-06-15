@@ -1,5 +1,10 @@
 # Vacation plans:
 
+
+When reoptimizing, also show total price.
+
+----------
+
 Use stuff from https://d-krupke.github.io/cpsat-primer/
 - enable logging and graphing using: https://cpsat-log-analyzer.streamlit.app/
 - check logs to see which branching methods are most effective
