@@ -10,9 +10,12 @@ function isCardmarketUrl(url = '') {
 	return /^https:\/\/(?:www\.)?cardmarket\.com\//.test(url);
 }
 
-function getWorkspaceUrl({ autoStart = '' } = {}) {
+function getWorkspaceUrl({ autoStart = '', sourceTab = null } = {}) {
 	const params = new URLSearchParams({ [WORKSPACE_QUERY_KEY]: '1' });
 	if (autoStart) params.set('autoStart', autoStart);
+	if (sourceTab?.id && isCardmarketUrl(sourceTab.url || '')) {
+		params.set('tabId', String(sourceTab.id));
+	}
 	return `${WORKSPACE_TAB_URL}?${params.toString()}`;
 }
 
@@ -72,7 +75,7 @@ async function openOrFocusWorkspace({ sourceTab = null, autoStart = '' } = {}) {
 		await saveSourceTabBinding(sourceTab);
 	}
 
-	const nextUrl = getWorkspaceUrl({ autoStart });
+	const nextUrl = getWorkspaceUrl({ autoStart, sourceTab });
 	const workspaceTabs = await findWorkspaceTabs();
 	if (workspaceTabs.length) {
 		const [primaryTab, ...duplicateTabs] = workspaceTabs;

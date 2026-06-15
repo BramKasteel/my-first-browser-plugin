@@ -78,7 +78,7 @@ const urlParams = new URLSearchParams(window.location.search);
 const isDetached = urlParams.get('detached') === '1';
 const isWorkspace = urlParams.get('workspace') === '1';
 const autoStartMode = urlParams.get('autoStart') || '';
-const forcedTabId = urlParams.get('tabId') ? parseInt(urlParams.get('tabId'), 10) : null;
+const forcedTabId = Number.isInteger(parseInt(urlParams.get('tabId'), 10)) ? parseInt(urlParams.get('tabId'), 10) : null;
 const isE2e = urlParams.get('e2e') === '1';
 const isPersistentWorkspace = isDetached || isWorkspace;
 
