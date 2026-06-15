@@ -49,36 +49,57 @@ open-cardmarket url='https://www.cardmarket.com/en/Magic/Wants':
 	profile_dir="$(mktemp -d)"
 	trap 'rm -rf "$profile_dir"' EXIT
 
-	find_browser() {
-	  local candidate
-	  for candidate in \
-	    "${CHROMIUM_BIN:-}" \
-	    chromium \
-	    chromium-browser \
-	    google-chrome \
-	    google-chrome-stable
-	  do
-	    if [[ -n "$candidate" && -x "$candidate" ]]; then
-	      printf '%s\n' "$candidate"
-	      return 0
-	    fi
-	    if [[ -n "$candidate" ]] && command -v "$candidate" >/dev/null 2>&1; then
-	      command -v "$candidate"
-	      return 0
-	    fi
-	  done
-
-	  node -e "const { chromium } = require('playwright'); console.log(chromium.executablePath())"
-	}
-
-	browser_bin="$(find_browser)"
 	echo "Launching Chromium with extension from $repo_root"
-	echo "Browser: $browser_bin"
+	OPEN_CARDMARKET_URL="{{url}}" REPO_ROOT="$repo_root" PROFILE_DIR="$profile_dir" node <<'EOF'
+	const path = require('path');
+	const dotenv = require('dotenv');
+	const { chromium } = require('playwright');
+	const { hasCardmarketCredentials, loginToCardmarket } = require('./tests/playwright/helpers/cardmarket');
 
-	"$browser_bin" \
-	  --user-data-dir="$profile_dir" \
-	  --no-first-run \
-	  --no-default-browser-check \
-	  --disable-extensions-except="$repo_root" \
-	  --load-extension="$repo_root" \
-	  "{{url}}"
+	const repoRoot = process.env.REPO_ROOT;
+	const profileDir = process.env.PROFILE_DIR;
+	const theUrl = process.env.OPEN_CARDMARKET_URL || 'https://www.cardmarket.com/en/Magic/Wants';
+
+	dotenv.config({ path: path.join(repoRoot, '.env.playwright.local') });
+	dotenv.config({ path: path.join(repoRoot, '.env.playwright') });
+
+	(async () => {
+	  const executablePath = process.env.CHROMIUM_BIN || process.env.CHROMIUM_PATH || undefined;
+	  const context = await chromium.launchPersistentContext(profileDir, {
+	    executablePath,
+	    headless: false,
+	    viewport: { width: 1440, height: 1080 },
+	    args: [
+	      '--no-first-run',
+	      '--no-default-browser-check',
+	      `--disable-extensions-except=${repoRoot}`,
+	      `--load-extension=${repoRoot}`,
+	    ],
+	  });
+
+	  try {
+	    const page = context.pages()[0] || await context.newPage();
+	    console.log(`Browser: ${executablePath || chromium.executablePath()}`);
+
+	    if (hasCardmarketCredentials()) {
+	      console.log('Logging into Cardmarket with .env.playwright.local credentials');
+	      try {
+	        await loginToCardmarket(page);
+	      } catch (error) {
+	        console.error(`Auto-login failed: ${error.message}`);
+	        console.error('Browser staying open for manual login or challenge handling.');
+	      }
+	    } else {
+	      console.log('CARDMARKET_USERNAME/CARDMARKET_PASSWORD not set. Opening browser without auto-login.');
+	    }
+
+	    await page.goto(theUrl, { waitUntil: 'domcontentloaded' });
+	    console.log(`Opened ${theUrl}`);
+	    await context.waitForEvent('close');
+	  } catch (error) {
+	    console.error(error);
+	    await context.close().catch(() => {});
+	    process.exitCode = 1;
+	  }
+	})();
+	EOF
