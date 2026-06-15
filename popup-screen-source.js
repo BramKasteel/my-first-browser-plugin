@@ -66,7 +66,7 @@ function renderSourceTabStatus(message = '', tone = '') {
 }
 
 async function refreshSourceTabOptions({ announce = false } = {}) {
-  const tabs = await chrome.tabs.query({ url: 'https://www.cardmarket.com/*' });
+  const tabs = await queryOpenCardmarketTabs();
   availableSourceTabs = tabs.map((tab) => ({
     id: tab.id,
     title: textOf(tab.title),

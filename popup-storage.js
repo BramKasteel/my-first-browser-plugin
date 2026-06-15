@@ -45,13 +45,13 @@ async function saveDetachedBatchState(items) {
 }
 
 async function loadSourceTabBinding() {
-  const storageArea = await getStorageArea();
+  const storageArea = chrome.storage.local;
   const stored = await storageArea.get(SOURCE_TAB_BINDING_KEY);
   return stored[SOURCE_TAB_BINDING_KEY] || null;
 }
 
 async function saveSourceTabBinding(binding) {
-  const storageArea = await getStorageArea();
+  const storageArea = chrome.storage.local;
   if (!binding?.tabId) {
     await storageArea.remove(SOURCE_TAB_BINDING_KEY);
     return;

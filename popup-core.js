@@ -851,6 +851,11 @@ function isCardmarketUrl(url = '') {
   return /^https:\/\/www\.cardmarket\.com\//.test(url);
 }
 
+async function queryOpenCardmarketTabs() {
+  const allTabs = await chrome.tabs.query({});
+  return allTabs.filter((tab) => isCardmarketUrl(tab?.url || ''));
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1319,7 +1324,10 @@ function buildOptimizerPayload(batchResult) {
 async function getTargetTab() {
   if (Number.isInteger(forcedTabId)) {
     try {
-      return await chrome.tabs.get(forcedTabId);
+      const forcedTab = await chrome.tabs.get(forcedTabId);
+      if (isCardmarketUrl(forcedTab?.url || '')) {
+        return forcedTab;
+      }
     } catch {
     }
   }
@@ -1334,8 +1342,19 @@ async function getTargetTab() {
     }
   }
 
-  const openTabs = await chrome.tabs.query({ url: 'https://www.cardmarket.com/*' });
+  const openTabs = await queryOpenCardmarketTabs();
+  const [activeTabInFocusedWindow] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (activeTabInFocusedWindow?.id && isCardmarketUrl(activeTabInFocusedWindow.url || '')) {
+    return activeTabInFocusedWindow;
+  }
+
   if (openTabs.length === 1) {
+    return openTabs[0] || null;
+  }
+
+  if (openTabs.length > 1) {
+    const activeKnownTab = openTabs.find((tab) => tab.active);
+    if (activeKnownTab) return activeKnownTab;
     return openTabs[0] || null;
   }
 

@@ -3,7 +3,7 @@ const WORKSPACE_QUERY_KEY = 'workspace';
 const SOURCE_TAB_BINDING_KEY = 'workspaceSourceTabBinding';
 
 function getStorageArea() {
-	return chrome.storage.session || chrome.storage.local;
+	return chrome.storage.local;
 }
 
 function isCardmarketUrl(url = '') {
