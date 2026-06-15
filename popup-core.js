@@ -1398,17 +1398,6 @@ async function openDetachedPopup({ autoStart = '' } = {}) {
   }
 }
 
-async function autoDetachDefaultPopup() {
-  if (isDetached) return;
-
-  try {
-    await openDetachedPopup();
-    window.close();
-  } catch (error) {
-    appendStatus(`Could not open dedicated plugin window: ${error.message}`, 'bad');
-  }
-}
-
 async function executeInTab(tabId, func, args = []) {
   const [execution] = await chrome.scripting.executeScript({
     target: { tabId },

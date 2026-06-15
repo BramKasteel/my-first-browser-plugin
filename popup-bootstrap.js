@@ -169,11 +169,9 @@ renderWorkflow();
 scrapeAllItemsButton.textContent = 'Scrape sellers';
 appendStatus(isDetached
   ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'
-  : 'Popup loaded. Opening dedicated plugin window so long scrapes keep running.');
+  : 'Popup loaded. Use detached extension window opened from toolbar action.');
 
-if (!isDetached) {
-  autoDetachDefaultPopup();
-} else {
+if (isDetached) {
   renderSummary([
     { label: 'Status', value: 'Ready for want-list loading' },
     { label: 'Current scope', value: 'Select a wants list to continue.' },
