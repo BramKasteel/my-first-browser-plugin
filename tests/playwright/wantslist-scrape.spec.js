@@ -570,6 +570,7 @@ test.describe('Want list scraping flow', () => {
       null,
       { timeout: 10_000 },
     );
+    await expect(popupPage.locator('#postFillSellerList input[data-post-fill-seller-id]').first()).toBeEnabled();
 
     const cartAfterFill = await readShoppingCartState(page);
     const addedUnits = cartAfterFill.unitCount - cartBeforeFill.unitCount;

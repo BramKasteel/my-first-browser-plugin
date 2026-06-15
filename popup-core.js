@@ -224,6 +224,9 @@ function setBusy(isBusy) {
   if (typeof syncPostFillReoptimizeButton === 'function') {
     syncPostFillReoptimizeButton(isBusy);
   }
+  if (typeof renderPostFillScreen === 'function') {
+    renderPostFillScreen();
+  }
   renderWorkflow();
 }
 
