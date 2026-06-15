@@ -174,6 +174,7 @@ function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTR
   }
 
   renderSellerFilterState();
+  syncSellerScrapeButton(isUiBusy);
 }
 
 function getSelectedSellerCountries() {
