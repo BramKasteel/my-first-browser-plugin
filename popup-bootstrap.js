@@ -141,39 +141,58 @@ window.addEventListener('focus', () => {
   });
 });
 
-renderSummary([
-  { label: 'Status', value: 'Ready for want-list loading' },
-  { label: 'Current scope', value: 'Select a wants list to continue.' },
-]);
-finishRun('Idle. Start extract, scrape, or probe.');
-renderItems([], 0);
-renderOptimizationResult(null);
-renderSellers([], 0);
-renderPayload(null);
-renderFrontendPayload(null);
-renderOptimizerInputContext();
-renderBuyerCountryOptions();
-renderPostFillScreen();
-setResultPanelExpanded(false);
-setActiveResultTab('overview');
-installE2eTestApi();
-renderSellerCountryFilterList();
-renderWantListOptions();
-syncExtractButton();
-syncSellerScrapeButton();
-syncOptimizeButton();
-syncFillCartButton();
-syncPostFillReoptimizeButton();
-renderStepActivity();
-renderWorkflow();
-scrapeAllItemsButton.textContent = 'Scrape sellers';
-appendStatus(isDetached
-  ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'
-  : 'Popup loaded. Opening dedicated plugin window so long scrapes keep running.');
+function initializePopupWorkspace() {
+  renderSummary([
+    { label: 'Status', value: 'Ready for want-list loading' },
+    { label: 'Current scope', value: 'Select a wants list to continue.' },
+  ]);
+  finishRun('Idle. Start extract, scrape, or probe.');
+  renderItems([], 0);
+  renderOptimizationResult(null);
+  renderSellers([], 0);
+  renderPayload(null);
+  renderFrontendPayload(null);
+  renderOptimizerInputContext();
+  renderBuyerCountryOptions();
+  renderPostFillScreen();
+  setResultPanelExpanded(false);
+  setActiveResultTab('overview');
+  installE2eTestApi();
+  renderSellerCountryFilterList();
+  renderWantListOptions();
+  syncExtractButton();
+  syncSellerScrapeButton();
+  syncOptimizeButton();
+  syncFillCartButton();
+  syncPostFillReoptimizeButton();
+  renderStepActivity();
+  renderWorkflow();
+  scrapeAllItemsButton.textContent = 'Scrape sellers';
+  appendStatus(isDetached
+    ? 'Batch scrape workspace loaded. It stays open while you click back into Cardmarket.'
+    : 'Popup loaded. Dedicated plugin window could not be opened, so staying in popup mode.');
+}
 
 if (!isDetached) {
-  autoDetachDefaultPopup();
+  renderSummary([
+    { label: 'Status', value: 'Opening dedicated plugin window' },
+    { label: 'Current scope', value: 'Popup should move into separate window automatically.' },
+  ]);
+  finishRun('Opening dedicated plugin window.');
+  appendStatus('Popup loaded. Opening dedicated plugin window so long scrapes keep running.');
+  autoDetachDefaultPopup().then((openedDetachedWindow) => {
+    if (!openedDetachedWindow) {
+      initializePopupWorkspace();
+      loadSellerSettings()
+        .then(() => refreshWantLists({ quiet: true }))
+        .then(() => refreshWantListWarning())
+        .catch((error) => {
+          appendStatus(error?.message || 'Could not load want lists in popup fallback mode.', 'bad');
+        });
+    }
+  });
 } else {
+  initializePopupWorkspace();
   loadSellerSettings()
     .then(() => refreshWantLists({ quiet: true }))
     .then(() => {

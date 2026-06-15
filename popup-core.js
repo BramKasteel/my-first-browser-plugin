@@ -1389,13 +1389,15 @@ async function openDetachedPopup({ autoStart = '' } = {}) {
 }
 
 async function autoDetachDefaultPopup() {
-  if (isDetached) return;
+  if (isDetached) return false;
 
   try {
     await openDetachedPopup();
     window.close();
+    return true;
   } catch (error) {
     appendStatus(`Could not open dedicated plugin window: ${error.message}`, 'bad');
+    return false;
   }
 }
 
