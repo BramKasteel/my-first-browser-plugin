@@ -1,5 +1,7 @@
 void chrome.runtime?.id;
 
+const DETACHED_TARGET_TAB_KEY = 'detachedTargetTabId';
+
 function getDetachedPopupUrl(tabId) {
 	const params = new URLSearchParams({ detached: '1' });
 	if (Number.isInteger(tabId)) {
@@ -50,10 +52,13 @@ async function focusDetachedPopup(entry, nextUrl) {
 }
 
 async function openDetachedPopupForTab(tab) {
-	const targetTabId = tab?.id && /https:\/\/www\.cardmarket\.com\//.test(tab.url || '')
-		? tab.id
-		: null;
+	const targetTabId = Number.isInteger(tab?.id) ? tab.id : null;
 	const detachedPopupUrl = getDetachedPopupUrl(targetTabId);
+
+	const storageArea = chrome.storage.session || chrome.storage.local;
+	await storageArea.set({
+		[DETACHED_TARGET_TAB_KEY]: targetTabId,
+	});
 
 	const detachedWindows = await findDetachedPopupWindows();
 	if (detachedWindows.length) {

@@ -109,6 +109,7 @@ const sellerPageHtmlCache = new Map();
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
 const POST_FILL_STATE_KEY = 'postFillDisabledSellerState';
+const DETACHED_TARGET_TAB_KEY = 'detachedTargetTabId';
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_SELLER_DELAY_MS = 250;
 const MIN_SELLER_DELAY_MS = 250;
@@ -1308,6 +1309,26 @@ async function getTargetTab() {
     } catch {
       // Fall through to live Cardmarket tab discovery.
     }
+  }
+
+  try {
+    const storageArea = await getStorageArea();
+    const stored = await storageArea.get(DETACHED_TARGET_TAB_KEY);
+    const storedTabId = Number.isInteger(stored?.[DETACHED_TARGET_TAB_KEY])
+      ? stored[DETACHED_TARGET_TAB_KEY]
+      : null;
+    if (Number.isInteger(storedTabId)) {
+      try {
+        const storedTab = await chrome.tabs.get(storedTabId);
+        if (storedTab?.url && /https:\/\/www\.cardmarket\.com\//.test(storedTab.url)) {
+          return storedTab;
+        }
+      } catch {
+        // Ignore stale stored tab ids and keep falling back.
+      }
+    }
+  } catch {
+    // Ignore storage lookup failures and keep falling back.
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
