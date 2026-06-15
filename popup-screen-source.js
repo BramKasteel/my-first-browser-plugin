@@ -23,7 +23,7 @@ function renderSourceTabOptions() {
 
   const selectedTabId = Number.isInteger(boundSourceTabId)
     ? String(boundSourceTabId)
-    : textOf(pendingSourceTabSelectionId || sourceTabSelectEl.value);
+    : '';
 
   sourceTabSelectEl.replaceChildren();
   if (!availableSourceTabs.length) {
@@ -32,7 +32,6 @@ function renderSourceTabOptions() {
     option.textContent = 'No open Cardmarket tabs found';
     sourceTabSelectEl.appendChild(option);
     sourceTabSelectEl.value = '';
-    if (bindSourceTabButton) bindSourceTabButton.disabled = true;
     return;
   }
 
@@ -51,9 +50,6 @@ function renderSourceTabOptions() {
   });
 
   sourceTabSelectEl.value = selectedTabId;
-  if (bindSourceTabButton) {
-    bindSourceTabButton.disabled = !textOf(sourceTabSelectEl.value);
-  }
 }
 
 function renderSourceTabStatus(message = '', tone = '') {
@@ -67,7 +63,6 @@ function renderSourceTabStatus(message = '', tone = '') {
 
 async function refreshSourceTabOptions({ announce = false } = {}) {
   const tabs = await queryOpenCardmarketTabs();
-  popupDebug('Refreshing source tab options.', { announce, tabs: tabs.map((tab) => summarizeTab(tab)) });
   availableSourceTabs = tabs.map((tab) => ({
     id: tab.id,
     title: textOf(tab.title),
@@ -79,7 +74,6 @@ async function refreshSourceTabOptions({ announce = false } = {}) {
 
   if (!availableSourceTabs.length) {
     boundSourceTabId = null;
-    pendingSourceTabSelectionId = '';
     await saveSourceTabBinding(null);
     renderSourceTabStatus('Open a Cardmarket tab, then bind it here.', 'bad');
     return [];
@@ -87,7 +81,6 @@ async function refreshSourceTabOptions({ announce = false } = {}) {
 
   if (Number.isInteger(boundSourceTabId) && availableSourceTabs.some((tab) => tab.id === boundSourceTabId)) {
     const boundTab = availableSourceTabs.find((tab) => tab.id === boundSourceTabId) || null;
-    pendingSourceTabSelectionId = boundTab ? String(boundTab.id) : '';
     renderSourceTabStatus(boundTab ? `Connected to ${formatSourceTabLabel(boundTab)}.` : '', 'good');
     return availableSourceTabs;
   }
@@ -95,13 +88,6 @@ async function refreshSourceTabOptions({ announce = false } = {}) {
   if (availableSourceTabs.length === 1) {
     await bindSourceTabById(availableSourceTabs[0].id, { announce });
     return availableSourceTabs;
-  }
-
-  if (pendingSourceTabSelectionId && availableSourceTabs.some((tab) => String(tab.id) === pendingSourceTabSelectionId)) {
-    renderSourceTabOptions();
-  } else {
-    pendingSourceTabSelectionId = '';
-    renderSourceTabOptions();
   }
 
   renderSourceTabStatus('Choose which open Cardmarket tab should be used for want-list and cart actions.', '');
@@ -120,13 +106,11 @@ async function bindSourceTabById(tabId, { announce = true } = {}) {
   }
 
   const tab = await chrome.tabs.get(numericTabId);
-  popupDebug('Attempting to bind source tab.', { requestedTabId: numericTabId, tab: summarizeTab(tab) }, { surface: true });
   if (!isCardmarketUrl(tab?.url || '')) {
     throw new Error('Selected tab is no longer a Cardmarket page. Refresh tab list and choose again.');
   }
 
   boundSourceTabId = tab.id;
-  pendingSourceTabSelectionId = String(tab.id);
   await saveSourceTabBinding({
     tabId: tab.id,
     title: tab.title,
@@ -200,13 +184,7 @@ function renderWantListOptions() {
 async function refreshWantLists({ quiet = false } = {}) {
   try {
     const tab = await ensureCardmarketTab();
-    popupDebug('Refreshing want lists via executeScript.', { quiet, tab: summarizeTab(tab) }, { surface: true });
     const result = await executeInTab(tab.id, injectedFetchAvailableWantListsFromCardmarket);
-    popupDebug('Want-list fetch returned.', {
-      quiet,
-      pageWantListId: textOf(result?.pageWantListId),
-      wantListCount: Array.isArray(result?.wantLists) ? result.wantLists.length : 0,
-    }, { surface: true, tone: Array.isArray(result?.wantLists) && result.wantLists.length ? 'good' : 'bad' });
     setAvailableWantLists(result?.wantLists || [], textOf(result?.pageWantListId));
     await saveSellerSettings();
 
@@ -221,7 +199,6 @@ async function refreshWantLists({ quiet = false } = {}) {
     renderWantListWarning('');
     if (!quiet) appendStatus(`Loaded ${availableWantLists.length} want lists from Cardmarket.`, 'good');
   } catch (error) {
-    popupDebug('refreshWantLists failed.', { quiet, message: error?.message || String(error) }, { surface: true, tone: 'bad' });
     scheduleWantListRetry();
     setAvailableWantLists([], '');
     renderWantListWarning(error.message);

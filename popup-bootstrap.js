@@ -51,18 +51,8 @@ refreshSourceTabsButton?.addEventListener('click', () => {
     renderSourceTabStatus(error.message, 'bad');
   });
 });
-bindSourceTabButton?.addEventListener('click', () => {
-  handleBindSourceTab().catch((error) => {
-    renderSourceTabStatus(error.message, 'bad');
-  });
-});
 sourceTabSelectEl?.addEventListener('change', () => {
-  pendingSourceTabSelectionId = textOf(sourceTabSelectEl.value);
-  if (bindSourceTabButton) {
-    bindSourceTabButton.disabled = !textOf(sourceTabSelectEl.value);
-  }
-
-  if (!pendingSourceTabSelectionId) {
+  if (!textOf(sourceTabSelectEl.value)) {
     return;
   }
 
@@ -204,12 +194,6 @@ scrapeAllItemsButton.textContent = 'Scrape sellers';
 appendStatus(isPersistentWorkspace
   ? 'Optimizer workspace loaded in its own tab. It stays open while you browse other tabs.'
   : 'Popup loaded. Use workspace mode for long-running scrapes.');
-popupDebug('Workspace bootstrap starting.', {
-  isWorkspace,
-  isPersistentWorkspace,
-  autoStartMode,
-  forcedTabId,
-});
 
 loadSellerSettings()
   .then(() => loadSourceTabBindingIntoState())

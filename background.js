@@ -2,14 +2,6 @@ const WORKSPACE_TAB_URL = chrome.runtime.getURL('popup.html');
 const WORKSPACE_QUERY_KEY = 'workspace';
 const SOURCE_TAB_BINDING_KEY = 'workspaceSourceTabBinding';
 
-function bgLog(message, details = undefined) {
-	if (details === undefined) {
-		console.info(`[CM Optimizer bg] ${message}`);
-		return;
-	}
-	console.info(`[CM Optimizer bg] ${message}`, details);
-}
-
 function getStorageArea() {
 	return chrome.storage.local;
 }
@@ -47,7 +39,6 @@ function parseWorkspaceUrl(url) {
 
 async function saveSourceTabBinding(tab) {
 	if (!tab?.id || !isCardmarketUrl(tab.url || '')) return;
-	bgLog('Saving source tab binding.', { id: tab.id, url: tab.url, title: tab.title || '' });
 
 	const storageArea = getStorageArea();
 	await storageArea.set({
@@ -62,13 +53,10 @@ async function saveSourceTabBinding(tab) {
 
 async function findWorkspaceTabs() {
 	const tabs = await chrome.tabs.query({});
-	const matches = tabs.filter((tab) => parseWorkspaceUrl(tab.url));
-	bgLog('Scanned tabs for workspace.', { totalTabs: tabs.length, workspaceTabs: matches.map((tab) => ({ id: tab.id, windowId: tab.windowId, url: tab.url })) });
-	return matches;
+	return tabs.filter((tab) => parseWorkspaceUrl(tab.url));
 }
 
 async function focusWorkspaceTab(workspaceTab, nextUrl) {
-	bgLog('Focusing existing workspace tab.', { id: workspaceTab.id, windowId: workspaceTab.windowId, nextUrl });
 	const currentUrl = workspaceTab.url || '';
 	if (currentUrl !== nextUrl && workspaceTab.id) {
 		await chrome.tabs.update(workspaceTab.id, { url: nextUrl });
@@ -83,10 +71,6 @@ async function focusWorkspaceTab(workspaceTab, nextUrl) {
 }
 
 async function openOrFocusWorkspace({ sourceTab = null, autoStart = '' } = {}) {
-	bgLog('openOrFocusWorkspace called.', {
-		autoStart,
-		sourceTab: sourceTab ? { id: sourceTab.id, windowId: sourceTab.windowId, index: sourceTab.index, url: sourceTab.url || '', title: sourceTab.title || '' } : null,
-	});
 	if (sourceTab?.id && isCardmarketUrl(sourceTab.url || '')) {
 		await saveSourceTabBinding(sourceTab);
 	}
@@ -95,7 +79,6 @@ async function openOrFocusWorkspace({ sourceTab = null, autoStart = '' } = {}) {
 	const workspaceTabs = await findWorkspaceTabs();
 	if (workspaceTabs.length) {
 		const [primaryTab, ...duplicateTabs] = workspaceTabs;
-		bgLog('Reusing existing workspace tab.', { primaryTabId: primaryTab.id, duplicateTabIds: duplicateTabs.map((tab) => tab.id) });
 		await Promise.all(duplicateTabs.map((tab) => tab.id ? chrome.tabs.remove(tab.id) : Promise.resolve()));
 		await focusWorkspaceTab(primaryTab, nextUrl);
 		return;
@@ -113,14 +96,12 @@ async function openOrFocusWorkspace({ sourceTab = null, autoStart = '' } = {}) {
 	}
 
 	const createdTab = await chrome.tabs.create(createProperties);
-	bgLog('Created workspace tab.', { id: createdTab.id, windowId: createdTab.windowId, url: createdTab.url || nextUrl });
 	if (createdTab.windowId) {
 		await chrome.windows.update(createdTab.windowId, { focused: true });
 	}
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
-	bgLog('chrome.action.onClicked fired.', tab ? { id: tab.id, windowId: tab.windowId, index: tab.index, url: tab.url || '', title: tab.title || '' } : null);
 	await openOrFocusWorkspace({ sourceTab: tab || null });
 });
 
@@ -128,15 +109,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 	if (message?.type !== 'workspace/open') {
 		return undefined;
 	}
-
-	bgLog('Received runtime workspace/open message.', {
-		message: {
-			autoStart: String(message?.autoStart || ''),
-			sourceTabId: message?.sourceTabId || null,
-			sourceTabUrl: message?.sourceTabUrl || '',
-		},
-		senderTab: sender.tab ? { id: sender.tab.id, windowId: sender.tab.windowId, url: sender.tab.url || '' } : null,
-	});
 
 	openOrFocusWorkspace({
 		sourceTab: message?.sourceTabId && isCardmarketUrl(message?.sourceTabUrl || '')
