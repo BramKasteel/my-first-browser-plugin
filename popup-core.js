@@ -847,13 +847,41 @@ function textOf(value) {
   return String(value || '').trim().replace(/\s+/g, ' ');
 }
 
+function summarizeTab(tab) {
+  if (!tab) return null;
+  return {
+    id: tab.id ?? null,
+    windowId: tab.windowId ?? null,
+    active: tab.active === true,
+    url: textOf(tab.url),
+    title: textOf(tab.title),
+  };
+}
+
+function popupDebug(message, details = undefined, { surface = false, tone = '' } = {}) {
+  if (details === undefined) {
+    console.info(`[CM Optimizer popup] ${message}`);
+  } else {
+    console.info(`[CM Optimizer popup] ${message}`, details);
+  }
+
+  if (surface) {
+    appendStatus(message, tone);
+  }
+}
+
 function isCardmarketUrl(url = '') {
   return /^https:\/\/(?:www\.)?cardmarket\.com\//.test(url);
 }
 
 async function queryOpenCardmarketTabs() {
   const allTabs = await chrome.tabs.query({});
-  return allTabs.filter((tab) => isCardmarketUrl(tab?.url || ''));
+  const matches = allTabs.filter((tab) => isCardmarketUrl(tab?.url || ''));
+  popupDebug('Scanned tabs for Cardmarket.', {
+    totalTabs: allTabs.length,
+    matches: matches.map((tab) => summarizeTab(tab)),
+  });
+  return matches;
 }
 
 function sleep(ms) {
@@ -1322,13 +1350,23 @@ function buildOptimizerPayload(batchResult) {
 }
 
 async function getTargetTab() {
+  popupDebug('Resolving target tab.', {
+    forcedTabId,
+    boundSourceTabId,
+    isWorkspace,
+    isPersistentWorkspace,
+  });
+
   if (Number.isInteger(forcedTabId)) {
     try {
       const forcedTab = await chrome.tabs.get(forcedTabId);
       if (isCardmarketUrl(forcedTab?.url || '')) {
+        popupDebug('Using forced tab id from workspace URL.', summarizeTab(forcedTab), { surface: true, tone: 'good' });
         return forcedTab;
       }
+      popupDebug('Forced tab id did not resolve to a Cardmarket tab.', summarizeTab(forcedTab), { surface: true, tone: 'bad' });
     } catch {
+      popupDebug(`Forced tab id ${forcedTabId} could not be resolved.`, undefined, { surface: true, tone: 'bad' });
     }
   }
 
@@ -1336,28 +1374,38 @@ async function getTargetTab() {
     try {
       const boundTab = await chrome.tabs.get(boundSourceTabId);
       if (isCardmarketUrl(boundTab?.url || '')) {
+        popupDebug('Using bound source tab from storage.', summarizeTab(boundTab), { surface: true, tone: 'good' });
         return boundTab;
       }
+      popupDebug('Stored bound source tab is no longer Cardmarket.', summarizeTab(boundTab), { surface: true, tone: 'bad' });
     } catch {
+      popupDebug(`Stored bound source tab ${boundSourceTabId} could not be resolved.`, undefined, { surface: true, tone: 'bad' });
     }
   }
 
   const openTabs = await queryOpenCardmarketTabs();
   const [activeTabInFocusedWindow] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (activeTabInFocusedWindow?.id && isCardmarketUrl(activeTabInFocusedWindow.url || '')) {
+    popupDebug('Using active Cardmarket tab from last focused window.', summarizeTab(activeTabInFocusedWindow), { surface: true, tone: 'good' });
     return activeTabInFocusedWindow;
   }
 
   if (openTabs.length === 1) {
+    popupDebug('Using single discovered Cardmarket tab.', summarizeTab(openTabs[0]), { surface: true, tone: 'good' });
     return openTabs[0] || null;
   }
 
   if (openTabs.length > 1) {
     const activeKnownTab = openTabs.find((tab) => tab.active);
-    if (activeKnownTab) return activeKnownTab;
+    if (activeKnownTab) {
+      popupDebug('Using active Cardmarket tab among multiple matches.', summarizeTab(activeKnownTab), { surface: true, tone: 'good' });
+      return activeKnownTab;
+    }
+    popupDebug('Multiple Cardmarket tabs found; falling back to first match.', openTabs.map((tab) => summarizeTab(tab)), { surface: true, tone: 'bad' });
     return openTabs[0] || null;
   }
 
+  popupDebug('No Cardmarket tab found during target resolution.', undefined, { surface: true, tone: 'bad' });
   return null;
 }
 
@@ -1395,10 +1443,15 @@ function wantsPageKind(pathname) {
 
 async function ensureCardmarketTab() {
   const tab = await getTargetTab();
-  if (!tab?.id) throw new Error('No active browser tab available.');
+  if (!tab?.id) {
+    popupDebug('ensureCardmarketTab failed: no tab resolved.', undefined, { surface: true, tone: 'bad' });
+    throw new Error('No active browser tab available.');
+  }
   if (!isCardmarketUrl(tab.url || '')) {
+    popupDebug('ensureCardmarketTab failed: resolved tab is not Cardmarket.', summarizeTab(tab), { surface: true, tone: 'bad' });
     throw new Error('Open a Cardmarket page in the active tab first.');
   }
+  popupDebug('ensureCardmarketTab succeeded.', summarizeTab(tab), { surface: true, tone: 'good' });
   return tab;
 }
 

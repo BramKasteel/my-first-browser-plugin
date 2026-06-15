@@ -67,6 +67,7 @@ function renderSourceTabStatus(message = '', tone = '') {
 
 async function refreshSourceTabOptions({ announce = false } = {}) {
   const tabs = await queryOpenCardmarketTabs();
+  popupDebug('Refreshing source tab options.', { announce, tabs: tabs.map((tab) => summarizeTab(tab)) });
   availableSourceTabs = tabs.map((tab) => ({
     id: tab.id,
     title: textOf(tab.title),
@@ -119,6 +120,7 @@ async function bindSourceTabById(tabId, { announce = true } = {}) {
   }
 
   const tab = await chrome.tabs.get(numericTabId);
+  popupDebug('Attempting to bind source tab.', { requestedTabId: numericTabId, tab: summarizeTab(tab) }, { surface: true });
   if (!isCardmarketUrl(tab?.url || '')) {
     throw new Error('Selected tab is no longer a Cardmarket page. Refresh tab list and choose again.');
   }
@@ -198,7 +200,13 @@ function renderWantListOptions() {
 async function refreshWantLists({ quiet = false } = {}) {
   try {
     const tab = await ensureCardmarketTab();
+    popupDebug('Refreshing want lists via executeScript.', { quiet, tab: summarizeTab(tab) }, { surface: true });
     const result = await executeInTab(tab.id, injectedFetchAvailableWantListsFromCardmarket);
+    popupDebug('Want-list fetch returned.', {
+      quiet,
+      pageWantListId: textOf(result?.pageWantListId),
+      wantListCount: Array.isArray(result?.wantLists) ? result.wantLists.length : 0,
+    }, { surface: true, tone: Array.isArray(result?.wantLists) && result.wantLists.length ? 'good' : 'bad' });
     setAvailableWantLists(result?.wantLists || [], textOf(result?.pageWantListId));
     await saveSellerSettings();
 
@@ -213,6 +221,7 @@ async function refreshWantLists({ quiet = false } = {}) {
     renderWantListWarning('');
     if (!quiet) appendStatus(`Loaded ${availableWantLists.length} want lists from Cardmarket.`, 'good');
   } catch (error) {
+    popupDebug('refreshWantLists failed.', { quiet, message: error?.message || String(error) }, { surface: true, tone: 'bad' });
     scheduleWantListRetry();
     setAvailableWantLists([], '');
     renderWantListWarning(error.message);
