@@ -199,13 +199,6 @@ function appendStatus(message, tone = '') {
   }
 }
 
-function logExpansionDebug(message, details, statusMessage = '') {
-  console.log(`[CM Expansion Debug] ${message}`, details);
-  if (statusMessage) {
-    appendStatus(statusMessage);
-  }
-}
-
 function setBusy(isBusy) {
   isUiBusy = isBusy;
   optimizeOrderButton.disabled = isBusy;
@@ -1445,8 +1438,24 @@ async function resolveSellerRequestContext(item) {
   throw new Error('Could not determine Cardmarket language and game for seller scrape. Re-extract want items from a Cardmarket want list first.');
 }
 
-function buildSellerRequestUrl(urlValue, activeFilters = {}, originValue = 'https://cardmarket.com') {
+function normalizeSellerRequestBaseUrl(urlValue, originValue = 'https://cardmarket.com') {
   const url = new URL(urlValue, originValue);
+  const pathParts = url.pathname.split('/').filter(Boolean);
+
+  if (pathParts.length >= 5 && /^products$/i.test(pathParts[2]) && /^singles$/i.test(pathParts[3])) {
+    const productSlug = pathParts[pathParts.length - 1] || '';
+    if (productSlug) {
+      url.pathname = `/${pathParts[0] || 'en'}/${pathParts[1] || 'Magic'}/Cards/${productSlug}`;
+    }
+  }
+
+  url.search = '';
+  url.hash = '';
+  return url;
+}
+
+function buildSellerRequestUrl(urlValue, activeFilters = {}, originValue = 'https://cardmarket.com') {
+  const url = normalizeSellerRequestBaseUrl(urlValue, originValue);
   if (activeFilters.expansionIds) {
     url.searchParams.set('idExpansion', activeFilters.expansionIds);
   }
@@ -1564,14 +1573,17 @@ function buildExpansionMatchKeys(value) {
   return normalizedKeys;
 }
 
-function getExpansionIdsForMatchKey(entriesByKey, matchKey) {
-  const candidates = entriesByKey.get(matchKey) || [];
-  if (!candidates.length) return [];
+function resolveExpansionIdsForRequestedName(requestedName, entriesByKey) {
+  const matchKeys = buildExpansionMatchKeys(requestedName);
+  for (const matchKey of matchKeys) {
+    const labelEntries = entriesByKey.get(matchKey);
+    if (!labelEntries || labelEntries.size !== 1) continue;
 
-  const canonicalLabels = [...new Set(candidates.map((entry) => entry.normalizedLabel).filter(Boolean))];
-  if (canonicalLabels.length !== 1) return [];
+    const [ids] = [...labelEntries.values()];
+    if (ids?.size) return [...ids];
+  }
 
-  return [...new Set(candidates.map((entry) => entry.value).filter(Boolean))];
+  return [];
 }
 
 function doesExpansionLabelMatchRequested(rowExpansionLabel, requestedExpansionNames) {
@@ -1646,18 +1658,15 @@ function matchExpansionIds(requestedExpansionNames, availableExpansionFilters) {
     if (!normalizedLabel || !/^\d+$/.test(value) || value === '0') return;
 
     buildExpansionMatchKeys(entry?.label).forEach((matchKey) => {
-      if (!entriesByKey.has(matchKey)) entriesByKey.set(matchKey, []);
-      entriesByKey.get(matchKey).push({
-        value,
-        normalizedLabel,
-      });
+      if (!entriesByKey.has(matchKey)) entriesByKey.set(matchKey, new Map());
+      const labelsByKey = entriesByKey.get(matchKey);
+      if (!labelsByKey.has(normalizedLabel)) labelsByKey.set(normalizedLabel, new Set());
+      labelsByKey.get(normalizedLabel).add(value);
     });
   });
 
   requestedExpansionNames.forEach((name) => {
-    const matchedIds = buildExpansionMatchKeys(name)
-      .map((matchKey) => getExpansionIdsForMatchKey(entriesByKey, matchKey))
-      .find((ids) => ids.length > 0) || [];
+    const matchedIds = resolveExpansionIdsForRequestedName(name, entriesByKey);
     if (!matchedIds.length) {
       unmatchedExpansionNames.push(name);
       return;
@@ -1684,14 +1693,6 @@ async function fetchAvailableExpansionFiltersForItem({ item, requestContext, req
   delete sanitizedFilters.expansionIds;
 
   const candidateUrls = [buildSellerRequestUrl(item.productUrl, sanitizedFilters, runtimeContext.origin)];
-  logExpansionDebug('expansion-filter probe start', {
-    productName: textOf(item?.productName),
-    productUrl: textOf(item?.productUrl),
-    requestedExpansions: getRequestedExpansionNames(item),
-    probeUrls: candidateUrls,
-    sanitizedFilters,
-  }, `Expansion probe start: ${textOf(item?.productName) || 'item'}.`);
-
   const seenUrls = new Set();
   for (const candidateUrl of candidateUrls) {
     if (!candidateUrl || seenUrls.has(candidateUrl)) continue;
@@ -1709,22 +1710,11 @@ async function fetchAvailableExpansionFiltersForItem({ item, requestContext, req
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const options = inspectAvailableExpansionFiltersInDocument(doc);
       if (options.length) {
-        logExpansionDebug('expansion-filter probe success', {
-          productName: textOf(item?.productName),
-          candidateUrl,
-          options: options.map((entry) => ({ id: entry.value, label: entry.label })),
-        }, `Expansion probe found ${options.length} filters for ${textOf(item?.productName) || 'item'}.`);
         return { options, rateLimited: false };
       }
     } catch {
     }
   }
-
-  logExpansionDebug('expansion-filter probe empty', {
-    productName: textOf(item?.productName),
-    productUrl: textOf(item?.productUrl),
-    requestedExpansions: getRequestedExpansionNames(item),
-  }, `Expansion probe found no filters for ${textOf(item?.productName) || 'item'}.`);
 
   return { options: [], rateLimited: false };
 }
@@ -1732,11 +1722,6 @@ async function fetchAvailableExpansionFiltersForItem({ item, requestContext, req
 async function resolveItemExpansionRequestFilter({ item, requestContext, requestFilters = {} }) {
   const requestedExpansionNames = getRequestedExpansionNames(item);
   if (!requestedExpansionNames.length) {
-    logExpansionDebug('no requested expansions on item', {
-      productName: textOf(item?.productName),
-      productUrl: textOf(item?.productUrl),
-      item,
-    }, `No requested expansions on ${textOf(item?.productName) || 'item'}.`);
     return {
       expansionIds: '',
       matchedExpansionNames: [],
@@ -1762,14 +1747,6 @@ async function resolveItemExpansionRequestFilter({ item, requestContext, request
     ...matchExpansionIds(requestedExpansionNames, availableExpansionFilters),
     rateLimited,
   };
-
-  logExpansionDebug('expansion-filter resolved', {
-    productName: textOf(item?.productName),
-    productUrl: textOf(item?.productUrl),
-    requestedExpansionNames,
-    availableExpansionFilters: availableExpansionFilters.map((entry) => ({ id: entry.value, label: entry.label })),
-    resolvedFilter,
-  }, `Expansion ids for ${textOf(item?.productName) || 'item'}: ${resolvedFilter.expansionIds || 'none'}.`);
 
   return resolvedFilter;
 }
@@ -1890,13 +1867,6 @@ async function executeSellerScopeScrape({
     sellerCountryIds,
     sellerTypeId,
   });
-  logExpansionDebug('seller scope request', {
-    productName: textOf(item?.productName),
-    productUrl: textOf(item?.productUrl),
-    partitionLabel,
-    requestFilters,
-    requestUrl: buildSellerRequestUrl(item.productUrl, requestFilters, requestContext?.origin || 'https://cardmarket.com'),
-  }, `Seller request URL ready for ${textOf(item?.productName) || 'item'}.`);
   appendStatus(`Querying seller scope: ${describeSellerScope({ sellerCountryIds, sellerTypeId })}.`);
   let scopeResult = await scrapeSingleWantItemSellers({
     item,
@@ -1945,12 +1915,6 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
       appendStatus(`Could not match expansions for ${itemLabel}: ${expansionFilter.unmatchedExpansionNames.join(', ')}. Scraping without expansion filter.`, 'bad');
     }
   }
-  logExpansionDebug('seller scrape base filters', {
-    productName: textOf(item?.productName),
-    productUrl: textOf(item?.productUrl),
-    baseRequestFilters,
-    expansionFilter,
-  }, `Base seller filters prepared for ${textOf(item?.productName) || 'item'}.`);
   const preferredResult = await executeSellerScopeScrape({
     item,
     delayMs,
