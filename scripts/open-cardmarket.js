@@ -77,7 +77,8 @@ async function main() {
 
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
     console.log(`Opened ${targetUrl}`);
-    await context.waitForEvent('close');
+    console.log('Browser will stay open until you close it manually.');
+    await context.waitForEvent('close', { timeout: 0 });
   } catch (error) {
     console.error(error);
     await context.close().catch(() => {});
