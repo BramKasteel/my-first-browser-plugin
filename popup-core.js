@@ -647,12 +647,12 @@ function canAccessWorkflowStep(stepName, state = getWorkflowState()) {
   if (stepName === 'sellers') return state.hasExtractedWants && !state.wantListBlocked;
   if (stepName === 'optimize') return state.hasOptimizerPayload;
   if (stepName === 'fill') return state.hasOptimalCart;
-  if (stepName === 'post-fill') return state.hasFilledCart && state.hasPostFillChoices;
+  if (stepName === 'post-fill') return state.hasFilledCart;
   return false;
 }
 
 function getSuggestedWorkflowStep(state = getWorkflowState()) {
-  if (state.hasFilledCart && state.hasPostFillChoices) return 'post-fill';
+  if (state.hasFilledCart) return 'post-fill';
   if (state.hasOptimalCart) return 'fill';
   if (state.hasOptimizerPayload) return 'optimize';
   if (state.hasExtractedWants) return 'sellers';
@@ -803,9 +803,12 @@ function renderWorkflow() {
   }
 
   if (postFillStepBadgeEl) {
-    if (state.hasFilledCart && state.hasPostFillChoices) {
+    if (state.hasFilledCart) {
       const disabledCount = rememberedDisabledSellerIds.length;
-      setStepBadge(postFillStepBadgeEl, disabledCount ? `${disabledCount} disabled` : 'Ready', 'good');
+      const badgeText = disabledCount
+        ? `${disabledCount} disabled`
+        : (state.hasPostFillChoices ? 'Ready' : 'Waiting');
+      setStepBadge(postFillStepBadgeEl, badgeText, 'good');
     } else {
       setStepBadge(postFillStepBadgeEl, 'Locked');
     }

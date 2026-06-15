@@ -22,20 +22,19 @@
     * { box-sizing: border-box; }
     html {
       max-height: 100vh;
-      overflow-y: auto;
+      overflow: hidden;
     }
 
     body {
       margin: 0;
       width: 420px;
-      min-height: 520px;
-      max-height: 100vh;
       font-family: "Trebuchet MS", "Segoe UI", sans-serif;
       background:
         radial-gradient(circle at top right, rgba(217, 119, 6, 0.18), transparent 38%),
         linear-gradient(180deg, #0d1318 0%, var(--bg) 100%);
       color: var(--text);
-      overflow-y: auto;
+      max-height: 100vh;
+      overflow: hidden;
     }
 
     body.detached {
@@ -50,6 +49,16 @@
       padding: 18px;
       display: grid;
       gap: 14px;
+      min-height: 520px;
+      max-height: 100vh;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    body.detached main {
+      min-height: 100vh;
+      max-height: none;
+      overflow: visible;
     }
 
     .hero {
