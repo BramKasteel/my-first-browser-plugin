@@ -1501,53 +1501,6 @@ function stripTrailingExpansionVariantCodes(value) {
   return tokens.join(' ');
 }
 
-function normalizeExpansionVariantToken(value) {
-  const normalized = normalizeExpansionFilterLabel(value);
-  if (!normalized) return '';
-  if (/^extras?$/.test(normalized)) return 'extras';
-  if (/^(promo|promos|promo pack|promo packs)$/.test(normalized)) return 'promo';
-  return normalized;
-}
-
-function splitExpansionFamilyAndVariant(value) {
-  const normalized = normalizeExpansionFilterLabel(value);
-  if (!normalized) return { family: '', variant: '' };
-
-  const rawTokens = normalized.split(' ').filter(Boolean);
-  const variantPatterns = [
-    { pattern: ['promo', 'pack'], variant: 'promo' },
-    { pattern: ['promo', 'packs'], variant: 'promo' },
-    { pattern: ['promos'], variant: 'promo' },
-    { pattern: ['promo'], variant: 'promo' },
-    { pattern: ['extras'], variant: 'extras' },
-    { pattern: ['extra'], variant: 'extras' },
-  ];
-
-  for (const { pattern, variant } of variantPatterns) {
-    const patternLength = pattern.length;
-    if (rawTokens.length <= patternLength) continue;
-
-    const startsWithPattern = pattern.every((token, index) => rawTokens[index] === token);
-    if (startsWithPattern) {
-      return {
-        family: rawTokens.slice(patternLength).join(' '),
-        variant,
-      };
-    }
-
-    const offset = rawTokens.length - patternLength;
-    const endsWithPattern = pattern.every((token, index) => rawTokens[offset + index] === token);
-    if (endsWithPattern) {
-      return {
-        family: rawTokens.slice(0, offset).join(' '),
-        variant,
-      };
-    }
-  }
-
-  return { family: normalized, variant: '' };
-}
-
 function buildExpansionTokenKey(value) {
   const normalized = normalizeExpansionFilterLabel(value);
   if (!normalized) return '';
@@ -1573,9 +1526,10 @@ function buildExpansionMatchKeys(value) {
 
     const withoutPrefix = stripExpansionFilterPrefix(currentValue);
     const withoutTrailingCodes = stripTrailingExpansionVariantCodes(currentValue);
+    const withoutVersionSuffix = currentValue.replace(/\s*[:\-]?\s*version\s+\d+\s*$/i, '').trim();
     const withoutCodeParens = currentValue.replace(/\s*\((?=[^)]*(?:\d|\/))[^)]*\)\s*$/i, '').trim();
 
-    [withoutPrefix, withoutTrailingCodes, withoutCodeParens].forEach((nextValue) => {
+    [withoutPrefix, withoutTrailingCodes, withoutVersionSuffix, withoutCodeParens].forEach((nextValue) => {
       if (nextValue && !variants.has(nextValue)) queue.push(nextValue);
     });
   }
@@ -1613,69 +1567,13 @@ function getExpansionIdsForMatchKey(entriesByKey, matchKey) {
   return [...new Set(candidates.map((entry) => entry.value).filter(Boolean))];
 }
 
-function buildRequestedExpansionFamilyContext(requestedExpansionNames) {
-  const familyCounts = new Map();
-
-  requestedExpansionNames.forEach((name) => {
-    const { family } = splitExpansionFamilyAndVariant(name);
-    if (!family) return;
-    familyCounts.set(family, (familyCounts.get(family) || 0) + 1);
-  });
-
-  const dominantFamily = [...familyCounts.entries()]
-    .sort((left, right) => right[1] - left[1])[0]?.[0] || '';
-
-  return requestedExpansionNames.map((name) => {
-    const parsed = splitExpansionFamilyAndVariant(name);
-    if (!parsed.family && dominantFamily) {
-      parsed.family = dominantFamily;
-    }
-    return {
-      name,
-      family: parsed.family || dominantFamily,
-      variant: normalizeExpansionVariantToken(parsed.variant),
-    };
-  });
-}
-
-function resolveExpansionIdsByFamily({ requestedEntry, availableEntries, usedIds }) {
-  const family = textOf(requestedEntry?.family);
-  if (!family) return [];
-
-  const variant = normalizeExpansionVariantToken(requestedEntry?.variant);
-  const familyMatches = availableEntries.filter((entry) => entry.family === family && (!usedIds || !usedIds.has(entry.value)));
-  if (!familyMatches.length) return [];
-
-  if (variant) {
-    const variantMatches = familyMatches.filter((entry) => entry.variant === variant);
-    if (variantMatches.length === 1) return [variantMatches[0].value];
-    return [];
-  }
-
-  const baseMatches = familyMatches.filter((entry) => !entry.variant);
-  if (baseMatches.length === 1) return [baseMatches[0].value];
-  return [];
-}
-
 function doesExpansionLabelMatchRequested(rowExpansionLabel, requestedExpansionNames) {
   const normalizedRowLabel = textOf(rowExpansionLabel);
   if (!normalizedRowLabel) return false;
 
   const rowMatchKeys = new Set(buildExpansionMatchKeys(normalizedRowLabel));
-  if ([...rowMatchKeys].length) {
-    const hasDirectMatch = requestedExpansionNames.some((name) => buildExpansionMatchKeys(name)
-      .some((matchKey) => rowMatchKeys.has(matchKey)));
-    if (hasDirectMatch) return true;
-  }
-
-  const rowExpansion = splitExpansionFamilyAndVariant(normalizedRowLabel);
-  if (!rowExpansion.family) return false;
-  const rowVariant = normalizeExpansionVariantToken(rowExpansion.variant);
-
-  return buildRequestedExpansionFamilyContext(requestedExpansionNames).some((entry) => {
-    if (entry.family !== rowExpansion.family) return false;
-    return normalizeExpansionVariantToken(entry.variant) === rowVariant;
-  });
+  return requestedExpansionNames.some((name) => buildExpansionMatchKeys(name)
+    .some((matchKey) => rowMatchKeys.has(matchKey)));
 }
 
 function inspectAvailableExpansionFiltersInDocument(doc) {
@@ -1734,21 +1632,11 @@ function matchExpansionIds(requestedExpansionNames, availableExpansionFilters) {
   const matchedExpansionNames = [];
   const unmatchedExpansionNames = [];
   const entriesByKey = new Map();
-  const availableEntries = [];
-  const usedExpansionIds = new Set();
 
   availableExpansionFilters.forEach((entry) => {
     const normalizedLabel = normalizeExpansionFilterLabel(entry?.label);
     const value = textOf(entry?.value);
     if (!normalizedLabel || !/^\d+$/.test(value) || value === '0') return;
-
-    const familyEntry = splitExpansionFamilyAndVariant(entry?.label);
-    availableEntries.push({
-      value,
-      normalizedLabel,
-      family: familyEntry.family,
-      variant: normalizeExpansionVariantToken(familyEntry.variant),
-    });
 
     buildExpansionMatchKeys(entry?.label).forEach((matchKey) => {
       if (!entriesByKey.has(matchKey)) entriesByKey.set(matchKey, []);
@@ -1759,15 +1647,10 @@ function matchExpansionIds(requestedExpansionNames, availableExpansionFilters) {
     });
   });
 
-  buildRequestedExpansionFamilyContext(requestedExpansionNames).forEach(({ name, family, variant }) => {
+  requestedExpansionNames.forEach((name) => {
     const matchedIds = buildExpansionMatchKeys(name)
       .map((matchKey) => getExpansionIdsForMatchKey(entriesByKey, matchKey))
-      .find((ids) => ids.length > 0)
-      || resolveExpansionIdsByFamily({
-        requestedEntry: { family, variant },
-        availableEntries,
-        usedIds: usedExpansionIds,
-      });
+      .find((ids) => ids.length > 0) || [];
     if (!matchedIds.length) {
       unmatchedExpansionNames.push(name);
       return;
@@ -1775,7 +1658,6 @@ function matchExpansionIds(requestedExpansionNames, availableExpansionFilters) {
     matchedExpansionNames.push(name);
     matchedIds.forEach((value) => {
       if (!expansionIds.includes(value)) expansionIds.push(value);
-      usedExpansionIds.add(value);
     });
   });
 
@@ -1852,35 +1734,15 @@ async function resolveItemExpansionRequestFilter({ item, requestContext, request
   };
 }
 
-function shouldPartitionSellerScrape(baseResult, countryScopes) {
-  if (!baseResult || baseResult.error) return false;
-  if (!countryScopes.length) return false;
-  if (countryScopes.length === 1 && (baseResult.requestFilters?.sellerCountryIds || []).length === 1) return false;
-  if ((baseResult.requestFilters?.sellerCountryIds || []).length > 1) return true;
-  return isSellerScopeLikelyCapped(baseResult, 250);
-}
-
-function buildSellerCountryScopes({ requestCountryIds, availableSellerFilters }) {
-  const explicitIds = [...new Set((requestCountryIds || []).filter(Boolean))];
-  if (explicitIds.length > 1) {
-    return explicitIds.map((countryId) => ({ countryId, label: `country:${countryId}` }));
-  }
-  if (explicitIds.length === 1) return [{ countryId: explicitIds[0], label: `country:${explicitIds[0]}` }];
-
+function getBargainSellerCountryIds({ preferredCountryIds, availableSellerFilters }) {
+  const excludedIds = new Set((preferredCountryIds || []).filter(Boolean));
   const sellerCountryOptions = Array.isArray(availableSellerFilters?.sellerCountry)
     ? availableSellerFilters.sellerCountry
     : [];
-  const discoveredIds = [...new Set(sellerCountryOptions
+
+  return [...new Set(sellerCountryOptions
     .map((entry) => String(entry?.value || '').trim())
-    .filter((value) => /^\d+$/.test(value)))];
-
-  return discoveredIds.map((countryId) => ({ countryId, label: `country:${countryId}` }));
-}
-
-function isSellerScopeLikelyCapped(result, minimumSellerCount = 300) {
-  if (!result || result.error) return false;
-  if (result.ajaxDebug?.maxPaginatedResultsReached) return true;
-  return (result.totalSellers || 0) >= minimumSellerCount;
+    .filter((value) => /^\d+$/.test(value) && !excludedIds.has(value)))];
 }
 
 function mergeSellerScopeResults(baseResult, partitionResults) {
@@ -1965,18 +1827,19 @@ async function executeSellerScopeScrape({
   previewLimit,
   requestContext,
   requestLanguageId,
+  expansionIds,
   sellerCountryIds,
   sellerReputationId,
   maxShippingTimeId,
   sellerTypeId,
   partitionLabel,
-  logPowerSellerFallback,
   onScopeStart,
 }) {
   const requestIsFoil = typeof item?.isFoil === 'boolean' ? item.isFoil : null;
   const requestFilters = {
     languageId: requestLanguageId,
     isFoil: requestIsFoil,
+    expansionIds,
     sellerCountryIds,
     sellerReputationId,
     maxShippingTimeId,
@@ -2035,92 +1898,55 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
       appendStatus(`Could not match expansions for ${itemLabel}: ${expansionFilter.unmatchedExpansionNames.join(', ')}. Scraping without expansion filter.`, 'bad');
     }
   }
-  const explicitCountryScopes = buildSellerCountryScopes({
-    requestCountryIds,
-    availableSellerFilters: null,
+  const preferredResult = await executeSellerScopeScrape({
+    item,
+    delayMs,
+    maxSellerPages,
+    previewLimit: 12,
+    requestContext,
+    requestLanguageId,
+    expansionIds: baseRequestFilters.expansionIds,
+    sellerCountryIds: requestCountryIds,
+    sellerReputationId,
+    maxShippingTimeId,
+    sellerTypeId,
+    partitionLabel: 'preferred-countries',
+    onScopeStart,
   });
-  let result;
+  if (!preferredResult) {
+    throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
+  }
 
-  if (explicitCountryScopes.length) {
-    const partitionLabels = explicitCountryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
-    if (logPartitionRetry && explicitCountryScopes.length > 1) {
-      appendStatus(`Scraping ${explicitCountryScopes.length} country partitions directly: ${partitionLabels.join(', ')}.`, 'good');
-    }
-    const partitionResults = [];
-    for (const scope of explicitCountryScopes) {
-      const scopeLabel = getCountryNameById(scope.countryId) || scope.label;
-      const scopeResult = await executeSellerScopeScrape({
+  let result = preferredResult;
+  if (getIncludeBargainsFromOtherCountries()) {
+    const bargainCountryIds = getBargainSellerCountryIds({
+      preferredCountryIds: requestCountryIds,
+      availableSellerFilters: preferredResult.availableSellerFilters,
+    });
+    if (bargainCountryIds.length) {
+      if (logPartitionRetry) {
+        const bargainCountryNames = bargainCountryIds.map((countryId) => getCountryNameById(countryId) || `country:${countryId}`);
+        appendStatus(`Checking bargains in other countries: ${bargainCountryNames.join(', ')}.`, 'good');
+      }
+      const bargainResult = await executeSellerScopeScrape({
         item,
         delayMs,
         maxSellerPages,
         previewLimit: 12,
         requestContext,
         requestLanguageId,
-        sellerCountryIds: [scope.countryId],
+        expansionIds: baseRequestFilters.expansionIds,
+        sellerCountryIds: bargainCountryIds,
         sellerReputationId,
         maxShippingTimeId,
         sellerTypeId,
-        partitionLabel: scopeLabel,
-        logPowerSellerFallback: logPartitionRetry,
+        partitionLabel: 'bargain-countries',
         onScopeStart,
       });
-      if (scopeResult) {
-        scopeResult.partitionLabel = scope.label;
-        partitionResults.push(scopeResult);
+      if (bargainResult) {
+        bargainResult.partitionLabel = 'bargains';
+        result = mergeSellerScopeResults(preferredResult, [bargainResult]);
       }
-    }
-    if (!partitionResults.length) {
-      throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
-    }
-    result = mergeSellerScopeResults(null, partitionResults);
-  } else {
-    const baseResult = await scrapeSingleWantItemSellers({
-      item,
-      delay: delayMs,
-      maxSellerPages,
-      previewLimit: 12,
-      requestFilters: baseRequestFilters,
-      requestContext,
-    });
-    if (!baseResult) {
-      throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
-    }
-    result = baseResult;
-
-    const countryScopes = buildSellerCountryScopes({
-      requestCountryIds,
-      availableSellerFilters: baseResult.availableSellerFilters,
-    });
-    const shouldPartitionByCountry = shouldPartitionSellerScrape(baseResult, countryScopes);
-    if (shouldPartitionByCountry) {
-      const partitionLabels = countryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
-      if (logPartitionRetry) {
-        appendStatus(`Broad seller scope looks capped. Retrying in ${countryScopes.length} country partitions: ${partitionLabels.join(', ')}.`, 'good');
-      }
-      const partitionResults = [];
-      for (const scope of countryScopes) {
-        const scopeLabel = getCountryNameById(scope.countryId) || scope.label;
-        const scopeResult = await executeSellerScopeScrape({
-          item,
-          delayMs,
-          maxSellerPages,
-          previewLimit: 12,
-          requestContext,
-          requestLanguageId,
-          sellerCountryIds: [scope.countryId],
-          sellerReputationId,
-          maxShippingTimeId,
-          sellerTypeId,
-          partitionLabel: scopeLabel,
-          logPowerSellerFallback: logPartitionRetry,
-          onScopeStart,
-        });
-        if (scopeResult) {
-          scopeResult.partitionLabel = scope.label;
-          partitionResults.push(scopeResult);
-        }
-      }
-      result = mergeSellerScopeResults(baseResult, partitionResults);
     }
   }
 
