@@ -1306,11 +1306,20 @@ async function getTargetTab() {
     try {
       return await chrome.tabs.get(forcedTabId);
     } catch {
-      return null;
+      // Fall through to live Cardmarket tab discovery.
     }
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.url && /https:\/\/www\.cardmarket\.com\//.test(tab.url)) {
+    return tab;
+  }
+
+  const cardmarketTabs = await chrome.tabs.query({ url: 'https://www.cardmarket.com/*' });
+  if (cardmarketTabs.length) {
+    return cardmarketTabs[0];
+  }
+
   return tab || null;
 }
 
