@@ -399,6 +399,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
     function parseDesktopRow(row) {
       const checkbox = row.querySelector('input[name="checkWantsRow[]"][data-id-want], input[data-id-want]');
       const nameLink = row.querySelector('td.name a[href], a[href*="/Products/"]');
+      const expansionContainer = row.querySelector('td.expansion');
       const preview = row.querySelector('td.preview [data-bs-title], td.preview [data-bs-original-title], td.preview [title], [data-bs-title], [title]');
       const conditionBadge = row.querySelector('td.condition .article-condition .badge, td.condition .badge');
       const priceCell = row.querySelector('td.buyPrice');
@@ -423,7 +424,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
         quantity: textOf(quantityCell?.getAttribute('data-amount')) || textOf(quantityCell?.textContent) || '1',
         languages: extractSelectedLanguages(row),
         minCondition: extractSelectedCondition(row) || textOf(conditionBadge?.textContent),
-        expansions: extractSelectedExpansions(row.querySelector('td.expansion')),
+        expansions: extractSelectedExpansions(expansionContainer),
         maxPrice: priceMatch?.[1] || '',
         isFoil: extractDesktopTernaryPreference(row, 7, 'foil') ?? extractBooleanPreference(row, 'foil', /\bFoil\b/i, rowText),
         isReverseHolo: extractBooleanPreference(row, 'reverse', /Reverse\s*Holo/i, rowText),
@@ -438,6 +439,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
       const previewTitle = preview?.getAttribute('data-bs-title') || preview?.getAttribute('data-bs-original-title') || preview?.getAttribute('title') || '';
       const conditionBadge = row.querySelector('.article-condition .badge, .badge');
       const rawHref = nameLink?.getAttribute('href') || '';
+      const expansionContainer = getMobileFieldValueNode(row, 'Expansion');
       const productUrl = normalizeProductUrl(rawHref);
       const productIdMatch = previewTitle.match(/product-images\.s3\.cardmarket\.com\/\d+\/[^/]+\/(\d+)\//i)
         || rawHref.match(/\/(\d+)(?:[/?#]|$)/);
@@ -452,7 +454,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
         quantity: textOf(row.querySelector('.want-amount')?.textContent).replace(/\s+/g, '') || '1',
         languages: extractSelectedLanguages(row),
         minCondition: extractSelectedCondition(row) || textOf(conditionBadge?.textContent) || textOf(getMobileFieldValueNode(row, 'Min. Condition')?.textContent),
-        expansions: extractSelectedExpansions(getMobileFieldValueNode(row, 'Expansion')),
+        expansions: extractSelectedExpansions(expansionContainer),
         maxPrice: '',
         isFoil: extractMobileTernaryPreference(row, 'Foil?') ?? extractBooleanPreference(row, 'foil', /\bFoil\b/i, rowText),
         isReverseHolo: extractBooleanPreference(row, 'reverse', /Reverse\s*Holo/i, rowText),
@@ -517,11 +519,21 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
     function extractSelectedExpansions(container) {
       if (!container) return [];
       const labels = extractSelectedOptionLabels(container, /expansion|set/i);
+      const linkLabels = [...container.querySelectorAll('a[href*="/Expansions/"], .expansion-symbol, [class*="expansion" i] a[href]')]
+        .map((node) => textOf(node.getAttribute('aria-label') || node.getAttribute('title') || node.textContent || ''));
       const tooltipLabels = [...container.querySelectorAll('[aria-label], [data-bs-original-title], [data-original-title], [title]')]
         .map((node) => textOf(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || ''));
       const hiddenLabels = [...container.querySelectorAll('.visually-hidden')]
         .map((node) => textOf(node.textContent));
-      return [...new Set([...labels, ...tooltipLabels, ...hiddenLabels].filter((label) => label && !/^any$/i.test(label)))];
+      const visibleText = textOf(container.textContent || '');
+      const textCandidates = [];
+      if (visibleText && !/^any$/i.test(visibleText)) {
+        textCandidates.push(...visibleText
+          .split(/\s{2,}|\n|\r|\t|\s*[|,;]\s*/)
+          .map((value) => textOf(value))
+          .filter(Boolean));
+      }
+      return [...new Set([...labels, ...linkLabels, ...tooltipLabels, ...hiddenLabels, ...textCandidates].filter((label) => label && !/^any$/i.test(label)))];
     }
 
     function extractSelectedCondition(container) {

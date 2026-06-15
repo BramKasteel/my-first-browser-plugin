@@ -1657,25 +1657,66 @@ function resolveExpansionIdsByFamily({ requestedEntry, availableEntries, usedIds
   return [];
 }
 
+function doesExpansionLabelMatchRequested(rowExpansionLabel, requestedExpansionNames) {
+  const normalizedRowLabel = textOf(rowExpansionLabel);
+  if (!normalizedRowLabel) return false;
+
+  const rowMatchKeys = new Set(buildExpansionMatchKeys(normalizedRowLabel));
+  if ([...rowMatchKeys].length) {
+    const hasDirectMatch = requestedExpansionNames.some((name) => buildExpansionMatchKeys(name)
+      .some((matchKey) => rowMatchKeys.has(matchKey)));
+    if (hasDirectMatch) return true;
+  }
+
+  const rowExpansion = splitExpansionFamilyAndVariant(normalizedRowLabel);
+  if (!rowExpansion.family) return false;
+  const rowVariant = normalizeExpansionVariantToken(rowExpansion.variant);
+
+  return buildRequestedExpansionFamilyContext(requestedExpansionNames).some((entry) => {
+    if (entry.family !== rowExpansion.family) return false;
+    return normalizeExpansionVariantToken(entry.variant) === rowVariant;
+  });
+}
+
 function inspectAvailableExpansionFiltersInDocument(doc) {
   const select = doc.querySelector('select[name="idExpansion"], select[name^="idExpansion"], select#idExpansion, select[name="expansion"]');
-  if (!select) return [];
-
   const seen = new Set();
-  return [...select.options]
-    .map((option) => ({
+  const selectOptions = select
+    ? [...select.options].map((option) => ({
       rawName: select.name || '',
       value: textOf(option.value),
       label: textOf(option.textContent),
       selected: option.selected,
     }))
-    .filter((option) => {
-      if (!/^\d+$/.test(option.value) || option.value === '0' || !option.label) return false;
-      const marker = `${option.rawName}|${option.value}|${option.label}`;
-      if (seen.has(marker)) return false;
-      seen.add(marker);
-      return true;
-    });
+    : [];
+
+  const checkboxOptions = [...doc.querySelectorAll('input[type="checkbox"][name^="idExpansion["]')].map((input) => {
+    const rawName = textOf(input.getAttribute('name') || '');
+    const explicitValue = textOf(input.getAttribute('value') || '');
+    const bracketValue = rawName.match(/^idExpansion\[(\d+)\]$/i)?.[1] || '';
+    const value = explicitValue || bracketValue;
+    const labelNode = doc.querySelector(`label[for="${CSS.escape(input.id || '')}"]`) || input.closest('.form-check')?.querySelector('label');
+    const label = textOf(
+      labelNode?.querySelector('span:last-child')?.textContent
+      || labelNode?.textContent
+      || input.getAttribute('aria-label')
+      || ''
+    );
+    return {
+      rawName,
+      value,
+      label,
+      selected: input.checked,
+    };
+  });
+
+  return [...selectOptions, ...checkboxOptions].filter((option) => {
+    if (!/^\d+$/.test(option.value) || option.value === '0' || !option.label) return false;
+    const marker = `${option.rawName}|${option.value}|${option.label}`;
+    if (seen.has(marker)) return false;
+    seen.add(marker);
+    return true;
+  });
 }
 
 function buildExpansionFilterCacheKey(item, requestContext) {
@@ -2183,11 +2224,13 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
         || buildFallbackPagedRequest(request.url, page + 1))
         : null;
 
+      const requestedExpansionNames = getRequestedExpansionNames(item);
       let addedThisPage = 0;
       for (const el of rowEls) {
         if (sellers.length >= MAX_SELLER_ROWS) break;
         const seller = parseSellerRow(el);
         if (seller.buyBlocked) continue;
+        if (requestedExpansionNames.length && !doesExpansionLabelMatchRequested(seller.expansionName, requestedExpansionNames)) continue;
         if (!seller.articleId || seen.has(seller.articleId)) continue;
         seen.add(seller.articleId);
         sellers.push(seller);
@@ -2636,6 +2679,13 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     row.location = extractSellerLocation(sellerColumn, row.sellerName);
     const conditionNode = el.querySelector('.article-condition .badge, .article-condition');
     row.condition = textOf(conditionNode?.textContent);
+    const expansionLink = el.querySelector('a[href*="/Expansions/"]');
+    row.expansionName = textOf(
+      expansionLink?.getAttribute('aria-label')
+      || expansionLink?.getAttribute('title')
+      || expansionLink?.textContent
+      || ''
+    );
     const languageNode = [...el.querySelectorAll('span[aria-label], span[data-bs-original-title], span[data-original-title], span[title]')]
       .find((node) => /^(Deutsch|Englisch|Französisch|Italienisch|Spanisch|Portugiesisch|Japanisch|Koreanisch|Chinesisch|Russisch|S-Chinesisch|T-Chinesisch|English|German|French|Italian|Spanish|Portuguese|Japanese|Korean|Chinese|Russian)$/
         .test(node.getAttribute('aria-label') || node.getAttribute('data-bs-original-title') || node.getAttribute('data-original-title') || node.getAttribute('title') || ''));
