@@ -316,7 +316,7 @@ def _solve_exact_shipping_order(
             if len(tier_candidates) == 1:
                 tier = tier_candidates[0]
                 seller_inactive_literals[seller_id] = [active.Not()]
-                model.Add(total_value_expr <= tier.max_value_cents - 1).OnlyEnforceIf(
+                model.Add(total_value_expr <= tier.max_value_cents).OnlyEnforceIf(
                     active
                 )
                 model.Add(total_units <= tier.max_units).OnlyEnforceIf(active)
@@ -329,7 +329,7 @@ def _solve_exact_shipping_order(
             for tier_index, tier in enumerate(tier_candidates):
                 tier_var = model.NewBoolVar(f"ship_{seller_id}_{tier_index}")
                 seller_shipping_tier_choice_vars[seller_id].append((tier, tier_var))
-                model.Add(total_value_expr <= tier.max_value_cents - 1).OnlyEnforceIf(
+                model.Add(total_value_expr <= tier.max_value_cents).OnlyEnforceIf(
                     tier_var
                 )
                 model.Add(total_units <= tier.max_units).OnlyEnforceIf(tier_var)

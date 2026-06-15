@@ -2472,7 +2472,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
         || explicitLocationNode.getAttribute('title')
         || ''
       );
-      const explicitCountry = extractCountryFromLabel(explicitLabel);
+      const explicitCountry = extractCountryFromLabel(explicitLabel, { allowShortCodes: true });
       if (explicitCountry) return explicitCountry;
     }
 
@@ -2490,20 +2490,30 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
       if (!label) continue;
       if (sellerName && label === sellerName) continue;
       if (/seller|user|account|profile|outstanding|very good|good|professional|private|powerseller/i.test(label)) continue;
-      const country = extractCountryFromLabel(label);
+      const country = extractCountryFromLabel(label, {
+        allowShortCodes: /item\s+location|ships?\s+from|country/i.test(label) || isLikelyCountryIndicatorNode(node),
+      });
       if (country) return country;
     }
     return '';
   }
 
-  function extractCountryFromLabel(label) {
+  function isLikelyCountryIndicatorNode(node) {
+    if (!node || typeof node.matches !== 'function') return false;
+    if (node.matches('[class*="flag" i], [class*="country" i], img[alt], [data-country], [data-country-name]')) {
+      return true;
+    }
+    return !!node.closest?.('[class*="flag" i], [class*="country" i], [data-country], [data-country-name]');
+  }
+
+  function extractCountryFromLabel(label, { allowShortCodes = false } = {}) {
     const itemLocationMatch = textOf(label).match(/item\s+location\s*:\s*(.+)$/i);
     if (itemLocationMatch) {
-      const explicitMatch = normalizeCountryNameLocal(itemLocationMatch[1]);
+      const explicitMatch = normalizeCountryNameLocal(itemLocationMatch[1], { allowShortCodes: true });
       if (explicitMatch) return explicitMatch;
     }
 
-    const directMatch = normalizeCountryNameLocal(label);
+    const directMatch = normalizeCountryNameLocal(label, { allowShortCodes });
     if (directMatch) return directMatch;
 
     const stripped = textOf(label)
@@ -2516,83 +2526,18 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
     for (let size = Math.min(3, words.length); size >= 1; size -= 1) {
       for (let index = 0; index <= words.length - size; index += 1) {
         const chunk = words.slice(index, index + size).join(' ');
-        const country = normalizeCountryNameLocal(chunk);
+        const country = normalizeCountryNameLocal(chunk, { allowShortCodes });
         if (country) return country;
       }
     }
     return '';
   }
 
-  function normalizeCountryNameLocal(value) {
+  function normalizeCountryNameLocal(value, { allowShortCodes = false } = {}) {
     const normalized = textOf(value).toLowerCase();
     if (!normalized) return '';
-    const aliases = {
-      at: 'Austria',
-      austria: 'Austria',
-      be: 'Belgium',
-      belgium: 'Belgium',
-      bg: 'Bulgaria',
-      bulgaria: 'Bulgaria',
-      ch: 'Switzerland',
-      switzerland: 'Switzerland',
-      schweiz: 'Switzerland',
-      cy: 'Cyprus',
-      cyprus: 'Cyprus',
-      cz: 'Czechia',
-      czechia: 'Czechia',
-      'czech republic': 'Czechia',
-      de: 'Germany',
-      germany: 'Germany',
-      deutschland: 'Germany',
-      dk: 'Denmark',
-      denmark: 'Denmark',
-      ee: 'Estonia',
-      estonia: 'Estonia',
-      es: 'Spain',
-      spain: 'Spain',
-      fi: 'Finland',
-      finland: 'Finland',
-      fr: 'France',
-      france: 'France',
-      gb: 'United Kingdom',
-      uk: 'United Kingdom',
-      'united kingdom': 'United Kingdom',
-      'great britain': 'United Kingdom',
-      hu: 'Hungary',
-      hungary: 'Hungary',
-      hr: 'Croatia',
-      croatia: 'Croatia',
-      ie: 'Ireland',
-      ireland: 'Ireland',
-      it: 'Italy',
-      italy: 'Italy',
-      lt: 'Lithuania',
-      lithuania: 'Lithuania',
-      lu: 'Luxembourg',
-      luxembourg: 'Luxembourg',
-      lv: 'Latvia',
-      latvia: 'Latvia',
-      mt: 'Malta',
-      malta: 'Malta',
-      nl: 'Netherlands',
-      netherlands: 'Netherlands',
-      nederland: 'Netherlands',
-      no: 'Norway',
-      norway: 'Norway',
-      pl: 'Poland',
-      poland: 'Poland',
-      pt: 'Portugal',
-      portugal: 'Portugal',
-      ro: 'Romania',
-      romania: 'Romania',
-      se: 'Sweden',
-      sweden: 'Sweden',
-      si: 'Slovenia',
-      slovenia: 'Slovenia',
-      sk: 'Slovakia',
-      slovakia: 'Slovakia',
-    };
-    return aliases[normalized] || '';
+    if (!allowShortCodes && /^[a-z]{2}$/i.test(normalized)) return '';
+    return normalizeCountryName(normalized);
   }
 
   function textOf(value) {

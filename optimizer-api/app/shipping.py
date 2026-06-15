@@ -142,7 +142,7 @@ def prune_route_tiers_for_order_bounds(
         list(route_tiers.tiers),
         sort_key=lambda tier: (
             tier.total_price_cents,
-            -min(_shipping_tier_value_limit(tier), seller_value_upper_bound),
+            -min(tier.max_value_cents, seller_value_upper_bound),
             -min(tier.max_units, seller_unit_upper_bound),
         ),
         dominates=lambda existing, candidate: _shipping_tier_dominates_for_order_bounds(
@@ -211,13 +211,9 @@ def _normalize_route_tiers(
 def _shipping_tier_dominates(existing: ShippingTier, candidate: ShippingTier) -> bool:
     return (
         existing.total_price_cents <= candidate.total_price_cents
-        and _shipping_tier_value_limit(existing) >= _shipping_tier_value_limit(candidate)
+        and existing.max_value_cents >= candidate.max_value_cents
         and existing.max_units >= candidate.max_units
     )
-
-
-def _shipping_tier_value_limit(tier: ShippingTier) -> int:
-    return tier.max_value_cents - 1
 
 
 def _shipping_tier_dominates_for_order_bounds(
@@ -230,8 +226,8 @@ def _shipping_tier_dominates_for_order_bounds(
     if existing.total_price_cents > candidate.total_price_cents:
         return False
 
-    if min(_shipping_tier_value_limit(existing), seller_value_upper_bound) < min(
-        _shipping_tier_value_limit(candidate),
+    if min(existing.max_value_cents, seller_value_upper_bound) < min(
+        candidate.max_value_cents,
         seller_value_upper_bound,
     ):
         return False

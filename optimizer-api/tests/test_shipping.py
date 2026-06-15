@@ -237,50 +237,6 @@ def test_prune_route_tiers_for_order_bounds_drops_redundant_letters() -> None:
     )
 
 
-def test_prune_route_tiers_for_order_bounds_keeps_next_tier_at_value_boundary() -> None:
-    pruned = prune_route_tiers_for_order_bounds(
-        route_tiers=_normalize_route_tiers(
-            [
-                {
-                    "name": "Letter 20g",
-                    "isTracked": False,
-                    "maxValue": "25,00 €",
-                    "maxWeight": 20,
-                    "stampPrice": "1,25 €",
-                    "price": "1,55 €",
-                    "isLetter": True,
-                    "isVirtual": False,
-                },
-                {
-                    "name": "Parcel",
-                    "isTracked": False,
-                    "maxValue": "500,00 €",
-                    "maxWeight": 5000,
-                    "stampPrice": "6,99 €",
-                    "price": "7,99 €",
-                    "isLetter": False,
-                    "isVirtual": False,
-                },
-            ]
-        ),
-        seller_value_upper_bound=2500,
-        seller_unit_upper_bound=4,
-    )
-
-    assert pruned.tiers == (
-        ShippingTier(
-            total_price_cents=155,
-            max_value_cents=2500,
-            max_units=4,
-        ),
-        ShippingTier(
-            total_price_cents=799,
-            max_value_cents=50000,
-            max_units=PARCEL_CARD_ORDER_MAX_UNITS,
-        ),
-    )
-
-
 def test_load_shipping_route_book_skips_estimation_methods(tmp_path) -> None:
     fixture_path = tmp_path / "shipping_costs.json"
     fixture_path.write_text(

@@ -106,27 +106,6 @@ def test_optimize_uses_more_expensive_method_when_value_exceeds_letter_limit(
     assert response.totals.shipping_total == 7.99
 
 
-def test_optimize_uses_more_expensive_method_when_value_hits_letter_limit(
-    monkeypatch,
-) -> None:
-    route_book = ShippingRouteBook(
-        country_ids={"germany": 7, "netherlands": 23},
-        tiers_by_route={
-            ("germany", "netherlands"): _tiers(
-                values=[(155, 2500, 10), (799, 50000, 1000)],
-            )
-        },
-    )
-    monkeypatch.setattr(
-        "app.solver.shipping.load_shipping_route_book", lambda: route_book
-    )
-
-    response = optimize_order(_request(unit_price=25.0, quantity=1))
-
-    assert response.status == "optimal"
-    assert response.totals.shipping_total == 7.99
-
-
 def test_optimize_uses_card_count_thresholds_for_letter_breakpoints(
     monkeypatch,
 ) -> None:
