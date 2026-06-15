@@ -1501,6 +1501,53 @@ function stripTrailingExpansionVariantCodes(value) {
   return tokens.join(' ');
 }
 
+function normalizeExpansionVariantToken(value) {
+  const normalized = normalizeExpansionFilterLabel(value);
+  if (!normalized) return '';
+  if (/^extras?$/.test(normalized)) return 'extras';
+  if (/^(promo|promos|promo pack|promo packs)$/.test(normalized)) return 'promo';
+  return normalized;
+}
+
+function splitExpansionFamilyAndVariant(value) {
+  const normalized = normalizeExpansionFilterLabel(value);
+  if (!normalized) return { family: '', variant: '' };
+
+  const rawTokens = normalized.split(' ').filter(Boolean);
+  const variantPatterns = [
+    { pattern: ['promo', 'pack'], variant: 'promo' },
+    { pattern: ['promo', 'packs'], variant: 'promo' },
+    { pattern: ['promos'], variant: 'promo' },
+    { pattern: ['promo'], variant: 'promo' },
+    { pattern: ['extras'], variant: 'extras' },
+    { pattern: ['extra'], variant: 'extras' },
+  ];
+
+  for (const { pattern, variant } of variantPatterns) {
+    const patternLength = pattern.length;
+    if (rawTokens.length <= patternLength) continue;
+
+    const startsWithPattern = pattern.every((token, index) => rawTokens[index] === token);
+    if (startsWithPattern) {
+      return {
+        family: rawTokens.slice(patternLength).join(' '),
+        variant,
+      };
+    }
+
+    const offset = rawTokens.length - patternLength;
+    const endsWithPattern = pattern.every((token, index) => rawTokens[offset + index] === token);
+    if (endsWithPattern) {
+      return {
+        family: rawTokens.slice(0, offset).join(' '),
+        variant,
+      };
+    }
+  }
+
+  return { family: normalized, variant: '' };
+}
+
 function buildExpansionTokenKey(value) {
   const normalized = normalizeExpansionFilterLabel(value);
   if (!normalized) return '';
@@ -1566,6 +1613,50 @@ function getExpansionIdsForMatchKey(entriesByKey, matchKey) {
   return [...new Set(candidates.map((entry) => entry.value).filter(Boolean))];
 }
 
+function buildRequestedExpansionFamilyContext(requestedExpansionNames) {
+  const familyCounts = new Map();
+
+  requestedExpansionNames.forEach((name) => {
+    const { family } = splitExpansionFamilyAndVariant(name);
+    if (!family) return;
+    familyCounts.set(family, (familyCounts.get(family) || 0) + 1);
+  });
+
+  const dominantFamily = [...familyCounts.entries()]
+    .sort((left, right) => right[1] - left[1])[0]?.[0] || '';
+
+  return requestedExpansionNames.map((name) => {
+    const parsed = splitExpansionFamilyAndVariant(name);
+    if (!parsed.family && dominantFamily) {
+      parsed.family = dominantFamily;
+    }
+    return {
+      name,
+      family: parsed.family || dominantFamily,
+      variant: normalizeExpansionVariantToken(parsed.variant),
+    };
+  });
+}
+
+function resolveExpansionIdsByFamily({ requestedEntry, availableEntries, usedIds }) {
+  const family = textOf(requestedEntry?.family);
+  if (!family) return [];
+
+  const variant = normalizeExpansionVariantToken(requestedEntry?.variant);
+  const familyMatches = availableEntries.filter((entry) => entry.family === family && (!usedIds || !usedIds.has(entry.value)));
+  if (!familyMatches.length) return [];
+
+  if (variant) {
+    const variantMatches = familyMatches.filter((entry) => entry.variant === variant);
+    if (variantMatches.length === 1) return [variantMatches[0].value];
+    return [];
+  }
+
+  const baseMatches = familyMatches.filter((entry) => !entry.variant);
+  if (baseMatches.length === 1) return [baseMatches[0].value];
+  return [];
+}
+
 function inspectAvailableExpansionFiltersInDocument(doc) {
   const select = doc.querySelector('select[name="idExpansion"], select[name^="idExpansion"], select#idExpansion, select[name="expansion"]');
   if (!select) return [];
@@ -1602,11 +1693,21 @@ function matchExpansionIds(requestedExpansionNames, availableExpansionFilters) {
   const matchedExpansionNames = [];
   const unmatchedExpansionNames = [];
   const entriesByKey = new Map();
+  const availableEntries = [];
+  const usedExpansionIds = new Set();
 
   availableExpansionFilters.forEach((entry) => {
     const normalizedLabel = normalizeExpansionFilterLabel(entry?.label);
     const value = textOf(entry?.value);
     if (!normalizedLabel || !/^\d+$/.test(value) || value === '0') return;
+
+    const familyEntry = splitExpansionFamilyAndVariant(entry?.label);
+    availableEntries.push({
+      value,
+      normalizedLabel,
+      family: familyEntry.family,
+      variant: normalizeExpansionVariantToken(familyEntry.variant),
+    });
 
     buildExpansionMatchKeys(entry?.label).forEach((matchKey) => {
       if (!entriesByKey.has(matchKey)) entriesByKey.set(matchKey, []);
@@ -1617,10 +1718,15 @@ function matchExpansionIds(requestedExpansionNames, availableExpansionFilters) {
     });
   });
 
-  requestedExpansionNames.forEach((name) => {
+  buildRequestedExpansionFamilyContext(requestedExpansionNames).forEach(({ name, family, variant }) => {
     const matchedIds = buildExpansionMatchKeys(name)
       .map((matchKey) => getExpansionIdsForMatchKey(entriesByKey, matchKey))
-      .find((ids) => ids.length > 0) || [];
+      .find((ids) => ids.length > 0)
+      || resolveExpansionIdsByFamily({
+        requestedEntry: { family, variant },
+        availableEntries,
+        usedIds: usedExpansionIds,
+      });
     if (!matchedIds.length) {
       unmatchedExpansionNames.push(name);
       return;
@@ -1628,6 +1734,7 @@ function matchExpansionIds(requestedExpansionNames, availableExpansionFilters) {
     matchedExpansionNames.push(name);
     matchedIds.forEach((value) => {
       if (!expansionIds.includes(value)) expansionIds.push(value);
+      usedExpansionIds.add(value);
     });
   });
 
