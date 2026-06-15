@@ -21,6 +21,10 @@ function formatSourceTabLabel(tab) {
 function renderSourceTabOptions() {
   if (!sourceTabSelectEl) return;
 
+  const selectedTabId = Number.isInteger(boundSourceTabId)
+    ? String(boundSourceTabId)
+    : textOf(pendingSourceTabSelectionId || sourceTabSelectEl.value);
+
   sourceTabSelectEl.replaceChildren();
   if (!availableSourceTabs.length) {
     const option = document.createElement('option');
@@ -35,18 +39,18 @@ function renderSourceTabOptions() {
   const placeholder = document.createElement('option');
   placeholder.value = '';
   placeholder.textContent = 'Choose Cardmarket tab';
-  placeholder.selected = !Number.isInteger(boundSourceTabId);
+  placeholder.selected = !selectedTabId;
   sourceTabSelectEl.appendChild(placeholder);
 
   availableSourceTabs.forEach((tab) => {
     const option = document.createElement('option');
     option.value = String(tab.id);
     option.textContent = formatSourceTabLabel(tab);
-    option.selected = tab.id === boundSourceTabId;
+    option.selected = String(tab.id) === selectedTabId;
     sourceTabSelectEl.appendChild(option);
   });
 
-  sourceTabSelectEl.value = Number.isInteger(boundSourceTabId) ? String(boundSourceTabId) : '';
+  sourceTabSelectEl.value = selectedTabId;
   if (bindSourceTabButton) {
     bindSourceTabButton.disabled = !textOf(sourceTabSelectEl.value);
   }
@@ -74,6 +78,7 @@ async function refreshSourceTabOptions({ announce = false } = {}) {
 
   if (!availableSourceTabs.length) {
     boundSourceTabId = null;
+    pendingSourceTabSelectionId = '';
     await saveSourceTabBinding(null);
     renderSourceTabStatus('Open a Cardmarket tab, then bind it here.', 'bad');
     return [];
@@ -81,6 +86,7 @@ async function refreshSourceTabOptions({ announce = false } = {}) {
 
   if (Number.isInteger(boundSourceTabId) && availableSourceTabs.some((tab) => tab.id === boundSourceTabId)) {
     const boundTab = availableSourceTabs.find((tab) => tab.id === boundSourceTabId) || null;
+    pendingSourceTabSelectionId = boundTab ? String(boundTab.id) : '';
     renderSourceTabStatus(boundTab ? `Connected to ${formatSourceTabLabel(boundTab)}.` : '', 'good');
     return availableSourceTabs;
   }
@@ -88,6 +94,13 @@ async function refreshSourceTabOptions({ announce = false } = {}) {
   if (availableSourceTabs.length === 1) {
     await bindSourceTabById(availableSourceTabs[0].id, { announce });
     return availableSourceTabs;
+  }
+
+  if (pendingSourceTabSelectionId && availableSourceTabs.some((tab) => String(tab.id) === pendingSourceTabSelectionId)) {
+    renderSourceTabOptions();
+  } else {
+    pendingSourceTabSelectionId = '';
+    renderSourceTabOptions();
   }
 
   renderSourceTabStatus('Choose which open Cardmarket tab should be used for want-list and cart actions.', '');
@@ -111,6 +124,7 @@ async function bindSourceTabById(tabId, { announce = true } = {}) {
   }
 
   boundSourceTabId = tab.id;
+  pendingSourceTabSelectionId = String(tab.id);
   await saveSourceTabBinding({
     tabId: tab.id,
     title: tab.title,

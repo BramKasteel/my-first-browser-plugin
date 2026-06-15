@@ -49,7 +49,7 @@ async function saveSourceTabBinding(tab) {
 }
 
 async function findWorkspaceWindow() {
-	const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['popup'] });
+	const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal', 'popup'] });
 	return windows
 		.map((popupWindow) => {
 			const workspaceTab = popupWindow.tabs?.find((tab) => parseWorkspaceUrl(tab.url));
@@ -87,7 +87,7 @@ async function openOrFocusWorkspace({ sourceTab = null, autoStart = '' } = {}) {
 
 	await chrome.windows.create({
 		url: nextUrl,
-		type: 'popup',
+		type: 'normal',
 		width: 460,
 		height: 920,
 		focused: true,

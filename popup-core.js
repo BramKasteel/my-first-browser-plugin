@@ -112,6 +112,7 @@ let postFillSellerChoices = [];
 let refillWarningActive = false;
 let boundSourceTabId = Number.isInteger(forcedTabId) ? forcedTabId : null;
 let availableSourceTabs = [];
+let pendingSourceTabSelectionId = Number.isInteger(forcedTabId) ? String(forcedTabId) : '';
 const sellerExpansionFilterCache = new Map();
 const sellerPageHtmlCache = new Map();
 

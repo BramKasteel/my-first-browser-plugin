@@ -57,9 +57,18 @@ bindSourceTabButton?.addEventListener('click', () => {
   });
 });
 sourceTabSelectEl?.addEventListener('change', () => {
+  pendingSourceTabSelectionId = textOf(sourceTabSelectEl.value);
   if (bindSourceTabButton) {
     bindSourceTabButton.disabled = !textOf(sourceTabSelectEl.value);
   }
+
+  if (!pendingSourceTabSelectionId) {
+    return;
+  }
+
+  handleBindSourceTab().catch((error) => {
+    renderSourceTabStatus(error.message, 'bad');
+  });
 });
 workflowStepButtons.forEach((button) => {
   button.addEventListener('click', () => {
