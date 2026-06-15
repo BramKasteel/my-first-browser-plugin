@@ -10,6 +10,7 @@ const sellerTypeFilterEl = document.getElementById('sellerTypeFilter');
 const sellerCountryFilterInputEl = document.getElementById('sellerCountryFilterInput');
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
 const selectedSellerCountriesEl = document.getElementById('selectedSellerCountries');
+const sellerBargainsCheckboxEl = document.getElementById('includeBargainsFromOtherCountries');
 const sellerCountryLimitHintEl = document.getElementById('sellerCountryLimitHint');
 const sellerSettingsBodyEl = document.getElementById('sellerSettingsBody');
 const sellerScrapeProgressEl = document.getElementById('sellerScrapeProgress');
@@ -78,6 +79,7 @@ let latestExtractedItems = [];
 let isRunActive = false;
 let isUiBusy = false;
 let selectedSellerCountries = [];
+let includeBargainsFromOtherCountries = false;
 let availableWantLists = [];
 let selectedWantListId = '';
 let restoredWantListId = '';
@@ -101,7 +103,6 @@ const OPTIMIZER_WARMUP_THROTTLE_MS = 90 * 1000;
 const WANT_LIST_RETRY_DELAY_MS = 2000;
 const DEFAULT_SELLER_COUNTRIES = [];
 const MAX_WANT_LIST_ITEMS = 100;
-const SINGLE_COUNTRY_WANT_LIST_THRESHOLD = 30;
 const MAX_SELLER_COUNTRIES = 2;
 const DEFAULT_OPTIMIZER_API_URL = textOf(window.APP_CONFIG?.optimizerApiUrl);
 const WORKFLOW_STEPS = ['source', 'sellers', 'optimize', 'fill'];
@@ -184,6 +185,7 @@ function setBusy(isBusy) {
   sellerDeliveryTimeFilterEl.disabled = isBusy;
   sellerTypeFilterEl.disabled = isBusy;
   if (sellerCountryFilterInputEl) sellerCountryFilterInputEl.disabled = isBusy;
+  if (sellerBargainsCheckboxEl) sellerBargainsCheckboxEl.disabled = isBusy;
   sellerLocationFilterListEl.querySelectorAll('button').forEach((button) => {
     button.disabled = isBusy;
   });
@@ -249,6 +251,7 @@ function getCurrentSellerFilterState() {
     maxShippingTime: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl?.value),
     sellerType: normalizeSellerType(sellerTypeFilterEl?.value),
     sellerCountries: getSelectedSellerCountries(),
+    includeBargainsFromOtherCountries: getIncludeBargainsFromOtherCountries(),
   };
 }
 
@@ -258,7 +261,8 @@ function getLoadedWantItemCount() {
 
 function getSellerPagesPerCountry(itemCount = getLoadedWantDistinctItemCount()) {
   const normalizedItemCount = Math.max(0, parseInt(itemCount, 10) || 0);
-  if (normalizedItemCount < 20) return 4;
+  if (normalizedItemCount < 20) return 5;
+  if (normalizedItemCount < 30) return 4;
   if (normalizedItemCount <= 40) return 3;
   if (normalizedItemCount <= 60) return 2;
   return 1;
@@ -281,7 +285,7 @@ function getWantListSelectionPolicy(distinctItemCount = getLoadedWantDistinctIte
   return {
     distinctItemCount: normalizedDistinctItemCount,
     isBlocked,
-    maxSellerCountries: normalizedDistinctItemCount > SINGLE_COUNTRY_WANT_LIST_THRESHOLD ? 1 : MAX_SELLER_COUNTRIES,
+    maxSellerCountries: MAX_SELLER_COUNTRIES,
     warningMessage: isBlocked
       ? `Want list has ${normalizedDistinctItemCount} distinct items. Seller scrape locked above ${MAX_WANT_LIST_ITEMS}. Choose smaller want list.`
       : '',
@@ -291,10 +295,7 @@ function getWantListSelectionPolicy(distinctItemCount = getLoadedWantDistinctIte
 function getWantListSelectionHint(policy = getWantListSelectionPolicy()) {
   if (!policy.distinctItemCount) return '';
   if (policy.isBlocked) return policy.warningMessage;
-  if (policy.maxSellerCountries === 1) {
-    return `Want list has ${policy.distinctItemCount} distinct items. Only 1 seller country allowed above ${SINGLE_COUNTRY_WANT_LIST_THRESHOLD}.`;
-  }
-  return `Want list has ${policy.distinctItemCount} distinct items. Up to ${MAX_SELLER_COUNTRIES} seller countries allowed.`;
+  return `Want list has ${policy.distinctItemCount} distinct items. Select 1 or 2 preferred seller countries.`;
 }
 
 function getSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
@@ -302,25 +303,18 @@ function getSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
   if (policy.isBlocked) {
     return `Want list has ${policy.distinctItemCount} distinct items. Seller scrape disabled above ${MAX_WANT_LIST_ITEMS}.`;
   }
-  if (policy.maxSellerCountries === 1) {
-    return `Want list has more than ${SINGLE_COUNTRY_WANT_LIST_THRESHOLD} distinct items. Select exactly 1 seller country for scrape.`;
-  }
-  return `Want list has ${policy.distinctItemCount} distinct items. You can choose up to ${policy.maxSellerCountries} seller countries for scrape.`;
+  return `Want list has ${policy.distinctItemCount} distinct items. Select 1 or 2 preferred seller countries for scrape.`;
 }
 
 function renderSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
   if (!sellerCountryLimitHintEl) return;
   const message = getSellerCountryLimitHint(policy);
-  const isSingleCountryPolicy = !policy.isBlocked && policy.maxSellerCountries === 1;
-  const hasValidSelection = !policy.isBlocked && selectedSellerCountries.length <= policy.maxSellerCountries;
-  const hasExactRequiredSelection = selectedSellerCountries.length === 1;
+  const selectedCount = selectedSellerCountries.length;
+  const hasValidSelection = !policy.isBlocked && selectedCount >= 1 && selectedCount <= policy.maxSellerCountries;
   sellerCountryLimitHintEl.textContent = message;
   sellerCountryLimitHintEl.hidden = !message;
-  sellerCountryLimitHintEl.classList.toggle(
-    'good',
-    !!message && (isSingleCountryPolicy ? hasExactRequiredSelection : hasValidSelection)
-  );
-  sellerCountryLimitHintEl.classList.toggle('bad', !!message && (policy.isBlocked || (isSingleCountryPolicy && !hasExactRequiredSelection)));
+  sellerCountryLimitHintEl.classList.toggle('good', !!message && hasValidSelection);
+  sellerCountryLimitHintEl.classList.toggle('bad', !!message && (policy.isBlocked || !hasValidSelection));
 }
 
 function areSameCountries(left = [], right = []) {
@@ -339,6 +333,17 @@ function getSellerCountriesForCurrentPolicy(countries, policy = getWantListSelec
   return clampSellerCountriesToPolicy(countries, policy);
 }
 
+function getIncludeBargainsFromOtherCountries() {
+  return !!includeBargainsFromOtherCountries;
+}
+
+function setIncludeBargainsFromOtherCountries(nextValue) {
+  includeBargainsFromOtherCountries = !!nextValue;
+  if (sellerBargainsCheckboxEl) {
+    sellerBargainsCheckboxEl.checked = includeBargainsFromOtherCountries;
+  }
+}
+
 function enforceWantListSelectionPolicy({ persist = false, announce = false } = {}) {
   const policy = getWantListSelectionPolicy();
   const constrainedCountries = getSellerCountriesForCurrentPolicy(selectedSellerCountries, policy);
@@ -350,9 +355,7 @@ function enforceWantListSelectionPolicy({ persist = false, announce = false } = 
     renderSellerCountryFilterList(constrainedCountries);
     if (announce && policy.distinctItemCount) {
       appendStatus(
-        policy.maxSellerCountries === 1
-          ? `Want list has more than ${SINGLE_COUNTRY_WANT_LIST_THRESHOLD} distinct items. Seller country filter trimmed to 1 country.`
-          : `Seller country filter trimmed to ${policy.maxSellerCountries} countries.`,
+        `Preferred country filter trimmed to ${policy.maxSellerCountries} countries.`,
         'bad'
       );
     }

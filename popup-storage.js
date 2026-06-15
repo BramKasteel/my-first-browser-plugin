@@ -12,13 +12,14 @@ async function loadSellerSettings() {
   const settings = stored[SELLER_SETTINGS_KEY] || {};
   sellerRequestDelayMs = sanitizeSellerDelay(settings.delayMs);
   syncOptimizerApiUrlInput();
-  sellerReputationFilterEl.value = '';
-  sellerDeliveryTimeFilterEl.value = '';
-  sellerTypeFilterEl.value = '';
+  sellerReputationFilterEl.value = normalizeSellerReputation(settings.sellerReputationFilter);
+  sellerDeliveryTimeFilterEl.value = normalizeMaxShippingTime(settings.sellerDeliveryTimeFilter);
+  sellerTypeFilterEl.value = normalizeSellerType(settings.sellerTypeFilter);
   renderBuyerCountryOptions(settings.buyerCountry || inferBuyerCountry());
-  selectedWantListId = '';
-  restoredWantListId = '';
-  setSelectedSellerCountries([]);
+  selectedWantListId = textOf(settings.selectedWantListId);
+  restoredWantListId = textOf(settings.selectedWantListId);
+  setSelectedSellerCountries(getStoredSellerCountries(settings));
+  setIncludeBargainsFromOtherCountries(settings.includeBargainsFromOtherCountries === true);
 }
 
 async function loadDetachedBatchState() {
@@ -51,6 +52,8 @@ async function saveSellerSettings() {
       sellerReputationFilter: normalizeSellerReputation(sellerReputationFilterEl.value),
       sellerDeliveryTimeFilter: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
       sellerTypeFilter: normalizeSellerType(sellerTypeFilterEl.value),
+      sellerCountries: getSelectedSellerCountries(),
+      includeBargainsFromOtherCountries: getIncludeBargainsFromOtherCountries(),
       buyerCountry: getSelectedBuyerCountry(),
       selectedWantListId: textOf(selectedWantListId),
     },

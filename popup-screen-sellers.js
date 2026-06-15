@@ -1,9 +1,10 @@
 function syncSellerScrapeButton(isBusy = false) {
   const hasItems = hasLoadedWantItems();
   const wantListPolicy = getWantListSelectionPolicy();
-  scrapeAllItemsButton.disabled = isBusy || !hasItems || wantListPolicy.isBlocked;
+  const hasValidCountrySelection = getSelectedSellerCountries().length >= 1;
+  scrapeAllItemsButton.disabled = isBusy || !hasItems || wantListPolicy.isBlocked || !hasValidCountrySelection;
   scrapeAllItemsButton.classList.toggle('is-busy', isBusy);
-  scrapeAllItemsButton.classList.toggle('secondary', !hasItems || wantListPolicy.isBlocked);
+  scrapeAllItemsButton.classList.toggle('secondary', !hasItems || wantListPolicy.isBlocked || !hasValidCountrySelection);
   renderSellerFilterState();
 }
 
@@ -68,6 +69,8 @@ function refreshOptimizerPayloadFromCurrentState() {
     requestSettings: {
       ...(latestFrontendPayload.requestSettings || {}),
       buyerCountry: getSelectedBuyerCountry(),
+      sellerCountries: getSelectedSellerCountries(),
+      includeBargainsFromOtherCountries: getIncludeBargainsFromOtherCountries(),
     },
   };
   renderFrontendPayload(latestFrontendPayload);
@@ -109,14 +112,15 @@ function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTR
   const query = getSellerCountryQuery();
   const otherCountriesSectionEl = sellerCountryFilterInputEl?.closest('.country-section');
   const otherCountriesLabelEl = otherCountriesSectionEl?.querySelector('.country-section-label');
-  const isPickerDisabled = isUiBusy || wantListPolicy.isBlocked || maxCountriesReached;
+  const isPickerDisabled = isUiBusy || wantListPolicy.isBlocked;
+  const hideOtherCountries = isPickerDisabled || maxCountriesReached;
 
   if (sellerCountryFilterInputEl) {
-    sellerCountryFilterInputEl.disabled = isPickerDisabled;
-    sellerCountryFilterInputEl.setAttribute('aria-expanded', String(!isPickerDisabled));
+    sellerCountryFilterInputEl.disabled = isPickerDisabled || maxCountriesReached;
+    sellerCountryFilterInputEl.setAttribute('aria-expanded', String(!hideOtherCountries));
   }
-  sellerLocationFilterListEl.hidden = isPickerDisabled;
-  if (otherCountriesLabelEl) otherCountriesLabelEl.hidden = maxCountriesReached;
+  sellerLocationFilterListEl.hidden = hideOtherCountries;
+  if (otherCountriesLabelEl) otherCountriesLabelEl.hidden = hideOtherCountries;
 
   if (normalizedSelectedCountries.length) {
     normalizedSelectedCountries.forEach((country) => {
@@ -153,7 +157,7 @@ function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTR
     option.type = 'button';
     option.className = 'country-option';
     option.dataset.countryOption = country;
-    option.disabled = isPickerDisabled;
+    option.disabled = isPickerDisabled || maxCountriesReached;
 
     const text = document.createElement('span');
     text.textContent = country;
@@ -181,6 +185,9 @@ function setSelectedSellerCountries(countries) {
 }
 
 function getStoredSellerCountries(settings) {
+  if (Array.isArray(settings.sellerCountries)) {
+    return settings.sellerCountries.map((value) => normalizeCountryName(value)).filter(Boolean);
+  }
   if (Array.isArray(settings.sellerLocationFilter)) {
     return settings.sellerLocationFilter.map((value) => normalizeCountryName(value)).filter(Boolean);
   }
@@ -415,6 +422,7 @@ async function handleScrapeAllItems() {
         maxShippingTime: normalizeMaxShippingTime(sellerDeliveryTimeFilterEl.value),
         sellerType: normalizeSellerType(sellerTypeFilterEl.value),
         sellerCountries: getSelectedSellerCountries(),
+        includeBargainsFromOtherCountries: getIncludeBargainsFromOtherCountries(),
       },
       totals: {
         extractedItems: latestExtractedItems.length,
@@ -467,6 +475,8 @@ async function handleScrapeAllItems() {
     setStepActivity(null);
     setBusy(false);
   }
+
+  syncSellerScrapeButton();
 }
 
 function shouldPartitionSellerScrape(baseResult, countryScopes) {
@@ -549,6 +559,24 @@ function mergeSellerScopeResults(baseResult, partitionResults) {
   };
 }
 
+function getAllNonPreferredSellerCountryIds(preferredCountryIds = []) {
+  const preferred = new Set((preferredCountryIds || []).map(String));
+  return getCardmarketCountryIdsFromCountries(SELLER_COUNTRY_OPTIONS)
+    .filter((countryId) => !preferred.has(String(countryId)));
+}
+
+function getCheapestSellerOfferPrice(sellers = []) {
+  let cheapestPrice = null;
+  (sellers || []).forEach((seller) => {
+    const parsedPrice = parseEuroAmount(seller?.price);
+    if (parsedPrice === null) return;
+    if (cheapestPrice === null || parsedPrice < cheapestPrice) {
+      cheapestPrice = parsedPrice;
+    }
+  });
+  return cheapestPrice;
+}
+
 async function ensureSellerScrapeNotCoolingDown() {
   const cooldownUntil = await getSellerCooldownUntil();
   if (cooldownUntil > Date.now()) {
@@ -622,6 +650,9 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
   const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(item));
   const requestIsFoil = typeof item?.isFoil === 'boolean' ? item.isFoil : null;
   const requestCountryIds = getCardmarketCountryIdsFromCountries(getSelectedSellerCountries());
+  if (!requestCountryIds.length) {
+    throw new Error('Select 1 or 2 preferred seller countries before scraping sellers.');
+  }
   const sellerReputationId = getCardmarketSellerReputationId(sellerReputationFilterEl.value);
   const maxShippingTimeId = getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value);
   const sellerTypeId = getCardmarketSellerTypeId(sellerTypeFilterEl.value);
@@ -634,92 +665,56 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
     maxShippingTimeId,
     sellerTypeId,
   };
-  const explicitCountryScopes = buildSellerCountryScopes({
-    requestCountryIds,
-    availableSellerFilters: null,
+  const preferredResult = await executeSellerScopeScrape({
+    item,
+    delayMs,
+    maxSellerPages,
+    previewLimit: 12,
+    requestContext,
+    requestLanguageId,
+    sellerCountryIds: requestCountryIds,
+    sellerReputationId,
+    maxShippingTimeId,
+    sellerTypeId,
+    partitionLabel: 'Preferred countries',
+    logPowerSellerFallback: logPartitionRetry,
+    onScopeStart,
   });
-  let result;
+  if (!preferredResult) {
+    throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
+  }
 
-  if (explicitCountryScopes.length) {
-    const partitionLabels = explicitCountryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
-    if (logPartitionRetry && explicitCountryScopes.length > 1) {
-      appendStatus(`Scraping ${explicitCountryScopes.length} country partitions directly: ${partitionLabels.join(', ')}.`, 'good');
-    }
-    const partitionResults = [];
-    for (const scope of explicitCountryScopes) {
-      const scopeLabel = getCountryNameById(scope.countryId) || scope.label;
-      const scopeResult = await executeSellerScopeScrape({
+  preferredResult.partitionLabel = 'preferred-countries';
+  preferredResult.requestFilters = baseRequestFilters;
+  let result = preferredResult;
+
+  const cheapestPreferredOffer = getCheapestSellerOfferPrice(preferredResult.sellers);
+  const shouldIncludeBargains = getIncludeBargainsFromOtherCountries()
+    && cheapestPreferredOffer !== null
+    && cheapestPreferredOffer > 5;
+  if (shouldIncludeBargains) {
+    const bargainCountryIds = getAllNonPreferredSellerCountryIds(requestCountryIds);
+    if (bargainCountryIds.length) {
+      appendStatus(`Cheapest preferred-country offer for ${textOf(item?.productName) || 'item'} is ${formatCurrencyAmount(cheapestPreferredOffer)}. Adding bargain-country pass.`, 'good');
+      const bargainResult = await executeSellerScopeScrape({
         item,
         delayMs,
-        maxSellerPages,
+        maxSellerPages: 1,
         previewLimit: 12,
         requestContext,
         requestLanguageId,
-        sellerCountryIds: [scope.countryId],
+        sellerCountryIds: bargainCountryIds,
         sellerReputationId,
         maxShippingTimeId,
         sellerTypeId,
-        partitionLabel: scopeLabel,
-        logPowerSellerFallback: logPartitionRetry,
+        partitionLabel: 'Bargain countries',
+        logPowerSellerFallback: false,
         onScopeStart,
       });
-      if (scopeResult) {
-        scopeResult.partitionLabel = scope.label;
-        partitionResults.push(scopeResult);
+      if (bargainResult) {
+        bargainResult.partitionLabel = 'bargain-countries';
+        result = mergeSellerScopeResults(preferredResult, [bargainResult]);
       }
-    }
-    if (!partitionResults.length) {
-      throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
-    }
-    result = mergeSellerScopeResults(null, partitionResults);
-  } else {
-    const baseResult = await scrapeSingleWantItemSellers({
-      item,
-      delay: delayMs,
-      maxSellerPages,
-      previewLimit: 12,
-      requestFilters: baseRequestFilters,
-      requestContext,
-    });
-    if (!baseResult) {
-      throw new Error('Seller scrape returned no result. Reload the Cardmarket tab and try again.');
-    }
-    result = baseResult;
-
-    const countryScopes = buildSellerCountryScopes({
-      requestCountryIds,
-      availableSellerFilters: baseResult.availableSellerFilters,
-    });
-    const shouldPartitionByCountry = shouldPartitionSellerScrape(baseResult, countryScopes);
-    if (shouldPartitionByCountry) {
-      const partitionLabels = countryScopes.map((scope) => getCountryNameById(scope.countryId) || scope.label);
-      if (logPartitionRetry) {
-        appendStatus(`Broad seller scope looks capped. Retrying in ${countryScopes.length} country partitions: ${partitionLabels.join(', ')}.`, 'good');
-      }
-      const partitionResults = [];
-      for (const scope of countryScopes) {
-        const scopeLabel = getCountryNameById(scope.countryId) || scope.label;
-        const scopeResult = await executeSellerScopeScrape({
-          item,
-          delayMs,
-          maxSellerPages,
-          previewLimit: 12,
-          requestContext,
-          requestLanguageId,
-          sellerCountryIds: [scope.countryId],
-          sellerReputationId,
-          maxShippingTimeId,
-          sellerTypeId,
-          partitionLabel: scopeLabel,
-          logPowerSellerFallback: logPartitionRetry,
-          onScopeStart,
-        });
-        if (scopeResult) {
-          scopeResult.partitionLabel = scope.label;
-          partitionResults.push(scopeResult);
-        }
-      }
-      result = mergeSellerScopeResults(baseResult, partitionResults);
     }
   }
 

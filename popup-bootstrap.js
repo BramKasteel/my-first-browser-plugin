@@ -81,6 +81,10 @@ sellerTypeFilterEl.addEventListener('change', () => {
   renderSellerFilterState();
   saveSellerSettings();
 });
+sellerBargainsCheckboxEl?.addEventListener('change', () => {
+  setIncludeBargainsFromOtherCountries(sellerBargainsCheckboxEl.checked);
+  saveSellerSettings();
+});
 buyerCountrySelectEl.addEventListener('change', () => {
   saveSellerSettings();
   refreshOptimizerPayloadFromCurrentState();

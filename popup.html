@@ -584,6 +584,12 @@
       color: var(--muted);
     }
 
+    .toggle-row.checkbox-row {
+      align-items: flex-start;
+      padding: 2px 0;
+      line-height: 1.4;
+    }
+
     .toggle-row input {
       margin: 0;
     }
@@ -1226,7 +1232,7 @@
             </label>
           </div>
           <div class="config-label seller-filter-field">
-            <span>Seller country</span>
+            <span>Preferred seller countries</span>
             <div class="country-section">
               <div class="country-picker">
                 <div class="country-picker-shell">
@@ -1236,6 +1242,10 @@
                 <span class="country-section-label">Other countries</span>
                 <div id="sellerLocationFilterList" class="country-list" role="listbox" aria-label="Other seller countries"></div>
               </div>
+              <label class="toggle-row checkbox-row" for="includeBargainsFromOtherCountries">
+                <input id="includeBargainsFromOtherCountries" type="checkbox">
+                <span>Include bargains from other countries</span>
+              </label>
             </div>
             <p id="sellerCountryLimitHint" class="inline-notice" hidden></p>
           </div>

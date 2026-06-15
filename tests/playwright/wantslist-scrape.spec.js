@@ -245,6 +245,7 @@ async function configureSellerFilters(popupPage, sellerFilterConfig) {
       const snapshot = window.__cmOptimizerTestApi.getSnapshot();
       return snapshot.sellerFilters.sellerReputation === expected.sellerReputation
         && snapshot.sellerFilters.maxShippingTime === expected.maxShippingTime
+        && snapshot.sellerFilters.includeBargainsFromOtherCountries === false
         && snapshot.sellerFilters.sellerCountries.length === 1
         && snapshot.sellerFilters.sellerCountries[0] === expected.sellerCountry;
     },
@@ -390,16 +391,21 @@ test.describe('Want list scraping flow', () => {
       { timeout: 10_000 },
     );
 
+    await expect(popupPage.locator('#includeBargainsFromOtherCountries')).not.toBeChecked();
+
     await configureSellerFilters(popupPage, sellerFilterConfig);
 
     const configuredSnapshot = await readPopupSnapshot(popupPage);
     expect(configuredSnapshot.sellerFilters.sellerReputation).toBe(sellerFilterConfig.sellerReputation);
     expect(configuredSnapshot.sellerFilters.maxShippingTime).toBe(sellerFilterConfig.maxShippingTime);
     expect(configuredSnapshot.sellerFilters.sellerCountries).toEqual([sellerFilterConfig.sellerCountry]);
+    expect(configuredSnapshot.sellerFilters.includeBargainsFromOtherCountries).toBe(false);
 
     const configuredStorage = await readPopupStorage(popupPage, ['sellerScrapeSettings']);
     expect(configuredStorage.sellerScrapeSettings?.sellerReputationFilter).toBe(sellerFilterConfig.sellerReputation);
     expect(configuredStorage.sellerScrapeSettings?.sellerDeliveryTimeFilter).toBe(sellerFilterConfig.maxShippingTime);
+    expect(configuredStorage.sellerScrapeSettings?.sellerCountries).toEqual([sellerFilterConfig.sellerCountry]);
+    expect(configuredStorage.sellerScrapeSettings?.includeBargainsFromOtherCountries).toBe(false);
     expect(configuredStorage.sellerScrapeSettings).not.toHaveProperty('sellerLocationFilter');
 
     await expect(popupPage.locator('#scrapeAllItems')).toBeVisible();
@@ -436,6 +442,7 @@ test.describe('Want list scraping flow', () => {
     expect(batchPayload?.requestSettings?.sellerReputation).toBe(sellerFilterConfig.sellerReputation);
     expect(batchPayload?.requestSettings?.maxShippingTime).toBe(sellerFilterConfig.maxShippingTime);
     expect(batchPayload?.requestSettings?.sellerCountries).toEqual([sellerFilterConfig.sellerCountry]);
+    expect(batchPayload?.requestSettings?.includeBargainsFromOtherCountries).toBe(false);
 
     batchPayload.results.forEach((result) => {
       expect(result.error).toBe('');
@@ -477,6 +484,7 @@ test.describe('Want list scraping flow', () => {
     expect(optimizeContext.requestSettings?.sellerReputation).toBe(sellerFilterConfig.sellerReputation);
     expect(optimizeContext.requestSettings?.maxShippingTime).toBe(sellerFilterConfig.maxShippingTime);
     expect(optimizeContext.requestSettings?.sellerCountries).toEqual([sellerFilterConfig.sellerCountry]);
+    expect(optimizeContext.requestSettings?.includeBargainsFromOtherCountries).toBe(false);
 
     await expect(popupPage.locator('#optimizerInputContext')).toBeVisible();
     await expect(popupPage.locator('#optimizerInputMeta')).toContainText(`${wantListConfig.expectedCount} item`);
@@ -594,8 +602,9 @@ test.describe('Want list scraping flow', () => {
     expect(snapshot.wantListConstraints.distinctItemCount).toBe(sizeConfig.under30.expectedDistinctCount);
     expect(snapshot.wantListConstraints.maxSellerCountries).toBe(2);
     expect(snapshot.sellerFilters.sellerCountries).toHaveLength(2);
+    await expect(popupPage.locator('label[for="includeBargainsFromOtherCountries"]')).toContainText('Include bargains from other countries');
     await expect(popupPage.locator('#confirmWantList')).toBeEnabled();
-    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('up to 2 seller countries');
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select 1 or 2 preferred seller countries');
     await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);
 
     await popupPage.click('#confirmWantList');
@@ -608,10 +617,15 @@ test.describe('Want list scraping flow', () => {
     await expect(popupPage.locator('#sellerLocationFilterList')).toBeHidden();
 
     await clearSelectedSellerCountries(popupPage);
-    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('up to 2 seller countries');
-    await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);
+  await waitForSelectedCountries(popupPage, []);
+  await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select 1 or 2 preferred seller countries');
+  await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bbad\b/);
+  await expect(popupPage.locator('#scrapeAllItems')).toBeDisabled();
     await expect(popupPage.locator('#sellerLocationFilterList')).toBeVisible();
     await selectSellerCountry(popupPage, 'Germany');
+  await waitForSelectedCountries(popupPage, ['Germany']);
+  await expect(popupPage.locator('#sellerCountryFilterInput')).toBeEnabled();
+  await expect(popupPage.locator('#scrapeAllItems')).toBeEnabled();
     await selectSellerCountry(popupPage, 'Netherlands');
     await waitForSelectedCountries(popupPage, ['Germany', 'Netherlands']);
     await expect(popupPage.locator('#sellerLocationFilterList')).toBeHidden();
@@ -625,10 +639,10 @@ test.describe('Want list scraping flow', () => {
     expect(snapshot.extractedItems.distinctCount).toBe(sizeConfig.between31And100.expectedDistinctCount);
     expect(snapshot.wantListConstraints.isBlocked).toBe(false);
     expect(snapshot.wantListConstraints.distinctItemCount).toBe(sizeConfig.between31And100.expectedDistinctCount);
-    expect(snapshot.wantListConstraints.maxSellerCountries).toBe(1);
-    expect(snapshot.sellerFilters.sellerCountries).toHaveLength(1);
+    expect(snapshot.wantListConstraints.maxSellerCountries).toBe(2);
+    expect(snapshot.sellerFilters.sellerCountries).toHaveLength(2);
     await expect(popupPage.locator('#confirmWantList')).toBeEnabled();
-    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select exactly 1 seller country');
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select 1 or 2 preferred seller countries');
     await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);
     await expect(popupPage.locator('#sellerLocationFilterList')).toBeHidden();
 
@@ -641,12 +655,17 @@ test.describe('Want list scraping flow', () => {
 
     await clearSelectedSellerCountries(popupPage);
     await waitForSelectedCountries(popupPage, []);
-    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select exactly 1 seller country');
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select 1 or 2 preferred seller countries');
     await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bbad\b/);
+    await expect(popupPage.locator('#sellerCountryFilterInput')).toBeEnabled();
+    await expect(popupPage.locator('#scrapeAllItems')).toBeDisabled();
     await selectSellerCountry(popupPage, 'Germany');
     await waitForSelectedCountries(popupPage, ['Germany']);
-    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select exactly 1 seller country');
+    await expect(popupPage.locator('#sellerCountryLimitHint')).toContainText('Select 1 or 2 preferred seller countries');
     await expect(popupPage.locator('#sellerCountryLimitHint')).toHaveClass(/\bgood\b/);
+    await expect(popupPage.locator('#sellerCountryFilterInput')).toBeEnabled();
+    await selectSellerCountry(popupPage, 'Netherlands');
+    await waitForSelectedCountries(popupPage, ['Germany', 'Netherlands']);
     await expect(popupPage.locator('#sellerCountryFilterInput')).toBeDisabled();
 
     await selectWantListAndWaitForLoad(popupPage, {
