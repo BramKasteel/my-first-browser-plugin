@@ -26,7 +26,9 @@
 
     body {
       margin: 0;
-      width: 420px;
+      width: fit-content;
+      min-width: 320px;
+      max-width: 420px;
       height: 100vh;
       display: flex;
       flex-direction: column;
@@ -39,9 +41,9 @@
     }
 
     body.detached {
-      width: auto;
+      width: fit-content;
       height: auto;
-      min-width: 420px;
+      min-width: 320px;
       min-height: 100vh;
       resize: both;
       overflow: auto;
