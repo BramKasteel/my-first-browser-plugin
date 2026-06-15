@@ -1380,24 +1380,32 @@ async function openDetachedPopup({ autoStart = '' } = {}) {
     return;
   }
 
-  await chrome.windows.create({
+  const createdWindow = await chrome.windows.create({
     url: detachedPopupUrl,
     type: 'popup',
     width: 460,
     height: 920,
+    focused: true,
   });
+
+  if (createdWindow?.id) {
+    await chrome.windows.update(createdWindow.id, { focused: true });
+  }
+
+  const createdTabId = createdWindow?.tabs?.[0]?.id;
+  if (createdTabId) {
+    await chrome.tabs.update(createdTabId, { active: true });
+  }
 }
 
 async function autoDetachDefaultPopup() {
-  if (isDetached) return false;
+  if (isDetached) return;
 
   try {
     await openDetachedPopup();
     window.close();
-    return true;
   } catch (error) {
     appendStatus(`Could not open dedicated plugin window: ${error.message}`, 'bad');
-    return false;
   }
 }
 
