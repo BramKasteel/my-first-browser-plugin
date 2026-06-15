@@ -199,6 +199,13 @@ function appendStatus(message, tone = '') {
   }
 }
 
+function logExpansionDebug(message, details, statusMessage = '') {
+  console.log(`[CM Expansion Debug] ${message}`, details);
+  if (statusMessage) {
+    appendStatus(statusMessage);
+  }
+}
+
 function setBusy(isBusy) {
   isUiBusy = isBusy;
   optimizeOrderButton.disabled = isBusy;
@@ -1677,13 +1684,13 @@ async function fetchAvailableExpansionFiltersForItem({ item, requestContext, req
   delete sanitizedFilters.expansionIds;
 
   const candidateUrls = [buildSellerRequestUrl(item.productUrl, sanitizedFilters, runtimeContext.origin)];
-  console.debug('[CM Expansion Debug] expansion-filter probe start', {
+  logExpansionDebug('expansion-filter probe start', {
     productName: textOf(item?.productName),
     productUrl: textOf(item?.productUrl),
     requestedExpansions: getRequestedExpansionNames(item),
     probeUrls: candidateUrls,
     sanitizedFilters,
-  });
+  }, `Expansion probe start: ${textOf(item?.productName) || 'item'}.`);
 
   const seenUrls = new Set();
   for (const candidateUrl of candidateUrls) {
@@ -1702,22 +1709,22 @@ async function fetchAvailableExpansionFiltersForItem({ item, requestContext, req
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const options = inspectAvailableExpansionFiltersInDocument(doc);
       if (options.length) {
-        console.debug('[CM Expansion Debug] expansion-filter probe success', {
+        logExpansionDebug('expansion-filter probe success', {
           productName: textOf(item?.productName),
           candidateUrl,
           options: options.map((entry) => ({ id: entry.value, label: entry.label })),
-        });
+        }, `Expansion probe found ${options.length} filters for ${textOf(item?.productName) || 'item'}.`);
         return { options, rateLimited: false };
       }
     } catch {
     }
   }
 
-  console.debug('[CM Expansion Debug] expansion-filter probe empty', {
+  logExpansionDebug('expansion-filter probe empty', {
     productName: textOf(item?.productName),
     productUrl: textOf(item?.productUrl),
     requestedExpansions: getRequestedExpansionNames(item),
-  });
+  }, `Expansion probe found no filters for ${textOf(item?.productName) || 'item'}.`);
 
   return { options: [], rateLimited: false };
 }
@@ -1725,11 +1732,11 @@ async function fetchAvailableExpansionFiltersForItem({ item, requestContext, req
 async function resolveItemExpansionRequestFilter({ item, requestContext, requestFilters = {} }) {
   const requestedExpansionNames = getRequestedExpansionNames(item);
   if (!requestedExpansionNames.length) {
-    console.debug('[CM Expansion Debug] no requested expansions on item', {
+    logExpansionDebug('no requested expansions on item', {
       productName: textOf(item?.productName),
       productUrl: textOf(item?.productUrl),
       item,
-    });
+    }, `No requested expansions on ${textOf(item?.productName) || 'item'}.`);
     return {
       expansionIds: '',
       matchedExpansionNames: [],
@@ -1756,13 +1763,13 @@ async function resolveItemExpansionRequestFilter({ item, requestContext, request
     rateLimited,
   };
 
-  console.debug('[CM Expansion Debug] expansion-filter resolved', {
+  logExpansionDebug('expansion-filter resolved', {
     productName: textOf(item?.productName),
     productUrl: textOf(item?.productUrl),
     requestedExpansionNames,
     availableExpansionFilters: availableExpansionFilters.map((entry) => ({ id: entry.value, label: entry.label })),
     resolvedFilter,
-  });
+  }, `Expansion ids for ${textOf(item?.productName) || 'item'}: ${resolvedFilter.expansionIds || 'none'}.`);
 
   return resolvedFilter;
 }
@@ -1883,13 +1890,13 @@ async function executeSellerScopeScrape({
     sellerCountryIds,
     sellerTypeId,
   });
-  console.debug('[CM Expansion Debug] seller scope request', {
+  logExpansionDebug('seller scope request', {
     productName: textOf(item?.productName),
     productUrl: textOf(item?.productUrl),
     partitionLabel,
     requestFilters,
     requestUrl: buildSellerRequestUrl(item.productUrl, requestFilters, requestContext?.origin || 'https://cardmarket.com'),
-  });
+  }, `Seller request URL ready for ${textOf(item?.productName) || 'item'}.`);
   appendStatus(`Querying seller scope: ${describeSellerScope({ sellerCountryIds, sellerTypeId })}.`);
   let scopeResult = await scrapeSingleWantItemSellers({
     item,
@@ -1938,12 +1945,12 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, logPart
       appendStatus(`Could not match expansions for ${itemLabel}: ${expansionFilter.unmatchedExpansionNames.join(', ')}. Scraping without expansion filter.`, 'bad');
     }
   }
-  console.debug('[CM Expansion Debug] seller scrape base filters', {
+  logExpansionDebug('seller scrape base filters', {
     productName: textOf(item?.productName),
     productUrl: textOf(item?.productUrl),
     baseRequestFilters,
     expansionFilter,
-  });
+  }, `Base seller filters prepared for ${textOf(item?.productName) || 'item'}.`);
   const preferredResult = await executeSellerScopeScrape({
     item,
     delayMs,
