@@ -1157,6 +1157,12 @@
           <span class="workflow-step-title">Cart</span>
           <span class="workflow-step-meta">Push chosen offers</span>
         </button>
+        <span class="workflow-separator" aria-hidden="true">&gt;</span>
+        <button type="button" class="secondary workflow-step" data-workflow-step="post-fill" data-state="locked" aria-selected="false">
+          <span class="workflow-step-index">Step 5</span>
+          <span class="workflow-step-title">Disable Sellers</span>
+          <span class="workflow-step-meta">Re-optimize after cart fill</span>
+        </button>
       </div>
     </section>
 
@@ -1320,8 +1326,25 @@
               <span id="mainCartSummaryTotalItems" class="summary-value">-</span>
             </div>
           </div>
+          <p id="refillWarning" class="inline-notice" hidden>Before filling cart again, empty current Cardmarket cart. This extension does not clear it automatically.</p>
           <div class="actions">
             <button id="fillCart" class="secondary mini-button" disabled>Fill cart</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel step-panel" data-step-panel="post-fill">
+        <div class="panel-header">
+          <h2 class="panel-title">Step 5: Disable Sellers</h2>
+          <span id="postFillStepBadge" class="step-pill">Locked</span>
+        </div>
+        <div class="step-highlight">
+          <p id="postFillSummary" class="panel-note">Fill cart first. Then disable sellers with non-standard delivery fees and re-optimize.</p>
+          <p id="postFillMemoryNote" class="panel-note"></p>
+          <p id="postFillEmptyState" class="subtle">No filled-cart sellers available yet.</p>
+          <div id="postFillSellerList" class="items"></div>
+          <div class="actions">
+            <button id="postFillReoptimize" class="secondary mini-button" disabled>Re-optimize</button>
           </div>
         </div>
       </section>
@@ -1390,6 +1413,7 @@
   <script src="popup-screen-sellers.js"></script>
   <script src="popup-screen-optimize.js"></script>
   <script src="popup-screen-fill.js"></script>
+  <script src="popup-screen-post-fill.js"></script>
   <script src="popup-test-api.js"></script>
   <script src="popup-bootstrap.js"></script>
 </body>

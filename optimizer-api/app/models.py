@@ -108,6 +108,15 @@ class OptimizationPreferences(BaseModel):
     return_alternatives: int = Field(default=0, ge=0, le=0)
 
 
+class PreviousAllocation(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    offer_id: BoundedId
+    item_id: BoundedId
+    seller_id: BoundedId
+    quantity: int = Field(ge=1)
+
+
 class OptimizationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -116,6 +125,7 @@ class OptimizationRequest(BaseModel):
     items: list[WantedItem] = Field(min_length=1, max_length=MAX_ITEMS)
     sellers: list[Seller] = Field(min_length=1, max_length=MAX_SELLERS)
     offers: list[Offer] = Field(min_length=1, max_length=MAX_OFFERS)
+    previous_allocations: list[PreviousAllocation] = Field(default_factory=list)
     preferences: OptimizationPreferences = Field(
         default_factory=OptimizationPreferences
     )
@@ -146,6 +156,7 @@ class OptimizationRequest(BaseModel):
 
         item_ids = {item.item_id for item in self.items}
         seller_ids = {seller.seller_id for seller in self.sellers}
+        offer_by_id = {offer.offer_id: offer for offer in self.offers}
 
         unknown_offer_items = sorted(
             {offer.item_id for offer in self.offers if offer.item_id not in item_ids}
@@ -175,6 +186,60 @@ class OptimizationRequest(BaseModel):
         if blocked_unknown:
             raise ValueError(
                 f"Preferences block unknown seller IDs: {', '.join(blocked_unknown)}"
+            )
+
+        unknown_previous_offer_ids = sorted(
+            {
+                allocation.offer_id
+                for allocation in self.previous_allocations
+                if allocation.offer_id not in offer_by_id
+            }
+        )
+        if unknown_previous_offer_ids:
+            raise ValueError(
+                "Previous allocations reference unknown offer IDs: "
+                f"{', '.join(unknown_previous_offer_ids)}"
+            )
+
+        unknown_previous_item_ids = sorted(
+            {
+                allocation.item_id
+                for allocation in self.previous_allocations
+                if allocation.item_id not in item_ids
+            }
+        )
+        if unknown_previous_item_ids:
+            raise ValueError(
+                "Previous allocations reference unknown item IDs: "
+                f"{', '.join(unknown_previous_item_ids)}"
+            )
+
+        unknown_previous_seller_ids = sorted(
+            {
+                allocation.seller_id
+                for allocation in self.previous_allocations
+                if allocation.seller_id not in seller_ids
+            }
+        )
+        if unknown_previous_seller_ids:
+            raise ValueError(
+                "Previous allocations reference unknown seller IDs: "
+                f"{', '.join(unknown_previous_seller_ids)}"
+            )
+
+        inconsistent_previous_allocations = sorted(
+            allocation.offer_id
+            for allocation in self.previous_allocations
+            if allocation.offer_id in offer_by_id
+            and (
+                offer_by_id[allocation.offer_id].item_id != allocation.item_id
+                or offer_by_id[allocation.offer_id].seller_id != allocation.seller_id
+            )
+        )
+        if inconsistent_previous_allocations:
+            raise ValueError(
+                "Previous allocations must match referenced offer item and seller IDs: "
+                f"{', '.join(inconsistent_previous_allocations)}"
             )
 
         return self
@@ -248,7 +313,6 @@ class OptimizationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     status: Literal["optimal", "feasible", "infeasible"]
-    warm_start_status: str = "unknown"
     currency: CurrencyCode
     totals: OptimizationTotals
     chosen_sellers: list[SellerResult] = Field(default_factory=list)

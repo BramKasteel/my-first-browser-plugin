@@ -2,6 +2,7 @@ const extractItemsButton = document.getElementById('extractItems');
 const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
 const optimizeOrderButton = document.getElementById('optimizeOrder');
 const fillCartButton = document.getElementById('fillCart');
+const postFillReoptimizeButton = document.getElementById('postFillReoptimize');
 const optimizerApiUrlInput = document.getElementById('optimizerApiUrl');
 const buyerCountrySelectEl = document.getElementById('buyerCountry');
 const sellerReputationFilterEl = document.getElementById('sellerReputationFilter');
@@ -46,6 +47,7 @@ const sourceStepBadgeEl = document.getElementById('sourceStepBadge');
 const sellerStepBadgeEl = document.getElementById('sellerStepBadge');
 const optimizeStepBadgeEl = document.getElementById('optimizeStepBadge');
 const fillStepBadgeEl = document.getElementById('fillStepBadge');
+const postFillStepBadgeEl = document.getElementById('postFillStepBadge');
 const optimizerSettingsBodyEl = document.getElementById('optimizerSettingsBody');
 const optimizerInputContextEl = document.getElementById('optimizerInputContext');
 const optimizerInputMetaEl = document.getElementById('optimizerInputMeta');
@@ -58,6 +60,11 @@ const mainCartSummaryTotalItemsEl = document.getElementById('mainCartSummaryTota
 const optimizerWaitingEl = document.getElementById('optimizerWaiting');
 const optimizerWaitingTextEl = document.getElementById('optimizerWaitingText');
 const optimizerWaitingDetailEl = document.getElementById('optimizerWaitingDetail');
+const refillWarningEl = document.getElementById('refillWarning');
+const postFillSummaryEl = document.getElementById('postFillSummary');
+const postFillSellerListEl = document.getElementById('postFillSellerList');
+const postFillEmptyStateEl = document.getElementById('postFillEmptyState');
+const postFillMemoryNoteEl = document.getElementById('postFillMemoryNote');
 const heroFeedbackButton = document.getElementById('heroFeedbackButton');
 const heroFeedbackRevealEl = document.getElementById('heroFeedbackReveal');
 const heroDonateButton = document.getElementById('heroDonateButton');
@@ -76,6 +83,7 @@ let latestExtractPayload = null;
 let latestFrontendPayload = null;
 let latestOptimizationResult = null;
 let latestExtractedItems = [];
+let latestFillResult = null;
 let isRunActive = false;
 let isUiBusy = false;
 let selectedSellerCountries = [];
@@ -91,11 +99,16 @@ let activeStepActivity = null;
 let lastOptimizerWarmupAt = 0;
 let wantListRetryTimer = null;
 let sellerRequestDelayMs = 250;
+let currentPayloadLineageKey = '';
+let rememberedDisabledSellerIds = [];
+let postFillSellerChoices = [];
+let refillWarningActive = false;
 const sellerExpansionFilterCache = new Map();
 const sellerPageHtmlCache = new Map();
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
+const POST_FILL_STATE_KEY = 'postFillDisabledSellerState';
 const SELLER_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_SELLER_DELAY_MS = 250;
 const MIN_SELLER_DELAY_MS = 250;
@@ -105,7 +118,7 @@ const DEFAULT_SELLER_COUNTRIES = [];
 const MAX_WANT_LIST_ITEMS = 100;
 const MAX_SELLER_COUNTRIES = 2;
 const DEFAULT_OPTIMIZER_API_URL = textOf(window.APP_CONFIG?.optimizerApiUrl);
-const WORKFLOW_STEPS = ['source', 'sellers', 'optimize', 'fill'];
+const WORKFLOW_STEPS = ['source', 'sellers', 'optimize', 'fill', 'post-fill'];
 const WORKFLOW_META = {
   source: {
     title: 'Select Cards',
@@ -122,6 +135,10 @@ const WORKFLOW_META = {
   fill: {
     title: 'Fill Cart',
     hint: 'Push chosen Cardmarket offers into your cart after reviewing optimized result.',
+  },
+  'post-fill': {
+    title: 'Disable Sellers',
+    hint: 'Disable sellers with non-standard delivery fees, then re-optimize.',
   },
 };
 const SELLER_COUNTRY_OPTIONS = [
@@ -196,6 +213,9 @@ function setBusy(isBusy) {
   syncSellerScrapeButton(isBusy);
   syncOptimizeButton(isBusy);
   syncFillCartButton(isBusy);
+  if (typeof syncPostFillReoptimizeButton === 'function') {
+    syncPostFillReoptimizeButton(isBusy);
+  }
   renderWorkflow();
 }
 
@@ -252,6 +272,140 @@ function getCurrentSellerFilterState() {
     sellerType: normalizeSellerType(sellerTypeFilterEl?.value),
     sellerCountries: getSelectedSellerCountries(),
     includeBargainsFromOtherCountries: getIncludeBargainsFromOtherCountries(),
+  };
+}
+
+function buildPayloadLineageKey(payload) {
+  if (!payload || !Array.isArray(payload.items) || !Array.isArray(payload.offers)) {
+    return '';
+  }
+
+  const itemSignature = payload.items
+    .map((item) => `${textOf(item?.item_id)}:${textOf(item?.quantity)}`)
+    .sort()
+    .join('|');
+  const offerSignature = payload.offers
+    .map((offer) => `${textOf(offer?.offer_id)}:${textOf(offer?.seller_id)}:${textOf(offer?.item_id)}`)
+    .sort()
+    .join('|');
+
+  return [
+    textOf(payload?.buyer_country),
+    itemSignature,
+    offerSignature,
+  ].join('::');
+}
+
+function getCurrentPayloadLineageKey() {
+  return currentPayloadLineageKey;
+}
+
+function getRememberedDisabledSellerIds() {
+  return [...rememberedDisabledSellerIds];
+}
+
+function getPostFillSellerChoices() {
+  return [...postFillSellerChoices];
+}
+
+function getHiddenRememberedDisabledSellerIds() {
+  const visibleSellerIds = new Set(postFillSellerChoices.map((seller) => textOf(seller?.seller_id)));
+  return rememberedDisabledSellerIds.filter((sellerId) => !visibleSellerIds.has(sellerId));
+}
+
+function setRememberedDisabledSellerIds(sellerIds) {
+  rememberedDisabledSellerIds = [...new Set((sellerIds || []).map((sellerId) => textOf(sellerId)).filter(Boolean))].sort();
+}
+
+function setPostFillSellerChoicesFromCart(cartSellers) {
+  if (!Array.isArray(cartSellers) || !cartSellers.length) {
+    return;
+  }
+
+  postFillSellerChoices = cartSellers.map((seller) => ({
+    seller_id: textOf(seller?.seller_id),
+    seller_name: textOf(seller?.seller_name || seller?.seller_id),
+    country: textOf(seller?.country),
+    shipping_cost: Number(seller?.shipping_cost || 0),
+    grand_total: Number(seller?.grand_total || 0),
+    total_units: Number(seller?.total_units || 0),
+  })).filter((seller) => seller.seller_id);
+
+  if (typeof renderPostFillScreen === 'function') {
+    renderPostFillScreen();
+  }
+}
+
+function clearPostFillSessionState() {
+  latestFillResult = null;
+  postFillSellerChoices = [];
+  refillWarningActive = false;
+  if (typeof renderPostFillScreen === 'function') {
+    renderPostFillScreen();
+  }
+}
+
+function markCartAsFilled(fillResult, cartSellers) {
+  latestFillResult = fillResult || {};
+  refillWarningActive = true;
+  setPostFillSellerChoicesFromCart(cartSellers || []);
+  syncRefillWarning();
+}
+
+function hasFilledCartSession() {
+  return !!latestFillResult;
+}
+
+function shouldShowRefillWarning() {
+  return refillWarningActive;
+}
+
+function syncRefillWarning() {
+  if (!refillWarningEl) return;
+  refillWarningEl.hidden = !shouldShowRefillWarning();
+}
+
+async function syncDisabledSellerStateForPayload(payload) {
+  currentPayloadLineageKey = buildPayloadLineageKey(payload);
+  if (!currentPayloadLineageKey) {
+    setRememberedDisabledSellerIds([]);
+    if (typeof renderPostFillScreen === 'function') renderPostFillScreen();
+    return;
+  }
+
+  const storedSellerIds = await loadRememberedDisabledSellerIds(currentPayloadLineageKey);
+  setRememberedDisabledSellerIds(storedSellerIds);
+  if (typeof renderPostFillScreen === 'function') renderPostFillScreen();
+}
+
+async function persistRememberedDisabledSellerIds(sellerIds) {
+  setRememberedDisabledSellerIds(sellerIds);
+  if (currentPayloadLineageKey) {
+    await saveRememberedDisabledSellerIds(currentPayloadLineageKey, rememberedDisabledSellerIds);
+  }
+  if (typeof renderPostFillScreen === 'function') renderPostFillScreen();
+}
+
+function buildPreviousAllocationsPayload(result) {
+  const allocations = Array.isArray(result?.allocations) ? result.allocations : [];
+  return allocations.map((allocation) => ({
+    offer_id: textOf(allocation?.offer_id),
+    item_id: textOf(allocation?.item_id),
+    seller_id: textOf(allocation?.seller_id),
+    quantity: parseIntegerOrFallback(allocation?.quantity, 0),
+  })).filter((allocation) => allocation.offer_id && allocation.item_id && allocation.seller_id && allocation.quantity > 0);
+}
+
+function buildReoptimizePayload(disabledSellerIds) {
+  if (!latestExtractPayload) return null;
+
+  return {
+    ...latestExtractPayload,
+    previous_allocations: buildPreviousAllocationsPayload(latestOptimizationResult),
+    preferences: {
+      ...(latestExtractPayload.preferences || {}),
+      blocked_seller_ids: [...new Set((disabledSellerIds || []).map((sellerId) => textOf(sellerId)).filter(Boolean))],
+    },
   };
 }
 
@@ -475,6 +629,8 @@ function getWorkflowState() {
     hasOptimizerPayload: !!latestExtractPayload,
     hasOptimizationResult: !!latestOptimizationResult,
     hasOptimalCart: hasOptimizedCart(),
+    hasFilledCart: hasFilledCartSession(),
+    hasPostFillChoices: postFillSellerChoices.length > 0,
   };
 }
 
@@ -483,10 +639,12 @@ function canAccessWorkflowStep(stepName, state = getWorkflowState()) {
   if (stepName === 'sellers') return state.hasExtractedWants && !state.wantListBlocked;
   if (stepName === 'optimize') return state.hasOptimizerPayload;
   if (stepName === 'fill') return state.hasOptimalCart;
+  if (stepName === 'post-fill') return state.hasFilledCart && state.hasPostFillChoices;
   return false;
 }
 
 function getSuggestedWorkflowStep(state = getWorkflowState()) {
+  if (state.hasFilledCart && state.hasPostFillChoices) return 'post-fill';
   if (state.hasOptimalCart) return 'fill';
   if (state.hasOptimizerPayload) return 'optimize';
   if (state.hasExtractedWants) return 'sellers';
@@ -550,6 +708,15 @@ function getWorkflowStepHint(stepName, state = getWorkflowState()) {
 
   if (stepName === 'fill' && !state.hasOptimalCart) {
     return 'Fill cart unlocks only after optimizer returns an optimal cart.';
+  }
+
+  if (stepName === 'post-fill') {
+    if (!state.hasFilledCart) {
+      return 'Disable-seller step unlocks only after cart fill succeeds.';
+    }
+    if (!state.hasPostFillChoices) {
+      return 'No filled-cart sellers available yet for disable-seller review.';
+    }
   }
 
   return WORKFLOW_META[stepName]?.hint || '';
@@ -626,6 +793,17 @@ function renderWorkflow() {
   } else {
     setStepBadge(fillStepBadgeEl, 'Locked');
   }
+
+  if (postFillStepBadgeEl) {
+    if (state.hasFilledCart && state.hasPostFillChoices) {
+      const disabledCount = rememberedDisabledSellerIds.length;
+      setStepBadge(postFillStepBadgeEl, disabledCount ? `${disabledCount} disabled` : 'Ready', 'good');
+    } else {
+      setStepBadge(postFillStepBadgeEl, 'Locked');
+    }
+  }
+
+  syncRefillWarning();
 }
 
 function setActiveWorkflowStep(stepName, { force = false, recordHistory = true } = {}) {

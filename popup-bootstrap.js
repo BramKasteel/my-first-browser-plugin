@@ -41,6 +41,11 @@ confirmWantListButton?.addEventListener('click', () => {
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 optimizeOrderButton.addEventListener('click', handleOptimizeOrder);
 fillCartButton.addEventListener('click', handleFillCart);
+postFillReoptimizeButton?.addEventListener('click', () => {
+  handlePostFillReoptimize().catch((error) => {
+    appendStatus(error.message, 'bad');
+  });
+});
 workflowStepButtons.forEach((button) => {
   button.addEventListener('click', () => {
     const stepName = button.dataset.workflowStep || 'source';
@@ -148,6 +153,7 @@ renderPayload(null);
 renderFrontendPayload(null);
 renderOptimizerInputContext();
 renderBuyerCountryOptions();
+renderPostFillScreen();
 setResultPanelExpanded(false);
 setActiveResultTab('overview');
 installE2eTestApi();
@@ -157,6 +163,7 @@ syncExtractButton();
 syncSellerScrapeButton();
 syncOptimizeButton();
 syncFillCartButton();
+syncPostFillReoptimizeButton();
 renderStepActivity();
 renderWorkflow();
 scrapeAllItemsButton.textContent = 'Scrape sellers';

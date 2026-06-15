@@ -234,6 +234,7 @@ def _solve_exact_shipping_order(
     item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
     route_book: shipping.ShippingRouteBook,
+    previous_offer_quantities: dict[str, int] | None = None,
     solver_random_seed: int | None = None,
     solver_log_callback: Callable[[str], None] | None = None,
 ) -> tuple[str, dict[str, int]] | None:
@@ -253,6 +254,16 @@ def _solve_exact_shipping_order(
             upper_bound=_capped_offer_quantity(offer, item_map),
             name=f"qty_{offer.offer_id}",
         )
+
+    if previous_offer_quantities:
+        for offer in usable_offers:
+            quantity = previous_offer_quantities.get(offer.offer_id)
+            if not quantity:
+                continue
+            model.AddHint(
+                offer_vars[offer.offer_id],
+                min(quantity, _capped_offer_quantity(offer, item_map)),
+            )
 
     for seller_id, offers in seller_offers.items():
         seller_value_upper_bounds[seller_id] = sum(
@@ -492,11 +503,60 @@ def _prune_top_offers_per_item_by_price(offers: list[Offer]) -> list[Offer]:
     return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
 
 
-def prune_all(request: OptimizationRequest):
-    seller_map = request.seller_map()
-    item_map = request.item_map()
+def _filtered_seller_map(request: OptimizationRequest) -> dict[str, object]:
+    blocked_seller_ids = set(request.preferences.blocked_seller_ids)
+    if not blocked_seller_ids:
+        return request.seller_map()
 
-    usable_offers = _prune_dominated_offers_per_seller(request.offers, item_map)
+    return {
+        seller_id: seller
+        for seller_id, seller in request.seller_map().items()
+        if seller_id not in blocked_seller_ids
+    }
+
+
+def _filtered_request_offers(request: OptimizationRequest) -> list[Offer]:
+    blocked_seller_ids = set(request.preferences.blocked_seller_ids)
+    if not blocked_seller_ids:
+        return request.offers
+
+    return [
+        offer for offer in request.offers if offer.seller_id not in blocked_seller_ids
+    ]
+
+
+def _previous_offer_quantities(
+    *,
+    request: OptimizationRequest,
+    usable_offers: list[Offer],
+    item_map: dict[str, WantedItem],
+) -> dict[str, int]:
+    blocked_seller_ids = set(request.preferences.blocked_seller_ids)
+    usable_offers_by_id = {offer.offer_id: offer for offer in usable_offers}
+
+    previous_offer_quantities: dict[str, int] = {}
+    for allocation in request.previous_allocations:
+        if allocation.seller_id in blocked_seller_ids:
+            continue
+
+        offer = usable_offers_by_id.get(allocation.offer_id)
+        if offer is None:
+            continue
+
+        previous_offer_quantities[allocation.offer_id] = min(
+            allocation.quantity,
+            _capped_offer_quantity(offer, item_map),
+        )
+
+    return previous_offer_quantities
+
+
+def prune_all(request: OptimizationRequest):
+    seller_map = _filtered_seller_map(request)
+    item_map = request.item_map()
+    candidate_offers = _filtered_request_offers(request)
+
+    usable_offers = _prune_dominated_offers_per_seller(candidate_offers, item_map)
     usable_offers = _prune_top_offers_per_item_by_price(usable_offers)
 
     route_book = shipping.load_shipping_route_book()
@@ -522,7 +582,12 @@ def optimize_order(
 ) -> OptimizationResponse:
     usable_offers = prune_all(request)
     item_map = request.item_map()
-    seller_map = request.seller_map()
+    seller_map = _filtered_seller_map(request)
+    previous_offer_quantities = _previous_offer_quantities(
+        request=request,
+        usable_offers=usable_offers,
+        item_map=item_map,
+    )
 
     coverage = defaultdict(int)
     for offer in usable_offers:
@@ -553,6 +618,7 @@ def optimize_order(
         item_map=item_map,
         seller_map=seller_map,
         route_book=route_book,
+        previous_offer_quantities=previous_offer_quantities,
         solver_random_seed=solver_random_seed,
         solver_log_callback=solver_log_callback,
     )

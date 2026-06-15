@@ -22,6 +22,9 @@ function renderOptimizationResult(result) {
   }
 
   const cartSellers = Array.isArray(result?.cart?.sellers) ? result.cart.sellers : [];
+  if (cartSellers.length) {
+    setPostFillSellerChoicesFromCart(cartSellers);
+  }
   if (!cartSellers.length) {
     const empty = document.createElement('p');
     empty.className = 'subtle';
@@ -149,7 +152,10 @@ async function warmOptimizerApi(endpoint, { reason = '', force = false } = {}) {
 }
 
 async function submitOptimizationRequest(endpoint) {
-  if (!latestExtractPayload) {
+async function submitOptimizationRequest(endpoint, { payloadOverride = null } = {}) {
+  const requestPayload = payloadOverride || latestExtractPayload;
+
+  if (!requestPayload) {
     appendStatus('No optimizer payload ready yet. Scrape sellers first.', 'bad');
     return;
   }
@@ -171,11 +177,11 @@ async function submitOptimizationRequest(endpoint) {
   setBusy(true);
   try {
     await warmOptimizerApi(endpoint, { reason: 'before optimize', force: true });
-    const requestBody = JSON.stringify(latestExtractPayload);
+    const requestBody = JSON.stringify(requestPayload);
     setStepActivity({
       kind: 'optimizer-request',
       label: 'Posting payload to optimizer API.',
-      detail: `Sending ${latestExtractPayload.items.length} items, ${latestExtractPayload.sellers.length} sellers, and ${latestExtractPayload.offers.length} offers to optimizer.`,
+      detail: `Sending ${requestPayload.items.length} items, ${requestPayload.sellers.length} sellers, and ${requestPayload.offers.length} offers to optimizer.`,
       indeterminate: true,
     });
     appendStatus('Posting optimizer payload to optimizer.');
@@ -220,7 +226,6 @@ async function submitOptimizationRequest(endpoint) {
     const isUsableCart = result.status === 'optimal' || result.status === 'feasible';
     renderSummary([
       { label: 'Solution', value: result.status || 'unknown', tone: getSummaryToneForStatus(result.status || 'unknown') },
-      { label: 'Warm start', value: result.warm_start_status || 'unknown', tone: getSummaryToneForStatus(result.warm_start_status || 'unknown') },
       { label: 'Grand total', value: formatCurrencyAmount(result?.totals?.grand_total || 0, result.currency || 'EUR'), tone: isUsableCart ? 'good' : '' },
       { label: 'Item subtotal', value: formatCurrencyAmount(result?.totals?.item_subtotal || 0, result.currency || 'EUR') },
       { label: 'Shipping total', value: formatCurrencyAmount(result?.totals?.shipping_total || 0, result.currency || 'EUR') },

@@ -149,7 +149,6 @@ def test_real_request_fixtures_acceptance(
     assert set(body.keys()) == {
         "status",
         "currency",
-        "warm_start_status",
         "totals",
         "chosen_sellers",
         "allocations",

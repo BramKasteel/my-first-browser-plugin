@@ -44,6 +44,35 @@ async function saveDetachedBatchState(items) {
   });
 }
 
+async function loadRememberedDisabledSellerIds(lineageKey) {
+  if (!textOf(lineageKey)) return [];
+
+  const storageArea = await getStorageArea();
+  const stored = await storageArea.get(POST_FILL_STATE_KEY);
+  const state = stored[POST_FILL_STATE_KEY] || {};
+  const entry = state[textOf(lineageKey)] || {};
+
+  return Array.isArray(entry.sellerIds)
+    ? entry.sellerIds.map((sellerId) => textOf(sellerId)).filter(Boolean)
+    : [];
+}
+
+async function saveRememberedDisabledSellerIds(lineageKey, sellerIds) {
+  if (!textOf(lineageKey)) return;
+
+  const storageArea = await getStorageArea();
+  const stored = await storageArea.get(POST_FILL_STATE_KEY);
+  const state = stored[POST_FILL_STATE_KEY] || {};
+  state[textOf(lineageKey)] = {
+    sellerIds: [...new Set((sellerIds || []).map((sellerId) => textOf(sellerId)).filter(Boolean))],
+    updatedAt: new Date().toISOString(),
+  };
+
+  await storageArea.set({
+    [POST_FILL_STATE_KEY]: state,
+  });
+}
+
 async function saveSellerSettings() {
   const storageArea = await getStorageArea();
   await storageArea.set({

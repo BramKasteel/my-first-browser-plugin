@@ -2,6 +2,10 @@ function renderPayload(payload) {
   const payloadChanged = latestExtractPayload !== payload;
   latestExtractPayload = payload;
   if (payloadChanged) {
+    clearPostFillSessionState();
+    syncDisabledSellerStateForPayload(payload).catch(() => {
+      appendStatus('Could not restore remembered disabled sellers for this scrape.', 'bad');
+    });
     renderOptimizationResult(null);
   }
   syncOptimizeButton(isUiBusy);

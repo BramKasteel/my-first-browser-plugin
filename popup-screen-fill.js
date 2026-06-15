@@ -451,8 +451,10 @@ async function handleFillCart() {
     if (!result?.cartVerified) {
       appendStatus('Cardmarket cart posted, but extension could not verify final cart contents.', 'warn');
     }
+    markCartAsFilled(result, latestOptimizationResult?.cart?.sellers || []);
     appendStatus(`Cardmarket cart updated: ${result.articleCount} articles, ${result.unitCount} units.`, 'good');
     finishRun('Optimized cart pushed to Cardmarket.', 'good');
+    setActiveWorkflowStep('post-fill', { force: true });
   } catch (error) {
     appendStatus(error.message, 'bad');
     finishRun(error.message, 'bad');

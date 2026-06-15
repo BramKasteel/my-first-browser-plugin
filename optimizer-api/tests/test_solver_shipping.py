@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from app.models import (
     Offer,
     OptimizationPreferences,
@@ -22,6 +24,7 @@ from app.solver import (
     _prune_top_offers_per_item_by_price,
     optimize_order,
 )
+from ortools.sat.python import cp_model
 
 
 def _tiers(*, values: list[tuple[int, int, int]]) -> ShippingRouteTiers:
@@ -225,6 +228,134 @@ def test_optimize_returns_empty_cart_summary_for_infeasible_request() -> None:
     assert response.cart.sellers == []
     assert response.cart.total_sellers == 0
     assert response.cart.total_units == 0
+
+
+def test_optimize_excludes_blocked_seller_from_solution(monkeypatch) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(values=[(100, 50000, 1000)]),
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[WantedItem(item_id="item-1", name="Card", quantity=1)],
+        sellers=[
+            Seller(seller_id="seller-1", name="Blocked Seller", country="Germany"),
+            Seller(seller_id="seller-2", name="Allowed Seller", country="Germany"),
+        ],
+        offers=[
+            Offer(
+                offer_id="offer-1",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=1.0,
+                available_quantity=1,
+            ),
+            Offer(
+                offer_id="offer-2",
+                item_id="item-1",
+                seller_id="seller-2",
+                unit_price=2.0,
+                available_quantity=1,
+            ),
+        ],
+        preferences=OptimizationPreferences(blocked_seller_ids=["seller-1"]),
+    )
+
+    response = optimize_order(request)
+
+    assert response.status == "optimal"
+    assert [seller.seller_id for seller in response.cart.sellers] == ["seller-2"]
+    assert [allocation.offer_id for allocation in response.allocations] == ["offer-2"]
+
+
+def test_optimize_adds_hints_only_for_unblocked_previous_allocations(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(values=[(100, 50000, 1000)]),
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[
+            WantedItem(item_id="item-1", name="Card 1", quantity=1),
+            WantedItem(item_id="item-2", name="Card 2", quantity=1),
+        ],
+        sellers=[
+            Seller(seller_id="seller-1", name="Blocked Seller", country="Germany"),
+            Seller(seller_id="seller-2", name="Allowed Seller", country="Germany"),
+        ],
+        offers=[
+            Offer(
+                offer_id="offer-1",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=1.0,
+                available_quantity=1,
+            ),
+            Offer(
+                offer_id="offer-2",
+                item_id="item-1",
+                seller_id="seller-2",
+                unit_price=2.0,
+                available_quantity=1,
+            ),
+            Offer(
+                offer_id="offer-3",
+                item_id="item-2",
+                seller_id="seller-2",
+                unit_price=1.5,
+                available_quantity=1,
+            ),
+        ],
+        previous_allocations=[
+            {
+                "offer_id": "offer-1",
+                "item_id": "item-1",
+                "seller_id": "seller-1",
+                "quantity": 1,
+            },
+            {
+                "offer_id": "offer-3",
+                "item_id": "item-2",
+                "seller_id": "seller-2",
+                "quantity": 1,
+            },
+        ],
+        preferences=OptimizationPreferences(blocked_seller_ids=["seller-1"]),
+    )
+
+    captures: list[tuple[list[int], list[int]]] = []
+    original_solve = cp_model.CpSolver.Solve
+
+    def wrapped_solve(self, model, *args, **kwargs):
+        proto = model.Proto()
+        captures.append(
+            (
+                list(proto.solution_hint.vars),
+                list(proto.solution_hint.values),
+            )
+        )
+        return original_solve(self, model, *args, **kwargs)
+
+    with patch.object(cp_model.CpSolver, "Solve", wrapped_solve):
+        response = optimize_order(request)
+
+    assert response.status == "optimal"
+    assert len(captures) == 1
+    assert captures[0][1] == [1]
 
 
 def test_selected_offer_rank_analysis_reports_cheaper_and_pricier_skips(
