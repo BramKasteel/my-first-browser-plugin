@@ -1,4 +1,6 @@
 const path = require('path');
+const fs = require('fs');
+const { execFileSync } = require('child_process');
 const dotenv = require('dotenv');
 const { chromium } = require('playwright');
 const { hasCardmarketCredentials, loginToCardmarket } = require('../tests/playwright/helpers/cardmarket');
@@ -10,12 +12,41 @@ const targetUrl = process.env.OPEN_CARDMARKET_URL || 'https://www.cardmarket.com
 dotenv.config({ path: path.join(repoRoot, '.env.playwright.local') });
 dotenv.config({ path: path.join(repoRoot, '.env.playwright') });
 
+function resolveBrowserPath() {
+  const candidates = [
+    process.env.CHROMIUM_BIN,
+    process.env.CHROMIUM_PATH,
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/snap/bin/chromium',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of ['chromium-browser', 'chromium', 'google-chrome', 'google-chrome-stable']) {
+    try {
+      return execFileSync('which', [candidate], { encoding: 'utf8' }).trim();
+    } catch {
+    }
+  }
+
+  throw new Error(
+    'Could not find system Chromium/Chrome. Set CHROMIUM_BIN or CHROMIUM_PATH to installed browser binary.',
+  );
+}
+
 async function main() {
   if (!profileDir) {
     throw new Error('PROFILE_DIR is required');
   }
 
-  const executablePath = process.env.CHROMIUM_BIN || process.env.CHROMIUM_PATH || undefined;
+  const executablePath = resolveBrowserPath();
   const context = await chromium.launchPersistentContext(profileDir, {
     executablePath,
     headless: false,
@@ -30,7 +61,7 @@ async function main() {
 
   try {
     const page = context.pages()[0] || await context.newPage();
-    console.log(`Browser: ${executablePath || chromium.executablePath()}`);
+    console.log(`Browser: ${executablePath}`);
 
     if (hasCardmarketCredentials()) {
       console.log('Logging into Cardmarket with .env.playwright.local credentials');
