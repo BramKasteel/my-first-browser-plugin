@@ -205,7 +205,7 @@ async function handleScrapeAllItems() {
         throw new Error('Extract want items first so the popup has products to scrape.');
       }
 
-      appendStatus('Opening optimizer workspace so run keeps going while you browse elsewhere...', 'good');
+      appendStatus('Opening optimizer workspace tab so run keeps going while you browse elsewhere...', 'good');
       finishRun('Opening batch scrape workspace.', 'good');
       await saveDetachedBatchState(latestExtractedItems);
       await openWorkspaceWindow({ autoStart: 'scrapeAll' });

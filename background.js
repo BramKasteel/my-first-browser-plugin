@@ -48,26 +48,22 @@ async function saveSourceTabBinding(tab) {
 	});
 }
 
-async function findWorkspaceWindow() {
-	const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal', 'popup'] });
-	return windows
-		.map((popupWindow) => {
-			const workspaceTab = popupWindow.tabs?.find((tab) => parseWorkspaceUrl(tab.url));
-			if (!workspaceTab) return null;
-			return { popupWindow, workspaceTab };
-		})
-		.filter(Boolean);
+async function findWorkspaceTabs() {
+	const tabs = await chrome.tabs.query({});
+	return tabs.filter((tab) => parseWorkspaceUrl(tab.url));
 }
 
-async function focusWorkspace(entry, nextUrl) {
-	const currentUrl = entry.workspaceTab.url || '';
-	if (currentUrl !== nextUrl && entry.workspaceTab.id) {
-		await chrome.tabs.update(entry.workspaceTab.id, { url: nextUrl });
+async function focusWorkspaceTab(workspaceTab, nextUrl) {
+	const currentUrl = workspaceTab.url || '';
+	if (currentUrl !== nextUrl && workspaceTab.id) {
+		await chrome.tabs.update(workspaceTab.id, { url: nextUrl });
 	}
 
-	await chrome.windows.update(entry.popupWindow.id, { focused: true });
-	if (entry.workspaceTab.id) {
-		await chrome.tabs.update(entry.workspaceTab.id, { active: true });
+	if (workspaceTab.windowId) {
+		await chrome.windows.update(workspaceTab.windowId, { focused: true });
+	}
+	if (workspaceTab.id) {
+		await chrome.tabs.update(workspaceTab.id, { active: true });
 	}
 }
 
@@ -77,21 +73,29 @@ async function openOrFocusWorkspace({ sourceTab = null, autoStart = '' } = {}) {
 	}
 
 	const nextUrl = getWorkspaceUrl({ autoStart });
-	const workspaceWindows = await findWorkspaceWindow();
-	if (workspaceWindows.length) {
-		const [primaryWindow, ...duplicateWindows] = workspaceWindows;
-		await Promise.all(duplicateWindows.map(({ popupWindow }) => chrome.windows.remove(popupWindow.id)));
-		await focusWorkspace(primaryWindow, nextUrl);
+	const workspaceTabs = await findWorkspaceTabs();
+	if (workspaceTabs.length) {
+		const [primaryTab, ...duplicateTabs] = workspaceTabs;
+		await Promise.all(duplicateTabs.map((tab) => tab.id ? chrome.tabs.remove(tab.id) : Promise.resolve()));
+		await focusWorkspaceTab(primaryTab, nextUrl);
 		return;
 	}
 
-	await chrome.windows.create({
+	const createProperties = {
 		url: nextUrl,
-		type: 'normal',
-		width: 460,
-		height: 920,
-		focused: true,
-	});
+		active: true,
+	};
+	if (sourceTab?.windowId) {
+		createProperties.windowId = sourceTab.windowId;
+		if (typeof sourceTab.index === 'number') {
+			createProperties.index = sourceTab.index + 1;
+		}
+	}
+
+	const createdTab = await chrome.tabs.create(createProperties);
+	if (createdTab.windowId) {
+		await chrome.windows.update(createdTab.windowId, { focused: true });
+	}
 }
 
 chrome.action.onClicked.addListener(async (tab) => {

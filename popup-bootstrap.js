@@ -202,7 +202,7 @@ renderStepActivity();
 renderWorkflow();
 scrapeAllItemsButton.textContent = 'Scrape sellers';
 appendStatus(isPersistentWorkspace
-  ? 'Optimizer workspace loaded. It stays open while you browse other tabs.'
+  ? 'Optimizer workspace loaded in its own tab. It stays open while you browse other tabs.'
   : 'Popup loaded. Use workspace mode for long-running scrapes.');
 
 loadSellerSettings()
