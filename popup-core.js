@@ -12,6 +12,7 @@ const sellerCountryFilterInputEl = document.getElementById('sellerCountryFilterI
 const sellerLocationFilterListEl = document.getElementById('sellerLocationFilterList');
 const selectedSellerCountriesEl = document.getElementById('selectedSellerCountries');
 const sellerBargainsCheckboxEl = document.getElementById('includeBargainsFromOtherCountries');
+const sellerCountryLargeListWarningEl = document.getElementById('sellerCountryLargeListWarning');
 const sellerCountryLimitHintEl = document.getElementById('sellerCountryLimitHint');
 const sellerSettingsBodyEl = document.getElementById('sellerSettingsBody');
 const sellerScrapeProgressEl = document.getElementById('sellerScrapeProgress');
@@ -19,7 +20,6 @@ const sellerProgressLabelEl = document.getElementById('sellerProgressLabel');
 const sellerProgressCurrentEl = document.getElementById('sellerProgressCurrent');
 const sellerProgressPercentEl = document.getElementById('sellerProgressPercent');
 const sellerProgressBarEl = document.getElementById('sellerProgressBar');
-const wantListPreviewEl = document.getElementById('wantListPreview');
 const wantListWarningEl = document.getElementById('wantListWarning');
 const wantListSelectEl = document.getElementById('wantListSelect');
 const wantListFieldEl = document.getElementById('wantListField');
@@ -29,7 +29,6 @@ const refreshSourceTabsButton = document.getElementById('refreshSourceTabs');
 const sourceTabStatusEl = document.getElementById('sourceTabStatus');
 const confirmWantListButton = document.getElementById('confirmWantList');
 const summaryEl = document.getElementById('summary');
-const itemsEl = document.getElementById('items');
 const cartItemsEl = document.getElementById('cartItems');
 const sellerItemsEl = document.getElementById('sellerItems');
 const cartSummaryEl = document.getElementById('cartSummary');
@@ -71,6 +70,7 @@ const postFillMemoryNoteEl = document.getElementById('postFillMemoryNote');
 const heroFeedbackButton = document.getElementById('heroFeedbackButton');
 const heroFeedbackRevealEl = document.getElementById('heroFeedbackReveal');
 const heroDonateButton = document.getElementById('heroDonateButton');
+const heroBankDonateButton = document.getElementById('heroBankDonateButton');
 
 const urlParams = new URLSearchParams(window.location.search);
 const isWorkspace = urlParams.get('workspace') === '1' || urlParams.get('detached') === '1';
@@ -454,21 +454,48 @@ function getWantListSelectionHint(policy = getWantListSelectionPolicy()) {
 
 function getSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
   if (!policy.distinctItemCount) return '';
-  if (policy.isBlocked) {
-    return `Want list has ${policy.distinctItemCount} distinct items. Seller scrape disabled above ${MAX_WANT_LIST_ITEMS}.`;
-  }
-  return `Want list has ${policy.distinctItemCount} distinct items. Select 1 or 2 preferred seller countries for scrape.`;
+
+  return {
+    selectionMessage: 'Select 1 or 2 preferred seller countries for scrape.',
+    warningMessage: policy.distinctItemCount > 30
+    ? `Warning: Want list has ${policy.distinctItemCount} distinct items. For lists larger than 30 distinct items we cannot guarantee optimal results. Please donate for bigger servers!`
+    : '',
+  };
 }
 
 function renderSellerCountryLimitHint(policy = getWantListSelectionPolicy()) {
-  if (!sellerCountryLimitHintEl) return;
-  const message = getSellerCountryLimitHint(policy);
+  if (!sellerCountryLimitHintEl && !sellerCountryLargeListWarningEl) return;
+  const messages = getSellerCountryLimitHint(policy);
+  if (!messages) {
+    if (sellerCountryLimitHintEl) {
+      sellerCountryLimitHintEl.textContent = '';
+      sellerCountryLimitHintEl.hidden = true;
+      sellerCountryLimitHintEl.classList.remove('good', 'bad');
+    }
+    if (sellerCountryLargeListWarningEl) {
+      sellerCountryLargeListWarningEl.textContent = '';
+      sellerCountryLargeListWarningEl.hidden = true;
+      sellerCountryLargeListWarningEl.classList.remove('bad');
+    }
+    return;
+  }
+
+  const { selectionMessage, warningMessage } = messages;
   const selectedCount = selectedSellerCountries.length;
-  const hasValidSelection = !policy.isBlocked && selectedCount >= 1 && selectedCount <= policy.maxSellerCountries;
-  sellerCountryLimitHintEl.textContent = message;
-  sellerCountryLimitHintEl.hidden = !message;
-  sellerCountryLimitHintEl.classList.toggle('good', !!message && hasValidSelection);
-  sellerCountryLimitHintEl.classList.toggle('bad', !!message && (policy.isBlocked || !hasValidSelection));
+  const hasValidSelection = selectedCount >= 1 && selectedCount <= policy.maxSellerCountries;
+
+  if (sellerCountryLargeListWarningEl) {
+    sellerCountryLargeListWarningEl.textContent = warningMessage;
+    sellerCountryLargeListWarningEl.hidden = !warningMessage;
+    sellerCountryLargeListWarningEl.classList.toggle('bad', !!warningMessage);
+  }
+
+  if (sellerCountryLimitHintEl) {
+    sellerCountryLimitHintEl.textContent = selectionMessage;
+    sellerCountryLimitHintEl.hidden = !selectionMessage;
+    sellerCountryLimitHintEl.classList.toggle('good', hasValidSelection);
+    sellerCountryLimitHintEl.classList.toggle('bad', !hasValidSelection);
+  }
 }
 
 function areSameCountries(left = [], right = []) {
@@ -525,17 +552,37 @@ function enforceWantListSelectionPolicy({ persist = false, announce = false } = 
 function getOptimizeContextSnapshot() {
   if (latestFrontendPayload?.kind !== 'seller-scrape-batch') return null;
 
+  const results = Array.isArray(latestFrontendPayload.results) ? latestFrontendPayload.results : [];
   const uniqueSellerIds = new Set();
-  (latestFrontendPayload.results || []).forEach((result) => {
+  const itemNames = [];
+
+  results.forEach((result) => {
+    const itemName = textOf(result?.item?.productName || result?.item?.idProduct);
+    if (itemName) itemNames.push(itemName);
+
     (result?.sellers || []).forEach((seller) => {
       const sellerId = textOf(seller?.sellerId || seller?.seller?.id || seller?.sellerName);
       if (sellerId) uniqueSellerIds.add(sellerId);
     });
   });
 
+  const totals = (latestFrontendPayload.totals && typeof latestFrontendPayload.totals === 'object')
+    ? latestFrontendPayload.totals
+    : {};
+  const requestSettings = (latestFrontendPayload.requestSettings && typeof latestFrontendPayload.requestSettings === 'object')
+    ? latestFrontendPayload.requestSettings
+    : {};
+  const totalSellers = Number.isFinite(totals.totalSellerRows)
+    ? totals.totalSellerRows
+    : uniqueSellerIds.size;
+
   return {
-    itemCount: latestFrontendPayload.results?.length || 0,
+    itemCount: results.length,
     sellerCount: uniqueSellerIds.size,
+    totalSellers,
+    itemNames,
+    totals,
+    requestSettings,
   };
 }
 
@@ -666,6 +713,55 @@ function setStepBadge(element, text, tone = '') {
   if (!element) return;
   element.textContent = text;
   element.classList.toggle('good', tone === 'good');
+}
+
+function setStepActivity(activity = null) {
+  activeStepActivity = activity ? {
+    kind: activity.kind || '',
+    label: activity.label || '',
+    detail: activity.detail || '',
+    current: Number.isFinite(activity.current) ? activity.current : 0,
+    total: Number.isFinite(activity.total) ? activity.total : 0,
+    indeterminate: !!activity.indeterminate,
+  } : null;
+  renderStepActivity();
+}
+
+function renderStepActivity() {
+  const isSellerScrape = activeStepActivity?.kind === 'seller-scrape';
+  sellerSettingsBodyEl.hidden = isSellerScrape;
+  sellerScrapeProgressEl.hidden = !isSellerScrape;
+
+  if (isSellerScrape) {
+    const total = Math.max(0, activeStepActivity.total || 0);
+    const current = Math.min(total, Math.max(0, activeStepActivity.current || 0));
+    const isIndeterminate = !!activeStepActivity.indeterminate || total === 0;
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    sellerProgressLabelEl.textContent = activeStepActivity.label || 'Preparing seller scrape.';
+    sellerProgressCurrentEl.textContent = total > 0 ? `Card ${current} of ${total}` : 'Preparing cards';
+    sellerProgressPercentEl.textContent = isIndeterminate ? 'Working...' : `${percent}%`;
+    sellerProgressBarEl.classList.toggle('indeterminate', isIndeterminate);
+    sellerProgressBarEl.style.width = isIndeterminate ? '35%' : `${percent}%`;
+  } else {
+    sellerProgressBarEl.classList.remove('indeterminate');
+    sellerProgressBarEl.style.width = '0%';
+  }
+
+  const isOptimizerRequest = activeStepActivity?.kind === 'optimizer-request';
+  optimizerSettingsBodyEl.hidden = isOptimizerRequest;
+  optimizerWaitingEl.hidden = !isOptimizerRequest;
+
+  if (isOptimizerRequest) {
+    optimizerWaitingTextEl.textContent = activeStepActivity.label || 'Request sent. Waiting for reply.';
+    optimizerWaitingDetailEl.textContent = activeStepActivity.detail || 'Optimizer can take a moment while it balances price against shipping.';
+  }
+}
+
+function setResultPanelExpanded(expanded) {
+  isResultPanelExpanded = !!expanded;
+  resultPanelEl?.setAttribute('data-panel-expanded', isResultPanelExpanded ? 'true' : 'false');
+  resultPanelToggleButton?.setAttribute('aria-expanded', isResultPanelExpanded ? 'true' : 'false');
+  resultPanelToggleButton?.setAttribute('aria-label', isResultPanelExpanded ? 'Hide results and activity' : 'Show results and activity');
 }
 
 function renderWorkflow() {

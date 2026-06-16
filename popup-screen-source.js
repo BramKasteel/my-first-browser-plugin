@@ -59,6 +59,10 @@ function renderSourceTabStatus(message = '', tone = '') {
   sourceTabStatusEl.hidden = !message;
   sourceTabStatusEl.classList.toggle('good', tone === 'good');
   sourceTabStatusEl.classList.toggle('bad', tone === 'bad');
+
+  if (refreshSourceTabsButton) {
+    refreshSourceTabsButton.hidden = tone === 'good';
+  }
 }
 
 async function refreshSourceTabOptions({ announce = false } = {}) {
@@ -75,7 +79,7 @@ async function refreshSourceTabOptions({ announce = false } = {}) {
   if (!availableSourceTabs.length) {
     boundSourceTabId = null;
     await saveSourceTabBinding(null);
-    renderSourceTabStatus('Open a Cardmarket tab, then bind it here.', 'bad');
+    renderSourceTabStatus('No Cardmarket tabs found. Please log in to Cardmarket first.', 'bad');
     return [];
   }
 
@@ -85,12 +89,7 @@ async function refreshSourceTabOptions({ announce = false } = {}) {
     return availableSourceTabs;
   }
 
-  if (availableSourceTabs.length === 1) {
-    await bindSourceTabById(availableSourceTabs[0].id, { announce });
-    return availableSourceTabs;
-  }
-
-  renderSourceTabStatus('Choose which open Cardmarket tab should be used for want-list and cart actions.', '');
+  await bindSourceTabById(availableSourceTabs[0].id, { announce });
   return availableSourceTabs;
 }
 
@@ -206,60 +205,6 @@ async function refreshWantLists({ quiet = false } = {}) {
   }
 }
 
-function renderItems(items, totalVisible) {
-  if (wantListPreviewEl) {
-    const hasItems = items.length > 0 && totalVisible > 0;
-    wantListPreviewEl.classList.toggle('is-empty', !hasItems);
-    wantListPreviewEl.classList.toggle('is-ready', hasItems);
-    wantListPreviewEl.open = hasItems;
-  }
-
-  itemsEl.replaceChildren();
-
-  if (!items.length) {
-    const empty = document.createElement('p');
-    empty.className = 'subtle';
-    empty.textContent = 'No visible want items extracted yet.';
-    itemsEl.appendChild(empty);
-    return;
-  }
-
-  for (const item of items) {
-    const card = document.createElement('article');
-    card.className = 'item';
-
-    const title = document.createElement('h2');
-    title.className = 'item-title';
-    title.textContent = item.productName || 'Unnamed item';
-
-    const meta = document.createElement('p');
-    meta.className = 'item-meta';
-    const languages = getItemLanguages(item);
-    const expansions = Array.isArray(item?.expansions)
-      ? item.expansions.map((value) => String(value || '').trim()).filter(Boolean)
-      : [];
-    meta.textContent = [
-      `want=${item.idWant || '?'}`,
-      `product=${item.idProduct || '?'}`,
-      `qty=${item.quantity || '1'}`,
-      languages.length ? `langs=${languages.join(', ')}` : null,
-      expansions.length ? `exp=${expansions.join(', ')}` : null,
-      item.minCondition ? `cond=${item.minCondition}` : null,
-      item.maxPrice ? `max=${item.maxPrice}` : null,
-    ].filter(Boolean).join(' | ');
-
-    card.append(title, meta);
-    itemsEl.appendChild(card);
-  }
-
-  if (totalVisible > items.length) {
-    const more = document.createElement('p');
-    more.className = 'subtle';
-    more.textContent = `Showing ${items.length} of ${totalVisible} visible items.`;
-    itemsEl.appendChild(more);
-  }
-}
-
 function renderWantListWarning(message = '') {
   if (!wantListWarningEl) return;
   wantListWarningEl.textContent = message;
@@ -313,7 +258,7 @@ async function handleBindSourceTab() {
 }
 
 async function handleExtractItems() {
-  startRun('Loading selected Cardmarket want list...');
+  startRun('Preparing selected Cardmarket want list extraction...');
   setBusy(true);
   try {
     const tab = await ensureCardmarketTab();
@@ -322,6 +267,9 @@ async function handleExtractItems() {
     }
 
     const selectedWantList = availableWantLists.find((entry) => entry.id === selectedWantListId) || null;
+    const extractionLabel = selectedWantList?.name || `want list ${selectedWantListId}`;
+    renderWantListWarning(`Loading items from ${extractionLabel}. Keep Cardmarket tab open.`);
+    startRun(`Extracting want items from ${extractionLabel}...`);
 
     const result = await executeInTab(tab.id, injectedLoadWantListItemsById, [{
       wantListId: selectedWantListId,
@@ -342,7 +290,6 @@ async function handleExtractItems() {
     const wantListPolicy = enforceWantListSelectionPolicy({ persist: true, announce: true });
     syncExtractButton();
     syncSellerScrapeButton();
-    renderItems(result.items.slice(0, 8), result.totalVisible);
     renderSellers([], 0, result.items[0]?.productName || 'the first item');
     renderFrontendPayload(result);
     renderPayload(null);

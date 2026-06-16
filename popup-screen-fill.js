@@ -437,13 +437,15 @@ async function handleFillCart() {
     return;
   }
 
-  startRun('Posting optimized cart to Cardmarket...');
+  startRun('Preparing cart fill request for Cardmarket...');
   setBusy(true);
   let shouldAdvanceToPostFill = false;
   try {
     const payload = buildCartFillPayload(latestOptimizationResult);
+    startRun(`Filling Cardmarket cart with ${payload.articleCount} offers (${payload.unitCount} units)...`);
     appendStatus(`Posting ${payload.articleCount} articles and ${payload.unitCount} units to Cardmarket cart.`);
     const result = await submitOptimizedCartInTab(payload);
+    startRun('Cardmarket cart fill request finished. Verifying response...');
     const serverRejected = textOf(result?.serverResultType) === 'error';
     const hasShortages = Array.isArray(result?.shortages) && result.shortages.length > 0;
     const missingSummaryUnits = Number(result?.missingSummaryUnits || 0);

@@ -175,7 +175,15 @@ async function submitOptimizationRequest(endpoint, { payloadOverride = null } = 
   startRun('Waiting for optimizer reply...');
   setBusy(true);
   try {
+    setStepActivity({
+      kind: 'optimizer-request',
+      label: 'Warming optimizer API.',
+      detail: 'Sending health check request before posting optimization payload.',
+      indeterminate: true,
+    });
+    startRun('Warming optimizer API before optimization request...');
     await warmOptimizerApi(endpoint, { reason: 'before optimize', force: true });
+    startRun('Sending payload to optimizer API...');
     const requestBody = JSON.stringify(requestPayload);
     setStepActivity({
       kind: 'optimizer-request',

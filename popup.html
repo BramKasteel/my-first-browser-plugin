@@ -26,9 +26,9 @@
 
     body {
       margin: 0;
-      width: fit-content;
-      min-width: 320px;
-      max-width: 420px;
+      width: 630px;
+      min-width: 480px;
+      max-width: 630px;
       height: 100vh;
       display: flex;
       flex-direction: column;
@@ -41,9 +41,9 @@
     }
 
     body.detached {
-      width: fit-content;
+      width: 630px;
       height: auto;
-      min-width: 320px;
+      min-width: 480px;
       min-height: 100vh;
       resize: both;
       overflow: auto;
@@ -116,10 +116,12 @@
     }
 
     .hero-action-note {
+      flex: 1;
       margin: 0;
       color: var(--muted);
       font-size: 12px;
       line-height: 1.45;
+      align-self: center;
     }
 
     .hero-feedback-reveal {
@@ -456,6 +458,22 @@
       display: none;
     }
 
+    .seller-country-hint-line {
+      display: block;
+    }
+
+    .seller-country-hint-line + .seller-country-hint-line {
+      margin-top: 6px;
+    }
+
+    .inline-notice .seller-country-hint-line.good {
+      color: #a7f3d0;
+    }
+
+    .inline-notice .seller-country-hint-line.bad {
+      color: #fecaca;
+    }
+
     .collapsible {
       margin-top: 12px;
       border: 1px solid rgba(159, 176, 190, 0.12);
@@ -510,19 +528,6 @@
 
     .collapsible-body {
       padding: 0 12px 12px;
-    }
-
-    #wantListPreview {
-      margin-top: 14px;
-    }
-
-    #wantListPreview summary {
-      padding: 12px 14px;
-      font-size: 14px;
-    }
-
-    #wantListPreview .collapsible-body {
-      padding: 0 14px 14px;
     }
 
     button {
@@ -1145,14 +1150,15 @@
         <p class="subtle">Only MTG implemented currently.</p>
       </div>
       <div class="hero-actions">
-        <p class="hero-action-note">We are in Beta: always double-check your cart items and final price. Found a bug or have an idea? Send feedback:</p>
         <div class="hero-action-row hero-support-row">
           <button id="heroFeedbackButton" type="button" class="hero-support-button">Send feedback</button>
+          <p class="hero-action-note">We are in Beta: always double-check your cart items and final price.<br>Found a bug or have an idea? I would be very happy to learn!</p>
         </div>
         <p id="heroFeedbackReveal" class="hero-feedback-reveal" hidden></p>
-        <p class="hero-action-note">If you can afford it, consider donating part of the savings to keep this plugin free.</p>
         <div class="hero-action-row hero-support-row">
           <button id="heroDonateButton" type="button" class="hero-support-button">Donate via PayPal</button>
+          <button id="heroBankDonateButton" type="button" class="hero-support-button">Donate via Ideal</button>
+          <p class="hero-action-note">Donations help me convince my wife I need to maintain this app. I need to cover cloud costs at least!</p>
         </div>
       </div>
     </section>
@@ -1201,13 +1207,6 @@
           <section class="source-card">
             <h3 class="source-title">Select a wants list</h3>
             <div class="step-card-actions">
-              <div class="config-row">
-                <div id="sourceTabField" class="config-label seller-filter-field want-list-field">
-                  <select id="sourceTabSelect">
-                    <option value="">Loading Cardmarket tabs...</option>
-                  </select>
-                </div>
-              </div>
               <div class="actions">
                 <button id="refreshSourceTabs" class="secondary" type="button">Refresh tabs</button>
               </div>
@@ -1225,12 +1224,6 @@
             </div>
           </section>
         </div>
-        <details id="wantListPreview" class="collapsible is-empty">
-          <summary>Preview</summary>
-          <div class="collapsible-body">
-            <div id="items" class="items"></div>
-          </div>
-        </details>
       </section>
 
       <section class="panel config-grid step-panel" data-step-panel="sellers">
@@ -1274,6 +1267,7 @@
             </label>
           </div>
           <div class="config-label seller-filter-field">
+            <p id="sellerCountryLimitHint" class="inline-notice" hidden></p>
             <span>Preferred seller countries</span>
             <div class="country-section">
               <div class="country-picker">
@@ -1289,7 +1283,7 @@
                 <span>Include bargains from other countries</span>
               </label>
             </div>
-            <p id="sellerCountryLimitHint" class="inline-notice" hidden></p>
+            <p id="sellerCountryLargeListWarning" class="inline-notice bad" hidden></p>
           </div>
           <div class="actions">
             <button id="scrapeAllItems" class="secondary">Get sellers</button>

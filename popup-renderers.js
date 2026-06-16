@@ -34,8 +34,13 @@ function renderOptimizerInputContext() {
   optimizerInputContextEl.hidden = false;
 
   const totals = context.totals || {};
-  const itemCount = Number.isFinite(totals.extractedItems) ? totals.extractedItems : context.itemNames.length;
-  const sellerCount = Number.isFinite(context.totalSellers) ? context.totalSellers : 0;
+  const fallbackItemCount = Number.isFinite(context.itemCount)
+    ? context.itemCount
+    : (Array.isArray(context.itemNames) ? context.itemNames.length : 0);
+  const itemCount = Number.isFinite(totals.extractedItems) ? totals.extractedItems : fallbackItemCount;
+  const sellerCount = Number.isFinite(context.totalSellers)
+    ? context.totalSellers
+    : (Number.isFinite(context.sellerCount) ? context.sellerCount : 0);
   const requestSettings = context.requestSettings || {};
   const sellerCountries = Array.isArray(requestSettings.sellerCountries)
     ? requestSettings.sellerCountries.filter(Boolean)

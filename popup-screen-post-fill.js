@@ -65,7 +65,7 @@ function renderPostFillScreen() {
   }
 
   postFillEmptyStateEl.hidden = true;
-  postFillSummaryEl.textContent = 'Check sellers with non-standard delivery fees. Re-optimize uses expected shipping shown here and keeps earlier disabled sellers applied.';
+  postFillSummaryEl.textContent = 'Any sellers that apply different shipping than expected? You can disable these sellers here and run again.';
   postFillMemoryNoteEl.hidden = hiddenRememberedCount === 0;
   postFillMemoryNoteEl.textContent = hiddenRememberedCount
     ? `${hiddenRememberedCount} seller${hiddenRememberedCount === 1 ? '' : 's'} disabled earlier no longer appear in current cart, but remain blocked.`

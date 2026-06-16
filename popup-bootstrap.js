@@ -34,6 +34,21 @@ heroDonateButton?.addEventListener('click', () => {
 
   window.open(donationUrl, '_blank', 'noopener');
 });
+heroBankDonateButton?.addEventListener('click', () => {
+  const bankDonationUrl = textOf(window.APP_CONFIG?.bankDonationUrl);
+  if (!bankDonationUrl) {
+    appendStatus('Bank donation link missing from config.', 'bad');
+    return;
+  }
+
+  appendStatus('Opening bank donation page in new tab.', 'good');
+  if (globalThis.chrome?.tabs?.create) {
+    globalThis.chrome.tabs.create({ url: bankDonationUrl });
+    return;
+  }
+
+  window.open(bankDonationUrl, '_blank', 'noopener');
+});
 confirmWantListButton?.addEventListener('click', () => {
   if (!hasLoadedWantItems() || getWantListSelectionPolicy().isBlocked) return;
   setActiveWorkflowStep('sellers', { force: true });
@@ -48,15 +63,6 @@ postFillReoptimizeButton?.addEventListener('click', () => {
 });
 refreshSourceTabsButton?.addEventListener('click', () => {
   refreshSourceTabOptions({ announce: false }).catch((error) => {
-    renderSourceTabStatus(error.message, 'bad');
-  });
-});
-sourceTabSelectEl?.addEventListener('change', () => {
-  if (!textOf(sourceTabSelectEl.value)) {
-    return;
-  }
-
-  handleBindSourceTab().catch((error) => {
     renderSourceTabStatus(error.message, 'bad');
   });
 });
@@ -170,7 +176,6 @@ renderSummary([
   { label: 'Current scope', value: 'Select a wants list to continue.' },
 ]);
 finishRun('Idle. Start extract, scrape, or probe.');
-renderItems([], 0);
 renderOptimizationResult(null);
 renderSellers([], 0);
 renderPayload(null);
@@ -226,7 +231,6 @@ loadSellerSettings()
           return;
         }
 
-        renderItems(latestExtractedItems.slice(0, 8), latestExtractedItems.length);
         renderSellers([], 0, latestExtractedItems[0]?.productName || 'the first item');
         setActiveWorkflowStep('sellers', { force: true });
         handleScrapeAllItems().catch((error) => {
