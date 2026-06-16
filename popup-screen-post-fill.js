@@ -3,6 +3,8 @@ function getVisiblePostFillSellerIds() {
 }
 
 const POST_FILL_TOTAL_REFRESH_MS = 15000;
+const POST_FILL_TRANSIENT_RETRY_DELAY_MS = 1200;
+const POST_FILL_TRANSIENT_RETRY_MAX_ATTEMPTS = 3;
 let postFillTotalsState = {
   isLoading: false,
   fetchedAt: 0,
@@ -11,6 +13,7 @@ let postFillTotalsState = {
   sourceLabel: '',
   error: '',
 };
+let postFillTransientRetryAttempts = 0;
 
 function normalizeSellerLookupKey(value) {
   return textOf(value)
@@ -306,6 +309,7 @@ async function refreshPostFillTotalsIfNeeded(force = false) {
 
   try {
     const parsed = await fetchCurrentShoppingCartTotal();
+    postFillTransientRetryAttempts = 0;
     console.log('[post-fill-scrape] refresh success', {
       force,
       cardmarketTotal: Number(parsed?.amount),
@@ -323,9 +327,32 @@ async function refreshPostFillTotalsIfNeeded(force = false) {
       error: '',
     };
   } catch (error) {
+    const errorMessage = textOf(error?.message || error);
+    const isTransientReloadRace = /empty html while page was likely reloading/i.test(errorMessage);
+    if (isTransientReloadRace && postFillTransientRetryAttempts < POST_FILL_TRANSIENT_RETRY_MAX_ATTEMPTS) {
+      postFillTransientRetryAttempts += 1;
+      console.log('[post-fill-scrape] transient reload race; scheduling retry', {
+        attempt: postFillTransientRetryAttempts,
+        maxAttempts: POST_FILL_TRANSIENT_RETRY_MAX_ATTEMPTS,
+        retryDelayMs: POST_FILL_TRANSIENT_RETRY_DELAY_MS,
+      });
+      postFillTotalsState = {
+        ...postFillTotalsState,
+        isLoading: false,
+        fetchedAt: 0,
+        error: '',
+      };
+      renderPostFillScreen();
+      setTimeout(() => {
+        void refreshPostFillTotalsIfNeeded(true);
+      }, POST_FILL_TRANSIENT_RETRY_DELAY_MS);
+      return;
+    }
+
+    postFillTransientRetryAttempts = 0;
     console.log('[post-fill-scrape] refresh failed', {
       force,
-      error: textOf(error?.message || error),
+      error: errorMessage,
     });
     postFillTotalsState = {
       ...postFillTotalsState,
@@ -334,7 +361,7 @@ async function refreshPostFillTotalsIfNeeded(force = false) {
       cardmarketTotal: null,
       sellerShippingByName: {},
       sourceLabel: '',
-      error: textOf(error?.message || 'Could not load Cardmarket cart total.'),
+      error: errorMessage || 'Could not load Cardmarket cart total.',
     };
   }
 

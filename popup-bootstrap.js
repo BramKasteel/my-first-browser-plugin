@@ -57,7 +57,9 @@ scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 optimizeOrderButton.addEventListener('click', handleOptimizeOrder);
 fillCartButton.addEventListener('click', handleFillCart);
 fillCartNonEmptyConfirmCheckboxEl?.addEventListener('change', () => {
-  setFillCartNonEmptyAcknowledged(!!fillCartNonEmptyConfirmCheckboxEl.checked);
+  setFillCartNonEmptyAcknowledged(!!fillCartNonEmptyConfirmCheckboxEl.checked).catch((error) => {
+    appendStatus(textOf(error?.message || error), 'bad');
+  });
 });
 postFillReoptimizeButton?.addEventListener('click', () => {
   handlePostFillReoptimize().catch((error) => {

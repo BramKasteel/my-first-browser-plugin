@@ -1,5 +1,9 @@
 # Vacation plans:
 
+ignored sellers are stored in memory. Also use the values in the initial request.
+
+------------
+
 including bargains does not work?
 
 ----------

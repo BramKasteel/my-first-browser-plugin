@@ -11,6 +11,7 @@ let fillCartInspectionState = {
   hasItems: null,
   acknowledgedNonEmpty: false,
 };
+let fillCartAwaitingStability = false;
 
 function resetFillCartInspectionState() {
   fillCartInspectionState = {
@@ -107,14 +108,85 @@ function renderFillCartGuardState() {
 
   if (fillCartNonEmptyConfirmCheckboxEl) {
     fillCartNonEmptyConfirmCheckboxEl.checked = !!fillCartInspectionState.acknowledgedNonEmpty;
-    fillCartNonEmptyConfirmCheckboxEl.disabled = isUiBusy || !showGuard;
+    fillCartNonEmptyConfirmCheckboxEl.disabled = isUiBusy || !showGuard || fillCartAwaitingStability;
   }
 }
 
-function setFillCartNonEmptyAcknowledged(nextValue) {
+async function waitForShoppingCartTabStable(timeoutMs = 8000, pollIntervalMs = 250) {
+  const tab = await ensureCardmarketTab();
+  const tabUrl = textOf(tab?.url || '');
+
+  if (!/\/ShoppingCart(?:[/?#]|$)/i.test(tabUrl)) {
+    return true;
+  }
+
+  if (tab.status === 'complete') {
+    return true;
+  }
+
+  console.log('[fill-cart-scrape] waiting for ShoppingCart tab stability before accepting warning checkbox', {
+    tabId: tab.id,
+    tabUrl,
+    timeoutMs,
+  });
+
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+
+    const check = () => {
+      chrome.tabs.get(tab.id).then((currentTab) => {
+        if (currentTab?.status === 'complete') {
+          clearInterval(intervalHandle);
+          resolve(true);
+          return;
+        }
+
+        if ((Date.now() - startedAt) >= timeoutMs) {
+          clearInterval(intervalHandle);
+          resolve(false);
+        }
+      }).catch(() => {
+        clearInterval(intervalHandle);
+        resolve(false);
+      });
+    };
+
+    const intervalHandle = setInterval(check, pollIntervalMs);
+    check();
+  });
+}
+
+async function setFillCartNonEmptyAcknowledged(nextValue) {
+  if (!nextValue) {
+    fillCartInspectionState = {
+      ...fillCartInspectionState,
+      acknowledgedNonEmpty: false,
+    };
+    renderFillCartGuardState();
+    syncFillCartButton(isUiBusy);
+    return;
+  }
+
+  fillCartAwaitingStability = true;
+  renderFillCartGuardState();
+
+  const isStable = await waitForShoppingCartTabStable();
+  fillCartAwaitingStability = false;
+
+  if (!isStable) {
+    fillCartInspectionState = {
+      ...fillCartInspectionState,
+      acknowledgedNonEmpty: false,
+    };
+    appendStatus('Cart page still loading, retry in moment.', 'bad');
+    renderFillCartGuardState();
+    syncFillCartButton(isUiBusy);
+    return;
+  }
+
   fillCartInspectionState = {
     ...fillCartInspectionState,
-    acknowledgedNonEmpty: !!nextValue,
+    acknowledgedNonEmpty: true,
   };
   renderFillCartGuardState();
   syncFillCartButton(isUiBusy);
@@ -582,16 +654,19 @@ async function reloadShoppingCartTabIfActive() {
   }
 
   console.log('[fill-cart-scrape] reloading active ShoppingCart tab after fill', { tabId: tab.id, tabUrl });
-  await chrome.tabs.reload(tab.id);
-
   await new Promise((resolve) => {
     const timeoutMs = 12000;
+    const pollIntervalMs = 300;
     let settled = false;
+    let pollHandle = null;
 
     const finish = () => {
       if (settled) return;
       settled = true;
       chrome.tabs.onUpdated.removeListener(onUpdated);
+      if (pollHandle != null) {
+        clearInterval(pollHandle);
+      }
       resolve();
     };
 
@@ -603,6 +678,21 @@ async function reloadShoppingCartTabIfActive() {
     };
 
     chrome.tabs.onUpdated.addListener(onUpdated);
+
+    pollHandle = setInterval(() => {
+      chrome.tabs.get(tab.id).then((currentTab) => {
+        if (currentTab?.status === 'complete') {
+          finish();
+        }
+      }).catch(() => {
+        finish();
+      });
+    }, pollIntervalMs);
+
+    chrome.tabs.reload(tab.id).catch(() => {
+      finish();
+    });
+
     setTimeout(() => {
       console.log('[fill-cart-scrape] tab reload wait timeout reached; continuing anyway', { tabId: tab.id, timeoutMs });
       finish();
