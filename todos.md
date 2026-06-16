@@ -1,5 +1,8 @@
 # Vacation plans:
 
+including bargains does not work?
+
+----------
 
 When reoptimizing, also show total price.
 
