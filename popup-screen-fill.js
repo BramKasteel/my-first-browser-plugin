@@ -4,11 +4,186 @@ function hasOptimizedCart() {
     && latestOptimizationResult.cart.sellers.length > 0;
 }
 
+const FILL_CART_INSPECTION_REFRESH_MS = 15000;
+let fillCartInspectionState = {
+  isLoading: false,
+  fetchedAt: 0,
+  hasItems: null,
+  itemCount: 0,
+  acknowledgedNonEmpty: false,
+};
+
+function resetFillCartInspectionState() {
+  fillCartInspectionState = {
+    isLoading: false,
+    fetchedAt: 0,
+    hasItems: null,
+    itemCount: 0,
+    acknowledgedNonEmpty: false,
+  };
+}
+
+function parseShoppingCartItemCountFromHtml(html) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  const bodyText = textOf(doc.body?.innerText || '');
+
+  if (/your shopping cart is empty|shopping cart is empty/i.test(bodyText)) {
+    console.log('[fill-cart-scrape] cart empty phrase matched');
+    return 0;
+  }
+
+  const summaryMatch = bodyText.match(/Amount of articles\s+(\d+)\s+Articles/i)
+    || bodyText.match(/Contents\s+(\d+)\s+Articles/i)
+    || bodyText.match(/Cart\s*\([^)]*\)\s*(\d+)$/i);
+  if (summaryMatch) {
+    const parsed = parseInt(summaryMatch[1], 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      console.log('[fill-cart-scrape] item count from summary', { parsed });
+      return parsed;
+    }
+  }
+
+  const rowEls = [...doc.querySelectorAll('tr[data-article-id], [data-article-id][data-name], input[name="idArticle"]')];
+  if (rowEls.length > 0) {
+    console.log('[fill-cart-scrape] item count from row selectors', { rowCount: rowEls.length });
+    return rowEls.length;
+  }
+
+  console.log('[fill-cart-scrape] no cart selectors matched, fallback 0');
+  return 0;
+}
+
+async function fetchCurrentShoppingCartItemCount() {
+  const tab = await ensureCardmarketTab();
+  console.log('[fill-cart-scrape] fetch start', { tabId: tab?.id, tabUrl: tab?.url || '' });
+  const html = await executeInTab(tab.id, async () => {
+    const pathParts = location.pathname.split('/').filter(Boolean);
+    const lang = pathParts[0] || 'en';
+    const game = pathParts[1] || 'Magic';
+    const shoppingCartUrl = `${location.origin}/${lang}/${game}/ShoppingCart`;
+
+    const response = await fetch(shoppingCartUrl, {
+      credentials: 'include',
+      cache: 'no-store',
+    });
+    console.log('[fill-cart-scrape] fetch response', {
+      shoppingCartUrl,
+      status: response.status,
+      ok: response.ok,
+      redirected: response.redirected,
+    });
+    if (!response.ok) {
+      throw new Error(`Shopping cart request failed (${response.status}).`);
+    }
+    return response.text();
+  });
+
+  const itemCount = parseShoppingCartItemCountFromHtml(html);
+  console.log('[fill-cart-scrape] fetch parsed', {
+    htmlLength: String(html || '').length,
+    itemCount,
+  });
+  return itemCount;
+}
+
+function isFillBlockedByNonEmptyCart() {
+  return fillCartInspectionState.hasItems === true && !fillCartInspectionState.acknowledgedNonEmpty;
+}
+
+function renderFillCartGuardState() {
+  const hasCart = hasOptimizedCart();
+  const cartKnownNonEmpty = fillCartInspectionState.hasItems === true;
+  const showGuard = hasCart && !fillCartInspectionState.isLoading && cartKnownNonEmpty;
+
+  if (refillWarningEl) {
+    refillWarningEl.hidden = true;
+  }
+
+  if (fillCartNonEmptyConfirmRowEl) {
+    fillCartNonEmptyConfirmRowEl.hidden = !showGuard;
+  }
+
+  if (fillCartNonEmptyConfirmCheckboxEl) {
+    fillCartNonEmptyConfirmCheckboxEl.checked = !!fillCartInspectionState.acknowledgedNonEmpty;
+    fillCartNonEmptyConfirmCheckboxEl.disabled = isUiBusy || !showGuard;
+  }
+}
+
+function setFillCartNonEmptyAcknowledged(nextValue) {
+  fillCartInspectionState = {
+    ...fillCartInspectionState,
+    acknowledgedNonEmpty: !!nextValue,
+  };
+  renderFillCartGuardState();
+  syncFillCartButton(isUiBusy);
+}
+
+async function refreshFillCartInspectionIfNeeded(force = false) {
+  if (!hasOptimizedCart()) {
+    resetFillCartInspectionState();
+    renderFillCartGuardState();
+    return;
+  }
+
+  if (fillCartInspectionState.isLoading) return;
+  if (!force && (Date.now() - fillCartInspectionState.fetchedAt) < FILL_CART_INSPECTION_REFRESH_MS) return;
+
+  fillCartInspectionState = {
+    ...fillCartInspectionState,
+    isLoading: true,
+  };
+  syncFillCartButton(isUiBusy);
+  renderFillCartGuardState();
+
+  try {
+    const itemCount = await fetchCurrentShoppingCartItemCount();
+    const hasItems = Number(itemCount) > 0;
+    console.log('[fill-cart-scrape] refresh success', {
+      force,
+      itemCount,
+      hasItems,
+      acknowledgedNonEmpty: fillCartInspectionState.acknowledgedNonEmpty,
+    });
+    fillCartInspectionState = {
+      ...fillCartInspectionState,
+      isLoading: false,
+      fetchedAt: Date.now(),
+      hasItems,
+      itemCount: hasItems ? Number(itemCount) : 0,
+      acknowledgedNonEmpty: hasItems ? fillCartInspectionState.acknowledgedNonEmpty : false,
+    };
+  } catch (error) {
+    console.log('[fill-cart-scrape] refresh failed', {
+      force,
+      error: textOf(error?.message || error),
+    });
+    fillCartInspectionState = {
+      ...fillCartInspectionState,
+      isLoading: false,
+      fetchedAt: Date.now(),
+      hasItems: null,
+      itemCount: 0,
+      acknowledgedNonEmpty: false,
+    };
+  }
+
+  syncFillCartButton(isUiBusy);
+  renderFillCartGuardState();
+}
+
 function syncFillCartButton(isBusy = false) {
   const hasCart = hasOptimizedCart();
-  fillCartButton.disabled = isBusy || !hasCart;
+  const blockedByNonEmptyCart = isFillBlockedByNonEmptyCart();
+  const isCheckingCart = hasCart && fillCartInspectionState.isLoading;
+  fillCartButton.disabled = isBusy || !hasCart || isCheckingCart || blockedByNonEmptyCart;
   fillCartButton.classList.toggle('is-busy', isBusy);
-  fillCartButton.classList.toggle('secondary', !hasCart);
+  fillCartButton.classList.toggle('secondary', !hasCart || blockedByNonEmptyCart || isCheckingCart);
+
+  if (hasCart && !isBusy) {
+    void refreshFillCartInspectionIfNeeded();
+  }
+
+  renderFillCartGuardState();
 }
 
 
@@ -29,6 +204,8 @@ function renderCartSummary(result) {
   if (!summaryTargets.length) return;
 
   if (!result) {
+    resetFillCartInspectionState();
+    renderFillCartGuardState();
     summaryTargets.forEach(({ container, totalEl, itemsEl }) => {
       container.hidden = true;
       totalEl.textContent = '-';
@@ -45,6 +222,8 @@ function renderCartSummary(result) {
     totalEl.textContent = grandTotalText;
     itemsEl.textContent = totalItemsText;
   });
+
+  void refreshFillCartInspectionIfNeeded(true);
 }
 
 function buildCartFillPayload(result) {

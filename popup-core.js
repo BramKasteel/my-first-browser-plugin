@@ -63,10 +63,17 @@ const optimizerWaitingEl = document.getElementById('optimizerWaiting');
 const optimizerWaitingTextEl = document.getElementById('optimizerWaitingText');
 const optimizerWaitingDetailEl = document.getElementById('optimizerWaitingDetail');
 const refillWarningEl = document.getElementById('refillWarning');
+const fillCartNonEmptyConfirmRowEl = document.getElementById('fillCartNonEmptyConfirmRow');
+const fillCartNonEmptyConfirmCheckboxEl = document.getElementById('fillCartNonEmptyConfirm');
 const postFillSummaryEl = document.getElementById('postFillSummary');
 const postFillSellerListEl = document.getElementById('postFillSellerList');
 const postFillEmptyStateEl = document.getElementById('postFillEmptyState');
 const postFillMemoryNoteEl = document.getElementById('postFillMemoryNote');
+const postFillTotalsSummaryEl = document.getElementById('postFillTotalsSummary');
+const postFillCartTotalEl = document.getElementById('postFillCartTotal');
+const postFillComputedTotalEl = document.getElementById('postFillComputedTotal');
+const postFillTotalDifferenceEl = document.getElementById('postFillTotalDifference');
+const postFillTotalsHintEl = document.getElementById('postFillTotalsHint');
 const heroFeedbackButton = document.getElementById('heroFeedbackButton');
 const heroFeedbackRevealEl = document.getElementById('heroFeedbackReveal');
 const heroDonateButton = document.getElementById('heroDonateButton');
@@ -107,7 +114,6 @@ let sellerRequestDelayMs = 250;
 let currentPayloadLineageKey = '';
 let rememberedDisabledSellerIds = [];
 let postFillSellerChoices = [];
-let refillWarningActive = false;
 let boundSourceTabId = Number.isInteger(forcedTabId) ? forcedTabId : null;
 let availableSourceTabs = [];
 
@@ -203,6 +209,7 @@ function setBusy(isBusy) {
   optimizeOrderButton.classList.toggle('is-busy', isBusy);
   fillCartButton.disabled = isBusy;
   fillCartButton.classList.toggle('is-busy', isBusy);
+  if (fillCartNonEmptyConfirmCheckboxEl) fillCartNonEmptyConfirmCheckboxEl.disabled = isBusy;
   buyerCountrySelectEl.disabled = isBusy;
   sellerReputationFilterEl.disabled = isBusy;
   sellerDeliveryTimeFilterEl.disabled = isBusy;
@@ -348,7 +355,6 @@ function setPostFillSellerChoicesFromCart(cartSellers) {
 function clearPostFillSessionState() {
   latestFillResult = null;
   postFillSellerChoices = [];
-  refillWarningActive = false;
   if (typeof renderPostFillScreen === 'function') {
     renderPostFillScreen();
   }
@@ -356,7 +362,6 @@ function clearPostFillSessionState() {
 
 function markCartAsFilled(fillResult, cartSellers) {
   latestFillResult = fillResult || {};
-  refillWarningActive = true;
   setPostFillSellerChoicesFromCart(cartSellers || []);
   syncRefillWarning();
 }
@@ -366,12 +371,16 @@ function hasFilledCartSession() {
 }
 
 function shouldShowRefillWarning() {
-  return refillWarningActive;
+  return false;
 }
 
 function syncRefillWarning() {
+  if (typeof renderFillCartGuardState === 'function') {
+    renderFillCartGuardState();
+    return;
+  }
   if (!refillWarningEl) return;
-  refillWarningEl.hidden = !shouldShowRefillWarning();
+  refillWarningEl.hidden = true;
 }
 
 async function syncDisabledSellerStateForPayload(payload) {

@@ -1355,7 +1355,11 @@
               <span id="mainCartSummaryTotalItems" class="summary-value">-</span>
             </div>
           </div>
-          <p id="refillWarning" class="inline-notice" hidden>Before filling cart again, empty current Cardmarket cart. This extension does not clear it automatically.</p>
+          <p id="refillWarning" class="inline-notice" hidden>Your shopping cart is not empty.</p>
+          <label id="fillCartNonEmptyConfirmRow" class="toggle-row checkbox-row inline-notice bad" for="fillCartNonEmptyConfirm" hidden>
+            <input id="fillCartNonEmptyConfirm" type="checkbox" />
+            <span>I am warned that my shopping cart is not empty</span>
+          </label>
           <div class="actions">
             <button id="fillCart" class="secondary mini-button" disabled>Fill cart</button>
           </div>
@@ -1368,6 +1372,21 @@
           <span id="postFillStepBadge" class="step-pill">Locked</span>
         </div>
         <div class="step-highlight">
+          <div id="postFillTotalsSummary" class="summary" hidden>
+            <div class="summary-line">
+              <span class="summary-label">Cardmarket total order price</span>
+              <span id="postFillCartTotal" class="summary-value">-</span>
+            </div>
+            <div class="summary-line">
+              <span class="summary-label">Optimizer computed total</span>
+              <span id="postFillComputedTotal" class="summary-value">-</span>
+            </div>
+            <div class="summary-line">
+              <span class="summary-label">Difference</span>
+              <span id="postFillTotalDifference" class="summary-value">-</span>
+            </div>
+          </div>
+          <p id="postFillTotalsHint" class="panel-note" hidden>Differences are often caused by unexpected shipping prices on Cardmarket.</p>
           <p id="postFillSummary" class="panel-note">Fill cart first. Then disable sellers with non-standard delivery fees and re-optimize.</p>
           <p id="postFillMemoryNote" class="panel-note"></p>
           <p id="postFillEmptyState" class="subtle">No filled-cart sellers available yet.</p>
