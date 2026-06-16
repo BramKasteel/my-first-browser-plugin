@@ -370,10 +370,6 @@ function hasFilledCartSession() {
   return !!latestFillResult;
 }
 
-function shouldShowRefillWarning() {
-  return false;
-}
-
 function syncRefillWarning() {
   if (typeof renderFillCartGuardState === 'function') {
     renderFillCartGuardState();

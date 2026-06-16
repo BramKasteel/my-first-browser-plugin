@@ -43,6 +43,25 @@ function parseMoneyValue(value) {
 function parseShoppingCartTotalFromHtml(html) {
   const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
   const textNormalized = (value) => textOf(value).toLowerCase();
+  const bodyText = textOf(doc.body?.innerText || '');
+  const cartRowEls = [...doc.querySelectorAll('tr[data-article-id], [data-article-id][data-name], input[name="idArticle"]')];
+  const hasCartRows = cartRowEls.length > 0;
+  const hasEmptyCartPhrase = /your shopping cart is empty|shopping cart is empty/i.test(bodyText);
+
+  if (hasEmptyCartPhrase && !hasCartRows) {
+    console.log('[post-fill-scrape] empty cart phrase matched; fallback total=0');
+    return {
+      amount: 0,
+      currency: 'EUR',
+      sourceLabel: 'Empty cart',
+    };
+  }
+
+  if (hasEmptyCartPhrase && hasCartRows) {
+    console.log('[post-fill-scrape] empty cart phrase conflicts with cart rows; ignoring empty phrase', {
+      cartRowCount: cartRowEls.length,
+    });
+  }
 
   const allHeadings = [...doc.querySelectorAll('h1, h2, h3, h4, h5')];
   const cartOverviewHeading = allHeadings.find((heading) => /cart overview/i.test(textOf(heading.textContent || '')));
@@ -113,7 +132,6 @@ function parseShoppingCartTotalFromHtml(html) {
     };
   }
 
-  const bodyText = textOf(doc.body?.innerText || '');
   const fallbackMatch = bodyText.match(/cart overview\s+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*(€|EUR|\$|USD|£|GBP|CHF)/i)
     || bodyText.match(/total order price\s+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*(€|EUR|\$|USD|£|GBP|CHF)/i)
     || bodyText.match(/\btotal\s+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*(€|EUR|\$|USD|£|GBP|CHF)/i);
@@ -133,8 +151,31 @@ function parseShoppingCartTotalFromHtml(html) {
     }
   }
 
+  const shoppingCartLink = [...doc.querySelectorAll('a[href*="/ShoppingCart"]')]
+    .map((entry) => textOf(entry.textContent || ''))
+    .find((value) => /\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\s*(?:€|EUR|\$|USD|£|GBP|CHF)/i.test(value));
+  if (shoppingCartLink) {
+    const parsed = parseMoneyValue(shoppingCartLink);
+    if (parsed) {
+      console.log('[post-fill-scrape] total parsed from ShoppingCart link fallback', {
+        amount: parsed.amount,
+        currency: parsed.currency,
+      });
+      return {
+        amount: parsed.amount,
+        currency: parsed.currency,
+        sourceLabel: 'ShoppingCart link',
+      };
+    }
+  }
+
   console.log('[post-fill-scrape] total parse failed', {
     htmlLength: String(html || '').length,
+    cartRowCount: cartRowEls.length,
+    title: textOf(doc.querySelector('title')?.textContent || ''),
+    bodyPreview: bodyText.slice(0, 250),
+    possibleCloudflare: /cf-mitigated|just a moment|checking your browser|cloudflare/i.test(bodyText),
+    possibleLogin: /\blog\s*in\b|access your cardmarket account|username|password/i.test(bodyText),
   });
   return null;
 }
@@ -208,7 +249,7 @@ async function fetchCurrentShoppingCartTotal() {
     const pathParts = location.pathname.split('/').filter(Boolean);
     const lang = pathParts[0] || 'en';
     const game = pathParts[1] || 'Magic';
-    const shoppingCartUrl = `${location.origin}/${lang}/${game}/ShoppingCart`;
+    const shoppingCartUrl = `${location.origin}/${lang}/${game}/ShoppingCart?__cmopt_ts=${Date.now()}`;
 
     const response = await fetch(shoppingCartUrl, {
       credentials: 'include',
@@ -228,6 +269,10 @@ async function fetchCurrentShoppingCartTotal() {
 
     return response.text();
   });
+
+  if (!textOf(html)) {
+    throw new Error('ShoppingCart fetch returned empty HTML while page was likely reloading.');
+  }
 
   const parsed = parseShoppingCartTotalFromHtml(html);
   if (!parsed || !Number.isFinite(parsed.amount)) {

@@ -9,7 +9,6 @@ let fillCartInspectionState = {
   isLoading: false,
   fetchedAt: 0,
   hasItems: null,
-  itemCount: 0,
   acknowledgedNonEmpty: false,
 };
 
@@ -18,7 +17,6 @@ function resetFillCartInspectionState() {
     isLoading: false,
     fetchedAt: 0,
     hasItems: null,
-    itemCount: 0,
     acknowledgedNonEmpty: false,
   };
 }
@@ -60,7 +58,7 @@ async function fetchCurrentShoppingCartItemCount() {
     const pathParts = location.pathname.split('/').filter(Boolean);
     const lang = pathParts[0] || 'en';
     const game = pathParts[1] || 'Magic';
-    const shoppingCartUrl = `${location.origin}/${lang}/${game}/ShoppingCart`;
+    const shoppingCartUrl = `${location.origin}/${lang}/${game}/ShoppingCart?__cmopt_ts=${Date.now()}`;
 
     const response = await fetch(shoppingCartUrl, {
       credentials: 'include',
@@ -77,6 +75,10 @@ async function fetchCurrentShoppingCartItemCount() {
     }
     return response.text();
   });
+
+  if (!textOf(html)) {
+    throw new Error('ShoppingCart fetch returned empty HTML while page was likely reloading.');
+  }
 
   const itemCount = parseShoppingCartItemCountFromHtml(html);
   console.log('[fill-cart-scrape] fetch parsed', {
@@ -149,7 +151,6 @@ async function refreshFillCartInspectionIfNeeded(force = false) {
       isLoading: false,
       fetchedAt: Date.now(),
       hasItems,
-      itemCount: hasItems ? Number(itemCount) : 0,
       acknowledgedNonEmpty: hasItems ? fillCartInspectionState.acknowledgedNonEmpty : false,
     };
   } catch (error) {
@@ -162,7 +163,6 @@ async function refreshFillCartInspectionIfNeeded(force = false) {
       isLoading: false,
       fetchedAt: Date.now(),
       hasItems: null,
-      itemCount: 0,
       acknowledgedNonEmpty: false,
     };
   }
@@ -574,6 +574,42 @@ async function submitOptimizedCartInTab(payload) {
   return result;
 }
 
+async function reloadShoppingCartTabIfActive() {
+  const tab = await ensureCardmarketTab();
+  const tabUrl = textOf(tab?.url || '');
+  if (!/\/ShoppingCart(?:[/?#]|$)/i.test(tabUrl)) {
+    return;
+  }
+
+  console.log('[fill-cart-scrape] reloading active ShoppingCart tab after fill', { tabId: tab.id, tabUrl });
+  await chrome.tabs.reload(tab.id);
+
+  await new Promise((resolve) => {
+    const timeoutMs = 12000;
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      resolve();
+    };
+
+    const onUpdated = (updatedTabId, changeInfo) => {
+      if (updatedTabId !== tab.id) return;
+      if (changeInfo.status === 'complete') {
+        finish();
+      }
+    };
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    setTimeout(() => {
+      console.log('[fill-cart-scrape] tab reload wait timeout reached; continuing anyway', { tabId: tab.id, timeoutMs });
+      finish();
+    }, timeoutMs);
+  });
+}
+
 function formatCartShortageMessage(result) {
   const shortages = Array.isArray(result?.shortages) ? result.shortages : [];
   if (!shortages.length) {
@@ -629,7 +665,7 @@ async function handleFillCart() {
     const hasShortages = Array.isArray(result?.shortages) && result.shortages.length > 0;
     const missingSummaryUnits = Number(result?.missingSummaryUnits || 0);
     const addedSummaryUnits = Number(result?.addedSummaryUnits || 0);
-    const likelyCartUpdated = !serverRejected && (addedSummaryUnits > 0 || !result?.cartVerified);
+    const likelyCartUpdated = !serverRejected && addedSummaryUnits > 0;
 
     if (serverRejected || ((hasShortages || missingSummaryUnits > 0) && !likelyCartUpdated)) {
       throw new Error(buildCartFillFailureMessage(result) || 'Cardmarket rejected one or more cart rows.');
@@ -642,6 +678,10 @@ async function handleFillCart() {
     markCartAsFilled(result, latestOptimizationResult?.cart?.sellers || []);
 
     shouldAdvanceToPostFill = true;
+
+    await reloadShoppingCartTabIfActive().catch((error) => {
+      console.log('[fill-cart-scrape] shopping cart reload failed', { error: textOf(error?.message || error) });
+    });
 
     if (hasShortages || missingSummaryUnits > 0) {
       appendStatus(buildCartFillFailureMessage(result) || 'Cardmarket cart changed, but final contents look incomplete.', 'warn');
