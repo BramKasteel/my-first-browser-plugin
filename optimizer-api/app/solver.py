@@ -10,7 +10,7 @@ from typing import Callable
 
 from ortools.sat.python import cp_model
 
-from . import shipping
+from . import seller_tier_constraints, shipping
 from .models import (
     AllocationResult,
     CartItemResult,
@@ -283,7 +283,21 @@ def _solve_exact_shipping_order(
         )
 
         seller_active_vars[seller_id] = model.NewBoolVar(f"seller_active_{seller_id}")
-        tier_candidates = list(route_tiers.tiers)
+
+        dead_zone_info = seller_tier_constraints.get_dead_zone_info(route_tiers)
+
+        # Check if seller is in a dead zone for this route
+        if seller_tier_constraints.is_seller_in_dead_zone_for_route(
+            dead_zone_info,
+            seller_total_qty=seller_unit_upper_bounds[seller_id],
+            seller_total_cost_cents=seller_value_upper_bounds[seller_id],
+        ):
+            # Seller in dead zone: only keep cheapest tier; skip all others.
+            tier_candidates = [dead_zone_info.tier_0] if dead_zone_info.tier_0 else []
+        else:
+            # Normal case: use all available tiers
+            tier_candidates = list(route_tiers.tiers)
+
         seller_tier_candidates[seller_id] = tier_candidates
 
     for item in request.items:
