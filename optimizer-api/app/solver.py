@@ -274,6 +274,18 @@ def _solve_exact_shipping_order(
             _capped_offer_quantity(offer, item_map) for offer in offers
         )
 
+    # Feasibility guard for dead-zone pruning:
+    # only prune when seller is not structurally required above tier-0 capacity.
+    demand_by_item = {item.item_id: item.quantity for item in request.items}
+    total_capacity_by_item: dict[str, int] = defaultdict(int)
+    seller_capacity_by_item: dict[str, dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
+    for offer in usable_offers:
+        capped_qty = _capped_offer_quantity(offer, item_map)
+        total_capacity_by_item[offer.item_id] += capped_qty
+        seller_capacity_by_item[offer.seller_id][offer.item_id] += capped_qty
+
     for seller_id in seller_offers:
         route_tiers = route_book.lookup_tiers(
             seller_country=seller_map[seller_id].country,
@@ -286,11 +298,20 @@ def _solve_exact_shipping_order(
 
         dead_zone_info = seller_tier_constraints.get_dead_zone_info(route_tiers)
 
+        min_units_required_from_seller = 0
+        for item_id, seller_item_capacity in seller_capacity_by_item[seller_id].items():
+            other_capacity = total_capacity_by_item[item_id] - seller_item_capacity
+            demand = demand_by_item[item_id]
+            min_units_required_from_seller += max(0, demand - other_capacity)
+
         # Check if seller is in a dead zone for this route
         if seller_tier_constraints.is_seller_in_dead_zone_for_route(
             dead_zone_info,
             seller_total_qty=seller_unit_upper_bounds[seller_id],
             seller_total_cost_cents=seller_value_upper_bounds[seller_id],
+        ) and (
+            dead_zone_info.tier_0 is not None
+            and min_units_required_from_seller <= dead_zone_info.tier_0.max_units
         ):
             # Seller in dead zone: only keep cheapest tier; skip all others.
             tier_candidates = [dead_zone_info.tier_0] if dead_zone_info.tier_0 else []

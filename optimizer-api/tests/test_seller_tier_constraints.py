@@ -66,17 +66,28 @@ class TestGetDeadZoneInfo:
         assert info.dead_zone_end == 7
 
     def test_dead_zone_de_to_nl_larger(self):
-        """DE→NL with larger tiers.
-        Tier-0: 10 cards @ €2.00 = 0.20€/card
-        Tier-1: 20 cards @ €3.50 = 0.175€/card
-        No dead zone: tier-1 cost/card (0.175) < tier-0 cost/card (0.20) for all qty 11-20.
+        """DE→NL using real shipping_costs.json data.
+
+        Cheapest tier: Letter (20g) => 4 cards @ €1.55
+        Second-cheapest tier: Small Parcel => €7.99
+        Dead zone where 7.99/qty > 1.55/4:
+        qty 5..20 in dead zone, qty >= 21 out.
         """
-        route_tiers = _tiers(values=[(200, 5000, 10), (350, 50000, 20)])
+        route_book = shipping.load_shipping_route_book()
+        route_tiers = route_book.lookup_tiers(
+            seller_country="Germany",
+            buyer_country="Netherlands",
+        )
         info = seller_tier_constraints.get_dead_zone_info(route_tiers)
-        
-        assert not info.is_in_dead_zone
-        assert info.dead_zone_start is None
-        assert info.dead_zone_end is None
+
+        assert info.is_in_dead_zone
+        assert info.tier_0 is not None
+        assert info.tier_1 is not None
+        assert info.tier_0.total_price_cents == 155
+        assert info.tier_0.max_units == 4
+        assert info.tier_1.total_price_cents == 799
+        assert info.dead_zone_start == 5
+        assert info.dead_zone_end == 20
 
     def test_dead_zone_with_partial_range(self):
         """Tier-0: 5 cards @ €2.00 = 0.40€/card
@@ -277,23 +288,10 @@ class TestIsSellerInDeadZone:
         assert result is False
 
     def test_seller_de_to_nl_dead_zone(self):
-        """DE→NL with custom tier bounds.
-        Tier-0: 10 cards @ €2.50 = 0.25€/card
-        Tier-1: 20 cards @ €3.50 = 0.175€/card
-        At qty 11: 3.50/11 = 0.318€ > 0.25€ ✓ dead zone
-        At qty 14: 3.50/14 = 0.25€ = 0.25€ (not >, so not in dead zone)
-        Dead zone: 11–13
-        """
-        route_book = shipping.ShippingRouteBook(
-            country_ids={"netherlands": 23, "germany": 7},
-            tiers_by_route={
-                ("germany", "netherlands"): _tiers(
-                    values=[(250, 5000, 10), (350, 50000, 20)]
-                )
-            },
-        )
-        
-        # qty 11, cost €20 → in dead zone
+        """DE→NL dead-zone checks with real shipping_costs.json route data."""
+        route_book = shipping.load_shipping_route_book()
+
+        # qty 11, cost €20 -> in dead zone (5..20)
         result = seller_tier_constraints.is_seller_in_dead_zone(
             seller_country="Germany",
             buyer_country="Netherlands",
@@ -303,12 +301,12 @@ class TestIsSellerInDeadZone:
         )
         assert result is True
         
-        # qty 14, cost €25 → out of dead zone
+        # qty 21, cost €20 -> out of dead zone
         result = seller_tier_constraints.is_seller_in_dead_zone(
             seller_country="Germany",
             buyer_country="Netherlands",
-            seller_total_qty=14,
-            seller_total_cost_cents=2500,
+            seller_total_qty=21,
+            seller_total_cost_cents=2000,
             route_book=route_book,
         )
         assert result is False

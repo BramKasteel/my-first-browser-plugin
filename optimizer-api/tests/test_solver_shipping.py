@@ -1076,6 +1076,29 @@ def test_optimize_dead_zone_uses_cheapest_tier_when_route_tiers_unsorted(
     assert response.totals.shipping_total == 1.70
 
 
+def test_optimize_dead_zone_pruning_keeps_feasibility_when_seller_is_required(
+    monkeypatch,
+) -> None:
+    route_book = ShippingRouteBook(
+        country_ids={"germany": 7, "netherlands": 23},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(
+                values=[(155, 2500, 4), (200, 2500, 17)],
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    # One seller only, demand 5 cards. Tier-0 max is 4.
+    # Dead-zone pruning must not force tier-0, otherwise model becomes infeasible.
+    response = optimize_order(_request(unit_price=1.0, quantity=5))
+
+    assert response.status == "optimal"
+    assert response.totals.shipping_total == 2.0
+
+
 def test_optimize_no_constraint_when_seller_cost_exceeds_tier_0_value_limit(
     monkeypatch,
 ) -> None:
