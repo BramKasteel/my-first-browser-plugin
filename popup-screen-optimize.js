@@ -1,12 +1,3 @@
-function syncOptimizeButton(isBusy = false) {
-  const hasPayload = !!latestExtractPayload;
-  const hasBuyerCountry = !!getSelectedBuyerCountry();
-  optimizeOrderButton.disabled = isBusy || !hasPayload || !hasBuyerCountry;
-  optimizeOrderButton.classList.toggle('is-busy', isBusy);
-  optimizeOrderButton.classList.toggle('secondary', !hasPayload || !hasBuyerCountry);
-  renderBuyerCountryState();
-}
-
 function renderOptimizationResult(result) {
   latestOptimizationResult = result;
   cartItemsEl.replaceChildren();
@@ -152,21 +143,27 @@ async function warmOptimizerApi(endpoint, { reason = '', force = false } = {}) {
 }
 
 async function submitOptimizationRequest(endpoint, { payloadOverride = null } = {}) {
-  const requestPayload = payloadOverride || latestExtractPayload;
+  const requestPayload = await buildOptimizationRequestPayload(payloadOverride || latestExtractPayload);
 
   if (!requestPayload) {
-    appendStatus('No optimizer payload ready yet. Scrape sellers first.', 'bad');
-    return;
+    const message = 'No optimizer payload ready yet. Scrape sellers first.';
+    appendStatus(message, 'bad');
+    finishRun(message, 'bad');
+    return false;
   }
 
   if (!getSelectedBuyerCountry()) {
-    appendStatus('Buyer country missing. Choose buyer country before running optimizer.', 'bad');
-    return;
+    const message = 'Buyer country missing. Choose buyer country before running optimizer.';
+    appendStatus(message, 'bad');
+    finishRun(message, 'bad');
+    return false;
   }
 
   if (!textOf(endpoint)) {
-    appendStatus('Optimizer API URL missing in config.js.', 'bad');
-    return;
+    const message = 'Optimizer API URL missing in config.js.';
+    appendStatus(message, 'bad');
+    finishRun(message, 'bad');
+    return false;
   }
 
   syncOptimizerApiUrlInput();
@@ -239,7 +236,7 @@ async function submitOptimizationRequest(endpoint, { payloadOverride = null } = 
       { label: 'Chosen sellers', value: String(result?.cart?.total_sellers || 0) },
       { label: 'Total units', value: String(result?.cart?.total_units || 0) },
     ]);
-    setActiveWorkflowStep(isUsableCart ? 'fill' : 'optimize', { force: true });
+    setActiveWorkflowStep(isUsableCart ? 'fill' : 'sellers', { force: true });
     setActiveResultTab('cart');
 
     if (result.status === 'optimal') {
@@ -259,8 +256,6 @@ async function submitOptimizationRequest(endpoint, { payloadOverride = null } = 
     setStepActivity(null);
     setBusy(false);
   }
-}
 
-async function handleOptimizeOrder() {
-  return submitOptimizationRequest(DEFAULT_OPTIMIZER_API_URL);
+  return true;
 }

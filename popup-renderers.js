@@ -8,52 +8,13 @@ function renderPayload(payload) {
     });
     renderOptimizationResult(null);
   }
-  syncOptimizeButton(isUiBusy);
+  syncSellerScrapeButton(isUiBusy);
   renderWorkflow();
 }
 
 function renderFrontendPayload(payload) {
   latestFrontendPayload = payload;
-  renderOptimizerInputContext();
   renderWorkflow();
-}
-
-function renderOptimizerInputContext() {
-  if (!optimizerInputContextEl || !optimizerInputMetaEl || !optimizerInputFiltersEl) {
-    return;
-  }
-
-  const context = getOptimizeContextSnapshot();
-  if (!context) {
-    optimizerInputContextEl.hidden = true;
-    optimizerInputMetaEl.textContent = 'No seller scrape summary yet.';
-    optimizerInputFiltersEl.textContent = '';
-    return;
-  }
-
-  optimizerInputContextEl.hidden = false;
-
-  const totals = context.totals || {};
-  const fallbackItemCount = Number.isFinite(context.itemCount)
-    ? context.itemCount
-    : (Array.isArray(context.itemNames) ? context.itemNames.length : 0);
-  const itemCount = Number.isFinite(totals.extractedItems) ? totals.extractedItems : fallbackItemCount;
-  const sellerCount = Number.isFinite(context.totalSellers)
-    ? context.totalSellers
-    : (Number.isFinite(context.sellerCount) ? context.sellerCount : 0);
-  const requestSettings = context.requestSettings || {};
-  const sellerCountries = Array.isArray(requestSettings.sellerCountries)
-    ? requestSettings.sellerCountries.filter(Boolean)
-    : [];
-  const filterParts = [
-    requestSettings.buyerCountry ? `Buyer country: ${requestSettings.buyerCountry}` : null,
-    sellerCountries.length ? `Seller countries: ${sellerCountries.join(', ')}` : null,
-    requestSettings.sellerReputation ? `Seller reputation: ${requestSettings.sellerReputation}` : null,
-    requestSettings.maxShippingTime ? `Max shipping time: ${requestSettings.maxShippingTime}` : null,
-  ].filter(Boolean);
-
-  optimizerInputMetaEl.textContent = `${itemCount} item${itemCount === 1 ? '' : 's'} scraped, ${sellerCount} seller${sellerCount === 1 ? '' : 's'} found.`;
-  optimizerInputFiltersEl.textContent = filterParts.join(' | ');
 }
 
 function renderSummary(rows) {

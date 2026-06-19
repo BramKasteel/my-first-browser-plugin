@@ -54,7 +54,6 @@ confirmWantListButton?.addEventListener('click', () => {
   setActiveWorkflowStep('sellers', { force: true });
 });
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
-optimizeOrderButton.addEventListener('click', handleOptimizeOrder);
 fillCartButton.addEventListener('click', handleFillCart);
 fillCartNonEmptyConfirmCheckboxEl?.addEventListener('change', () => {
   setFillCartNonEmptyAcknowledged(!!fillCartNonEmptyConfirmCheckboxEl.checked).catch((error) => {
@@ -140,10 +139,10 @@ sellerLocationFilterListEl.addEventListener('click', (event) => {
   const country = normalizeCountryName(optionButton.dataset.countryOption || '');
   if (!country || selectedSellerCountries.includes(country)) return;
 
-  setSelectedSellerCountries(clampSellerCountriesToPolicy([...selectedSellerCountries, country]));
   if (sellerCountryFilterInputEl) {
     sellerCountryFilterInputEl.value = '';
   }
+  setSelectedSellerCountries(clampSellerCountriesToPolicy([...selectedSellerCountries, country]));
   saveSellerSettings();
 });
 selectedSellerCountriesEl.addEventListener('click', (event) => {
@@ -180,12 +179,11 @@ renderSummary([
   { label: 'Status', value: 'Ready for want-list loading' },
   { label: 'Current scope', value: 'Select a wants list to continue.' },
 ]);
-finishRun('Idle. Start extract, scrape, or probe.');
+finishRun('Idle. Start extract or optimize.');
 renderOptimizationResult(null);
 renderSellers([], 0);
 renderPayload(null);
 renderFrontendPayload(null);
-renderOptimizerInputContext();
 renderBuyerCountryOptions();
 renderPostFillScreen();
 setResultPanelExpanded(false);
@@ -195,12 +193,10 @@ renderSellerCountryFilterList();
 renderWantListOptions();
 syncExtractButton();
 syncSellerScrapeButton();
-syncOptimizeButton();
 syncFillCartButton();
 syncPostFillReoptimizeButton();
 renderStepActivity();
 renderWorkflow();
-scrapeAllItemsButton.textContent = 'Scrape sellers';
 appendStatus(isPersistentWorkspace
   ? 'Optimizer workspace loaded in its own tab. It stays open while you browse other tabs.'
   : 'Popup loaded. Use workspace mode for long-running scrapes.');

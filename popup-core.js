@@ -1,6 +1,5 @@
 const extractItemsButton = document.getElementById('extractItems');
 const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
-const optimizeOrderButton = document.getElementById('optimizeOrder');
 const fillCartButton = document.getElementById('fillCart');
 const postFillReoptimizeButton = document.getElementById('postFillReoptimize');
 const optimizerApiUrlInput = document.getElementById('optimizerApiUrl');
@@ -48,13 +47,9 @@ const workflowStepButtons = [...document.querySelectorAll('[data-workflow-step]'
 const workflowStepPanels = [...document.querySelectorAll('[data-step-panel]')];
 const sourceStepBadgeEl = document.getElementById('sourceStepBadge');
 const sellerStepBadgeEl = document.getElementById('sellerStepBadge');
-const optimizeStepBadgeEl = document.getElementById('optimizeStepBadge');
 const fillStepBadgeEl = document.getElementById('fillStepBadge');
 const postFillStepBadgeEl = document.getElementById('postFillStepBadge');
-const optimizerSettingsBodyEl = document.getElementById('optimizerSettingsBody');
-const optimizerInputContextEl = document.getElementById('optimizerInputContext');
-const optimizerInputMetaEl = document.getElementById('optimizerInputMeta');
-const optimizerInputFiltersEl = document.getElementById('optimizerInputFilters');
+const optimizerSettingsBodyEl = sellerSettingsBodyEl;
 const buyerCountryFieldEl = document.getElementById('buyerCountryField');
 const mainCartSummaryEl = document.getElementById('mainCartSummary');
 const mainCartSummaryGrandTotalEl = document.getElementById('mainCartSummaryGrandTotal');
@@ -130,19 +125,15 @@ const DEFAULT_SELLER_COUNTRIES = [];
 const MAX_WANT_LIST_ITEMS = 100;
 const MAX_SELLER_COUNTRIES = 2;
 const DEFAULT_OPTIMIZER_API_URL = textOf(window.APP_CONFIG?.optimizerApiUrl);
-const WORKFLOW_STEPS = ['source', 'sellers', 'optimize', 'fill', 'post-fill'];
+const WORKFLOW_STEPS = ['source', 'sellers', 'fill', 'post-fill'];
 const WORKFLOW_META = {
   source: {
     title: 'Select Cards',
     hint: 'Load selected want list from active Cardmarket tab.',
   },
   sellers: {
-    title: 'Get Seller Data',
-    hint: 'Scrape seller rows after want items are loaded.',
-  },
-  optimize: {
-    title: 'Optimize Order',
-    hint: 'Send normalized payload to optimizer API and review total cost breakdown.',
+    title: 'Optimizer Settings',
+    hint: 'Choose seller filters and buyer country, then run scrape and optimize together.',
   },
   fill: {
     title: 'Fill Cart',
@@ -205,8 +196,6 @@ function appendStatus(message, tone = '') {
 
 function setBusy(isBusy) {
   isUiBusy = isBusy;
-  optimizeOrderButton.disabled = isBusy;
-  optimizeOrderButton.classList.toggle('is-busy', isBusy);
   fillCartButton.disabled = isBusy;
   fillCartButton.classList.toggle('is-busy', isBusy);
   if (fillCartNonEmptyConfirmCheckboxEl) fillCartNonEmptyConfirmCheckboxEl.disabled = isBusy;
@@ -224,7 +213,6 @@ function setBusy(isBusy) {
   });
   syncExtractButton(isBusy);
   syncSellerScrapeButton(isBusy);
-  syncOptimizeButton(isBusy);
   syncFillCartButton(isBusy);
   if (typeof syncPostFillReoptimizeButton === 'function') {
     syncPostFillReoptimizeButton(isBusy);
@@ -410,6 +398,27 @@ function buildPreviousAllocationsPayload(result) {
   })).filter((allocation) => allocation.offer_id && allocation.item_id && allocation.seller_id && allocation.quantity > 0);
 }
 
+function normalizeBlockedSellerIds(sellerIds) {
+  return [...new Set((sellerIds || []).map((sellerId) => textOf(sellerId)).filter(Boolean))];
+}
+
+async function buildOptimizationRequestPayload(payload) {
+  if (!payload) return null;
+
+  const existingBlockedSellerIds = normalizeBlockedSellerIds(payload?.preferences?.blocked_seller_ids);
+  const blockedSellerIds = existingBlockedSellerIds.length
+    ? existingBlockedSellerIds
+    : await loadRememberedDisabledSellerIds(buildPayloadLineageKey(payload));
+
+  return {
+    ...payload,
+    preferences: {
+      ...(payload.preferences || {}),
+      blocked_seller_ids: normalizeBlockedSellerIds(blockedSellerIds),
+    },
+  };
+}
+
 function buildReoptimizePayload(disabledSellerIds) {
   if (!latestExtractPayload) return null;
 
@@ -418,7 +427,7 @@ function buildReoptimizePayload(disabledSellerIds) {
     previous_allocations: buildPreviousAllocationsPayload(latestOptimizationResult),
     preferences: {
       ...(latestExtractPayload.preferences || {}),
-      blocked_seller_ids: [...new Set((disabledSellerIds || []).map((sellerId) => textOf(sellerId)).filter(Boolean))],
+      blocked_seller_ids: normalizeBlockedSellerIds(disabledSellerIds),
     },
   };
 }
@@ -629,7 +638,6 @@ function getWorkflowState() {
 function canAccessWorkflowStep(stepName, state = getWorkflowState()) {
   if (stepName === 'source') return true;
   if (stepName === 'sellers') return state.hasExtractedWants && !state.wantListBlocked;
-  if (stepName === 'optimize') return state.hasOptimizerPayload;
   if (stepName === 'fill') return state.hasOptimalCart;
   if (stepName === 'post-fill') return state.hasFilledCart;
   return false;
@@ -638,7 +646,6 @@ function canAccessWorkflowStep(stepName, state = getWorkflowState()) {
 function getSuggestedWorkflowStep(state = getWorkflowState()) {
   if (state.hasFilledCart) return 'post-fill';
   if (state.hasOptimalCart) return 'fill';
-  if (state.hasOptimizerPayload) return 'optimize';
   if (state.hasExtractedWants) return 'sellers';
   return 'source';
 }
@@ -682,19 +689,9 @@ function getWorkflowStepHint(stepName, state = getWorkflowState()) {
       return getWantListSelectionHint();
     }
     if (state.hasSellerBatch) {
-      return 'Seller batch ready. Review preview rows or continue to optimization.';
-    }
-  }
-
-  if (stepName === 'optimize') {
-    if (!state.hasOptimizerPayload) {
-      return 'Optimization locked until seller payload exists.';
-    }
-    if (state.hasOptimizationResult && !state.hasOptimalCart) {
-      return 'Optimizer ran. Review infeasible or partial result before trying again.';
-    }
-    if (state.hasOptimalCart) {
-      return 'Optimal cart ready. Review totals and chosen sellers, then fill cart if result looks right.';
+      return state.hasOptimizationResult
+        ? 'Optimization already ran. Adjust filters or buyer country here to run a new result.'
+        : 'Seller batch ready. Run optimize order when settings look right.';
     }
   }
 
@@ -791,9 +788,6 @@ function renderWorkflow() {
     if (stepName === 'sellers' && isAccessible && !state.hasSellerBatch && !isActive) {
       stepState = 'done';
     }
-    if (stepName === 'optimize' && isAccessible && !state.hasOptimizationResult && !isActive) {
-      stepState = 'done';
-    }
 
     button.dataset.state = stepState;
     button.classList.toggle('active', isActive);
@@ -814,19 +808,11 @@ function renderWorkflow() {
   }
 
   if (state.hasSellerBatch) {
-    setStepBadge(sellerStepBadgeEl, 'Seller data ready', 'good');
+    setStepBadge(sellerStepBadgeEl, state.hasOptimizationResult ? 'Optimized' : 'Seller data ready', 'good');
   } else if (state.hasExtractedWants) {
     setStepBadge(sellerStepBadgeEl, 'Ready');
   } else {
     setStepBadge(sellerStepBadgeEl, 'Locked');
-  }
-
-  if (state.hasOptimizationResult) {
-    setStepBadge(optimizeStepBadgeEl, state.hasOptimalCart ? 'Optimal result' : 'Result ready', 'good');
-  } else if (state.hasOptimizerPayload) {
-    setStepBadge(optimizeStepBadgeEl, 'Ready', 'good');
-  } else {
-    setStepBadge(optimizeStepBadgeEl, 'Locked');
   }
 
   if (state.hasOptimalCart) {

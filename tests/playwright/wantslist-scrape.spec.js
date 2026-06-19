@@ -255,16 +255,14 @@ async function configureSellerFilters(popupPage, sellerFilterConfig) {
 }
 
 async function configureBuyerCountry(popupPage, buyerCountry) {
-  await goToWorkflowStep(popupPage, 'optimize');
+  await goToWorkflowStep(popupPage, 'sellers');
   await expect(popupPage.locator('#buyerCountry')).toBeVisible({ timeout: 15_000 });
   await popupPage.selectOption('#buyerCountry', buyerCountry);
 
   await popupPage.waitForFunction(
     (expectedBuyerCountry) => {
       const snapshot = window.__cmOptimizerTestApi.getSnapshot();
-      return snapshot.sellerFilters.buyerCountry === expectedBuyerCountry
-        && snapshot.optimizeContext?.requestSettings?.buyerCountry === expectedBuyerCountry
-        && snapshot.optimizerPayload?.buyer_country === expectedBuyerCountry;
+      return snapshot.sellerFilters.buyerCountry === expectedBuyerCountry;
     },
     buyerCountry,
     { timeout: 15_000 },
@@ -408,6 +406,14 @@ test.describe('Want list scraping flow', () => {
     expect(configuredStorage.sellerScrapeSettings?.includeBargainsFromOtherCountries).toBe(false);
     expect(configuredStorage.sellerScrapeSettings).not.toHaveProperty('sellerLocationFilter');
 
+    await configureBuyerCountry(popupPage, sellerFilterConfig.buyerCountry);
+
+    const buyerConfiguredSnapshot = await readPopupSnapshot(popupPage);
+    expect(buyerConfiguredSnapshot.sellerFilters.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
+
+    const buyerConfiguredStorage = await readPopupStorage(popupPage, ['sellerScrapeSettings']);
+    expect(buyerConfiguredStorage.sellerScrapeSettings?.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
+
     await expect(popupPage.locator('#scrapeAllItems')).toBeVisible();
     await expect(popupPage.locator('#scrapeAllItems')).toBeEnabled();
     await popupPage.click('#scrapeAllItems');
@@ -417,16 +423,17 @@ test.describe('Want list scraping flow', () => {
     await popupPage.waitForFunction(
       () => {
         const snapshot = window.__cmOptimizerTestApi.getSnapshot();
-        return snapshot.frontendPayload?.kind === 'seller-scrape-batch' && !snapshot.runState.active;
+        return !!snapshot.optimizationResult && snapshot.frontendPayload?.kind === 'seller-scrape-batch' && !snapshot.runState.active;
       },
       null,
-      { timeout: 15_000 },
+      { timeout: 120_000 },
     );
 
-    const scrapeSnapshot = await readPopupSnapshot(popupPage);
-    const batchPayload = scrapeSnapshot.frontendPayload;
-    const optimizerPayload = scrapeSnapshot.optimizerPayload;
-    const optimizeContext = scrapeSnapshot.optimizeContext;
+    const optimizedSnapshot = await readPopupSnapshot(popupPage);
+    const batchPayload = optimizedSnapshot.frontendPayload;
+    const optimizerPayload = optimizedSnapshot.optimizerPayload;
+    const optimizeContext = optimizedSnapshot.optimizeContext;
+    const optimizationResult = optimizedSnapshot.optimizationResult;
 
     expect(batchPayload?.kind).toBe('seller-scrape-batch');
     expect(batchPayload?.totals?.extractedItems).toBe(wantListConfig.expectedCount);
@@ -463,21 +470,9 @@ test.describe('Want list scraping flow', () => {
     expect(normalizeNames(optimizerPayload.items.map((item) => item.name))).toEqual(wantListConfig.expectedNames);
     expect(optimizerPayload.sellers.length).toBeGreaterThan(0);
     expect(optimizerPayload.offers.length).toBeGreaterThanOrEqual(wantListConfig.expectedCount);
-
-    await configureBuyerCountry(popupPage, sellerFilterConfig.buyerCountry);
-
-    const buyerConfiguredSnapshot = await readPopupSnapshot(popupPage);
-    expect(buyerConfiguredSnapshot.sellerFilters.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
-
-    const buyerConfiguredStorage = await readPopupStorage(popupPage, ['sellerScrapeSettings']);
-    expect(buyerConfiguredStorage.sellerScrapeSettings?.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
-
-    const buyerConfiguredPayload = buyerConfiguredSnapshot.optimizerPayload;
-    const buyerConfiguredContext = buyerConfiguredSnapshot.optimizeContext;
-    const buyerConfiguredBatchPayload = buyerConfiguredSnapshot.frontendPayload;
-    expect(buyerConfiguredBatchPayload?.requestSettings?.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
-    expect(buyerConfiguredPayload?.buyer_country).toBe(sellerFilterConfig.buyerCountry);
-    expect(buyerConfiguredContext?.requestSettings?.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
+    expect(batchPayload?.requestSettings?.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
+    expect(optimizerPayload?.buyer_country).toBe(sellerFilterConfig.buyerCountry);
+    expect(optimizeContext?.requestSettings?.buyerCountry).toBe(sellerFilterConfig.buyerCountry);
 
     expect(optimizeContext).toBeTruthy();
     expect(normalizeNames(optimizeContext.itemNames)).toEqual(wantListConfig.expectedNames);
@@ -486,37 +481,10 @@ test.describe('Want list scraping flow', () => {
     expect(optimizeContext.requestSettings?.sellerCountries).toEqual([sellerFilterConfig.sellerCountry]);
     expect(optimizeContext.requestSettings?.includeBargainsFromOtherCountries).toBe(false);
 
-    await expect(popupPage.locator('#optimizerInputContext')).toBeVisible();
-    await expect(popupPage.locator('#optimizerInputMeta')).toContainText(`${wantListConfig.expectedCount} item`);
-    await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.buyerCountry);
-    await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.sellerCountry);
-    if (sellerFilterConfig.sellerReputation) {
-      await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.sellerReputation);
-    }
-    if (sellerFilterConfig.maxShippingTime) {
-      await expect(popupPage.locator('#optimizerInputFilters')).toContainText(sellerFilterConfig.maxShippingTime);
-    }
-
     optimizerPayload.offers.forEach((offer) => {
       expect(offer.unit_price).toBeGreaterThan(0);
       expect(offer.available_quantity).toBeGreaterThan(0);
     });
-
-    await expect(popupPage.locator('#optimizeOrder')).toBeVisible();
-    await expect(popupPage.locator('#optimizeOrder')).toBeEnabled();
-    await popupPage.click('#optimizeOrder');
-
-    await popupPage.waitForFunction(
-      () => {
-        const snapshot = window.__cmOptimizerTestApi.getSnapshot();
-        return !!snapshot.optimizationResult && !snapshot.runState.active;
-      },
-      null,
-      { timeout: 120_000 },
-    );
-
-    const optimizedSnapshot = await readPopupSnapshot(popupPage);
-    const optimizationResult = optimizedSnapshot.optimizationResult;
 
     expect(optimizationResult).toBeTruthy();
     expect(['optimal', 'feasible']).toContain(optimizationResult.status);

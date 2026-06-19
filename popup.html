@@ -753,11 +753,12 @@
       gap: 8px;
       padding: 7px 10px;
       border-radius: 999px;
-      border: 1px solid rgba(159, 176, 190, 0.18);
-      background: rgba(49, 65, 79, 0.85);
-      color: var(--text);
+      border: 1px solid rgba(251, 191, 36, 0.62);
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.4), rgba(217, 119, 6, 0.78));
+      color: #fff7e6;
       font-size: 12px;
       line-height: 1;
+      box-shadow: inset 0 0 0 1px rgba(255, 244, 214, 0.12), 0 6px 14px rgba(217, 119, 6, 0.18);
     }
 
     .country-chip-remove {
@@ -766,8 +767,8 @@
       width: 18px;
       height: 18px;
       border-radius: 999px;
-      background: rgba(159, 176, 190, 0.16);
-      color: var(--muted);
+      background: rgba(17, 22, 27, 0.3);
+      color: #fff7e6;
       font-size: 13px;
       line-height: 1;
       cursor: pointer;
@@ -775,7 +776,7 @@
 
     .country-chip-remove:hover:not(:disabled) {
       transform: none;
-      filter: brightness(1.06);
+      filter: brightness(1.16);
     }
 
     .country-chip-remove:disabled {
@@ -1173,24 +1174,18 @@
         <span class="workflow-separator" aria-hidden="true">&gt;</span>
         <button type="button" class="secondary workflow-step" data-workflow-step="sellers" data-state="locked" aria-selected="false">
           <span class="workflow-step-index">Step 2</span>
-          <span class="workflow-step-title">Sellers</span>
-          <span class="workflow-step-meta">Scrape market rows</span>
-        </button>
-        <span class="workflow-separator" aria-hidden="true">&gt;</span>
-        <button type="button" class="secondary workflow-step" data-workflow-step="optimize" data-state="locked" aria-selected="false">
-          <span class="workflow-step-index">Step 3</span>
           <span class="workflow-step-title">Optimize</span>
-          <span class="workflow-step-meta">Price and shipping</span>
+          <span class="workflow-step-meta">Seller filters and buyer country</span>
         </button>
         <span class="workflow-separator" aria-hidden="true">&gt;</span>
         <button type="button" class="secondary workflow-step" data-workflow-step="fill" data-state="locked" aria-selected="false">
-          <span class="workflow-step-index">Step 4</span>
+          <span class="workflow-step-index">Step 3</span>
           <span class="workflow-step-title">Cart</span>
           <span class="workflow-step-meta">Push chosen offers</span>
         </button>
         <span class="workflow-separator" aria-hidden="true">&gt;</span>
         <button type="button" class="secondary workflow-step" data-workflow-step="post-fill" data-state="locked" aria-selected="false">
-          <span class="workflow-step-index">Step 5</span>
+          <span class="workflow-step-index">Step 4</span>
           <span class="workflow-step-title">Disable Sellers</span>
           <span class="workflow-step-meta">Re-optimize after cart fill</span>
         </button>
@@ -1228,66 +1223,80 @@
 
       <section class="panel config-grid step-panel" data-step-panel="sellers">
         <div class="panel-header">
-          <h2 class="panel-title">Step 2: Get Seller Data</h2>
+          <h2 class="panel-title">Step 2: Optimizer Settings</h2>
           <span id="sellerStepBadge" class="step-pill">Locked</span>
         </div>
-        <div id="sellerSettingsBody" class="config-block">
-          <div class="filter-grid">
-            <label class="config-label seller-filter-field" for="sellerReputationFilter">
-              <span>Min. reputation</span>
-              <select id="sellerReputationFilter">
-                <option value="">Any</option>
-                <option value="Outstanding">Outstanding</option>
-                <option value="Very good">Very good</option>
-                <option value="Good">Good</option>
-                <option value="Average">Average</option>
-                <option value="Bad">Bad</option>
-              </select>
-            </label>
-            <label class="config-label seller-filter-field" for="sellerDeliveryTimeFilter">
-              <span>Max. delivery</span>
-              <select id="sellerDeliveryTimeFilter">
-                <option value="">Any</option>
-                <option value="2">2 days</option>
-                <option value="3">3 days</option>
-                <option value="4">4 days</option>
-                <option value="5">5 days</option>
-                <option value="6">6 days</option>
-                <option value="7">7+ days</option>
-              </select>
-            </label>
-            <label class="config-label seller-filter-field" for="sellerTypeFilter">
-              <span>Type</span>
-              <select id="sellerTypeFilter">
-                <option value="">Any</option>
-                <option value="Private">Private</option>
-                <option value="Professional">Professional</option>
-                <option value="Power Seller">Power Seller</option>
-              </select>
-            </label>
-          </div>
-          <div class="config-label seller-filter-field">
-            <p id="sellerCountryLimitHint" class="inline-notice" hidden></p>
-            <span>Preferred seller countries</span>
-            <div class="country-section">
-              <div class="country-picker">
-                <div class="country-picker-shell">
-                  <input id="sellerCountryFilterInput" class="country-picker-input" type="text" autocomplete="off" spellcheck="false" placeholder="Type seller country, e.g. ger" aria-label="Search seller countries" aria-controls="sellerLocationFilterList" aria-expanded="false">
-                  <div id="selectedSellerCountries" class="country-selected-list" role="group" aria-label="Selected seller countries"></div>
+        <div id="sellerSettingsBody" class="source-shell config-block">
+          <section class="source-card">
+            <div class="step-card-actions">
+              <label id="buyerCountryField" class="config-label seller-filter-field buyer-country-field" for="buyerCountry">
+                <span>Buyer country</span>
+                <div class="country-section">
+                  <select id="buyerCountry"></select>
                 </div>
-                <span class="country-section-label">Other countries</span>
-                <div id="sellerLocationFilterList" class="country-list" role="listbox" aria-label="Other seller countries"></div>
-              </div>
-              <label class="toggle-row checkbox-row" for="includeBargainsFromOtherCountries">
-                <input id="includeBargainsFromOtherCountries" type="checkbox">
-                <span>Include bargains from other countries</span>
               </label>
             </div>
-            <p id="sellerCountryLargeListWarning" class="inline-notice bad" hidden></p>
-          </div>
-          <div class="actions">
-            <button id="scrapeAllItems" class="secondary">Get sellers</button>
-          </div>
+          </section>
+          <section class="source-card">
+            <h3 class="source-title">Select seller data</h3>
+            <div class="step-card-actions">
+              <div class="filter-grid">
+                <label class="config-label seller-filter-field" for="sellerReputationFilter">
+                  <span>Min. reputation</span>
+                  <select id="sellerReputationFilter">
+                    <option value="">Any</option>
+                    <option value="Outstanding">Outstanding</option>
+                    <option value="Very good">Very good</option>
+                    <option value="Good">Good</option>
+                    <option value="Average">Average</option>
+                    <option value="Bad">Bad</option>
+                  </select>
+                </label>
+                <label class="config-label seller-filter-field" for="sellerDeliveryTimeFilter">
+                  <span>Max. delivery</span>
+                  <select id="sellerDeliveryTimeFilter">
+                    <option value="">Any</option>
+                    <option value="2">2 days</option>
+                    <option value="3">3 days</option>
+                    <option value="4">4 days</option>
+                    <option value="5">5 days</option>
+                    <option value="6">6 days</option>
+                    <option value="7">7+ days</option>
+                  </select>
+                </label>
+                <label class="config-label seller-filter-field" for="sellerTypeFilter">
+                  <span>Type</span>
+                  <select id="sellerTypeFilter">
+                    <option value="">Any</option>
+                    <option value="Private">Private</option>
+                    <option value="Professional">Professional</option>
+                    <option value="Power Seller">Power Seller</option>
+                  </select>
+                </label>
+              </div>
+              <div class="config-label seller-filter-field">
+                <p id="sellerCountryLimitHint" class="inline-notice" hidden></p>
+                <div class="country-section">
+                  <div class="country-picker">
+                    <div class="country-picker-shell">
+                      <input id="sellerCountryFilterInput" class="country-picker-input" type="text" autocomplete="off" spellcheck="false" placeholder="Type seller country, e.g. ger" aria-label="Search seller countries" aria-controls="sellerLocationFilterList" aria-expanded="false">
+                      <div id="selectedSellerCountries" class="country-selected-list" role="group" aria-label="Selected seller countries"></div>
+                    </div>
+                    <span class="country-section-label">Other countries</span>
+                    <div id="sellerLocationFilterList" class="country-list" role="listbox" aria-label="Other seller countries"></div>
+                  </div>
+                  <label class="toggle-row checkbox-row" for="includeBargainsFromOtherCountries">
+                    <input id="includeBargainsFromOtherCountries" type="checkbox">
+                    <span>Include bargains from other countries</span>
+                  </label>
+                </div>
+                <p id="sellerCountryLargeListWarning" class="inline-notice bad" hidden></p>
+              </div>
+              <div class="actions">
+                <button id="scrapeAllItems" class="secondary">Optimize order</button>
+              </div>
+            </div>
+          </section>
         </div>
         <section id="sellerScrapeProgress" class="step-progress" aria-live="polite" hidden>
           <div class="step-progress-head">
@@ -1303,29 +1312,6 @@
             <span id="sellerProgressPercent">0%</span>
           </div>
         </section>
-      </section>
-
-      <section class="panel config-grid step-panel" data-step-panel="optimize">
-        <div class="panel-header">
-          <h2 class="panel-title">Step 3: Optimize Order</h2>
-          <span id="optimizeStepBadge" class="step-pill">Locked</span>
-        </div>
-        <div id="optimizerSettingsBody" class="config-block">
-          <section id="optimizerInputContext" class="step-highlight" hidden>
-            <p id="optimizerInputMeta" class="panel-note">No seller scrape summary yet.</p>
-            <p id="optimizerInputFilters" class="panel-note"></p>
-          </section>
-          <label id="buyerCountryField" class="config-label seller-filter-field buyer-country-field" for="buyerCountry">
-            <span>Buyer country</span>
-            <div class="country-section">
-              <span class="country-section-label">Required for optimization</span>
-              <select id="buyerCountry"></select>
-            </div>
-          </label>
-          <div class="actions">
-            <button id="optimizeOrder" class="secondary">Optimize order</button>
-          </div>
-        </div>
         <section id="optimizerWaiting" class="step-progress" aria-live="polite" hidden>
           <div class="step-progress-head">
             <span class="step-progress-spinner" aria-hidden="true"></span>
@@ -1341,7 +1327,7 @@
 
       <section class="panel step-panel" data-step-panel="fill">
         <div class="panel-header">
-          <h2 class="panel-title">Step 4: Fill Cart</h2>
+          <h2 class="panel-title">Step 3: Fill Cart</h2>
           <span id="fillStepBadge" class="step-pill">Locked</span>
         </div>
         <div class="step-highlight">
@@ -1368,7 +1354,7 @@
 
       <section class="panel step-panel" data-step-panel="post-fill">
         <div class="panel-header">
-          <h2 class="panel-title">Step 5: Disable Sellers</h2>
+          <h2 class="panel-title">Step 4: Disable Sellers</h2>
           <span id="postFillStepBadge" class="step-pill">Locked</span>
         </div>
         <div class="step-highlight">

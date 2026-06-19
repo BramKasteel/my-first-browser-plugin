@@ -2,10 +2,12 @@ function syncSellerScrapeButton(isBusy = false) {
   const hasItems = hasLoadedWantItems();
   const wantListPolicy = getWantListSelectionPolicy();
   const hasValidCountrySelection = getSelectedSellerCountries().length >= 1;
-  scrapeAllItemsButton.disabled = isBusy || !hasItems || wantListPolicy.isBlocked || !hasValidCountrySelection;
+  const hasBuyerCountry = !!getSelectedBuyerCountry();
+  scrapeAllItemsButton.disabled = isBusy || !hasItems || wantListPolicy.isBlocked || !hasValidCountrySelection || !hasBuyerCountry;
   scrapeAllItemsButton.classList.toggle('is-busy', isBusy);
-  scrapeAllItemsButton.classList.toggle('secondary', !hasItems || wantListPolicy.isBlocked || !hasValidCountrySelection);
+  scrapeAllItemsButton.classList.toggle('secondary', !hasItems || wantListPolicy.isBlocked || !hasValidCountrySelection || !hasBuyerCountry);
   renderSellerFilterState();
+  renderBuyerCountryState();
 }
 
 var sellerExpansionFilterCache = new Map();
@@ -63,7 +65,7 @@ function renderBuyerCountryOptions(selectedCountry = '') {
 
 function refreshOptimizerPayloadFromCurrentState() {
   if (latestFrontendPayload?.kind !== 'seller-scrape-batch') {
-    syncOptimizeButton(isUiBusy);
+    syncSellerScrapeButton(isUiBusy);
     return;
   }
 
@@ -1548,16 +1550,22 @@ async function handleScrapeAllItems() {
       results: aggregateResults,
     };
     const optimizerPayload = buildOptimizerPayload(batchPayload);
+    const scrapeCompleteForOptimization = !!optimizerPayload && !stopReason && failedCount === 0 && skippedCount === 0;
     renderFrontendPayload(batchPayload);
     renderPayload(optimizerPayload);
-    setActiveWorkflowStep(optimizerPayload ? 'optimize' : 'sellers', { force: true });
+    setActiveWorkflowStep('sellers', { force: true });
     setActiveResultTab('sellers');
 
-    if (optimizerPayload) {
+    if (scrapeCompleteForOptimization) {
       appendStatus(
         `Optimizer payload ready: ${optimizerPayload.items.length} items, ${optimizerPayload.sellers.length} sellers, ${optimizerPayload.offers.length} offers.`,
         'good'
       );
+      appendStatus('Seller scrape complete. Sending payload to optimizer.', 'good');
+      await submitOptimizationRequest(DEFAULT_OPTIMIZER_API_URL, { payloadOverride: optimizerPayload });
+      return;
+    } else if (optimizerPayload) {
+      appendStatus('Seller scrape produced partial data. Optimization skipped until all items scrape cleanly.', 'bad');
     } else {
       appendStatus('No optimizer payload built. Seller rows missing valid price data.', 'bad');
     }
