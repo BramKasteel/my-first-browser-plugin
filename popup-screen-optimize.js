@@ -1,5 +1,9 @@
 function renderOptimizationResult(result) {
   latestOptimizationResult = result;
+  if (typeof resetFillCartSuccessState === 'function') {
+    resetFillCartSuccessState();
+  }
+  clearPostFillSessionState();
   cartItemsEl.replaceChildren();
   syncFillCartButton(isUiBusy);
   renderCartSummary(result);

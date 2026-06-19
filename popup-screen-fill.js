@@ -11,6 +11,13 @@ let fillCartInspectionState = {
   hasItems: null,
 };
 let isFillCartPosting = false;
+let hasCompletedFillCart = false;
+
+function resetFillCartSuccessState() {
+  hasCompletedFillCart = false;
+  isFillCartPosting = false;
+  renderFillCartGuardState();
+}
 
 function resetFillCartInspectionState() {
   fillCartInspectionState = {
@@ -89,8 +96,9 @@ async function fetchCurrentShoppingCartItemCount() {
 
 function renderFillCartGuardState() {
   const hasCart = hasOptimizedCart();
+  const showSuccessCard = hasCompletedFillCart && !isFillCartPosting;
   const cartKnownNonEmpty = fillCartInspectionState.hasItems === true;
-  const showGuard = hasCart && !fillCartInspectionState.isLoading && cartKnownNonEmpty;
+  const showGuard = hasCart && !showSuccessCard && !fillCartInspectionState.isLoading && cartKnownNonEmpty;
 
   if (refillWarningEl) {
     refillWarningEl.hidden = !showGuard;
@@ -98,6 +106,18 @@ function renderFillCartGuardState() {
 
   if (fillCartPostingPillEl) {
     fillCartPostingPillEl.hidden = !isFillCartPosting;
+  }
+
+  if (fillCartSuccessCardEl) {
+    fillCartSuccessCardEl.hidden = !showSuccessCard;
+  }
+
+  if (fillCartDebugButtonEl) {
+    fillCartDebugButtonEl.disabled = isUiBusy || !showSuccessCard;
+  }
+
+  if (fillCartButton) {
+    fillCartButton.hidden = showSuccessCard;
   }
 }
 
@@ -646,12 +666,12 @@ async function handleFillCart() {
     return;
   }
 
+  hasCompletedFillCart = false;
   startRun('Preparing cart fill request for Cardmarket...');
   appendStatus('Preparing cart fill request for Cardmarket...');
   setBusy(true);
   isFillCartPosting = true;
   renderFillCartGuardState();
-  let shouldAdvanceToPostFill = false;
   try {
     const payload = buildCartFillPayload(latestOptimizationResult);
     startRun(`Filling Cardmarket cart with ${payload.articleCount} offers (${payload.unitCount} units)...`);
@@ -673,9 +693,8 @@ async function handleFillCart() {
       appendStatus('Cardmarket cart posted, but extension could not verify final cart contents.', 'warn');
     }
 
+    hasCompletedFillCart = true;
     markCartAsFilled(result, latestOptimizationResult?.cart?.sellers || []);
-
-    shouldAdvanceToPostFill = true;
 
     await reloadShoppingCartTabIfActive().catch((error) => {
       console.log('[fill-cart-scrape] shopping cart reload failed', { error: textOf(error?.message || error) });
@@ -690,14 +709,12 @@ async function handleFillCart() {
     appendStatus(`Cardmarket cart updated: ${result.articleCount} articles, ${result.unitCount} units.`, 'good');
     finishRun('Optimized cart pushed to Cardmarket.', 'good');
   } catch (error) {
+    hasCompletedFillCart = false;
     appendStatus(error.message, 'bad');
     finishRun(error.message, 'bad');
   } finally {
     isFillCartPosting = false;
     setBusy(false);
     renderFillCartGuardState();
-    if (shouldAdvanceToPostFill) {
-      setActiveWorkflowStep('post-fill', { force: true });
-    }
   }
 }

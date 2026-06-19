@@ -268,6 +268,10 @@
       background: rgba(17, 22, 27, 0.44);
     }
 
+    .step-card[hidden] {
+      display: none;
+    }
+
     .step-card-title {
       margin: 0;
       font-size: 14px;
@@ -277,6 +281,17 @@
       display: grid;
       gap: 8px;
       align-content: start;
+    }
+
+    .inline-action-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .inline-action-row .panel-note {
+      margin: 0;
     }
 
     .step-pill {
@@ -1214,7 +1229,7 @@
         <span class="workflow-separator" aria-hidden="true">&gt;</span>
         <button type="button" class="secondary workflow-step" data-workflow-step="post-fill" data-state="locked" aria-selected="false">
           <span class="workflow-step-index">Step 4</span>
-          <span class="workflow-step-title">Disable Sellers</span>
+          <span class="workflow-step-title">Debug</span>
           <span class="workflow-step-meta">Re-optimize after cart fill</span>
         </button>
       </div>
@@ -1307,10 +1322,10 @@
                 <div class="country-section">
                   <div class="country-picker">
                     <div class="country-picker-shell">
-                      <input id="sellerCountryFilterInput" class="country-picker-input" type="text" autocomplete="off" spellcheck="false" placeholder="Type seller country, e.g. ger" aria-label="Search seller countries" aria-controls="sellerLocationFilterList" aria-expanded="false">
+                      <input id="sellerCountryFilterInput" class="country-picker-input" type="text" autocomplete="off" spellcheck="false" placeholder="Type seller country, e.g. Ger" aria-label="Search seller countries" aria-controls="sellerLocationFilterList" aria-expanded="false">
                       <div id="selectedSellerCountries" class="country-selected-list" role="group" aria-label="Selected seller countries"></div>
                     </div>
-                    <span class="country-section-label">Other countries</span>
+                    <span class="country-section-label">Other seller countries</span>
                     <div id="sellerLocationFilterList" class="country-list" role="listbox" aria-label="Other seller countries"></div>
                   </div>
                   <label class="toggle-row checkbox-row" for="includeBargainsFromOtherCountries">
@@ -1371,6 +1386,14 @@
           </div>
           <p id="refillWarning" class="inline-notice bad" hidden>Your shopping cart is not empty.</p>
           <p id="fillCartPostingPill" class="status-pill" hidden>Posting items to cart</p>
+          <div id="fillCartSuccessCard" class="step-card" hidden>
+            <p class="step-card-title">Items in cart, please inspect your order!</p>
+            <p class="panel-note">Satisfied? Happy to help, and don't forget to donate sometimes!</p>
+            <div class="inline-action-row">
+              <p class="panel-note">Something wrong?</p>
+              <button id="fillCartDebugButton" class="secondary mini-button" type="button">Debug shopping cart</button>
+            </div>
+          </div>
           <div class="actions">
             <button id="fillCart" class="secondary mini-button" disabled>Fill cart</button>
           </div>
@@ -1379,7 +1402,7 @@
 
       <section class="panel step-panel" data-step-panel="post-fill">
         <div class="panel-header">
-          <h2 class="panel-title">Step 4: Disable Sellers</h2>
+          <h2 class="panel-title">Step 4: Debug</h2>
           <span id="postFillStepBadge" class="step-pill">Locked</span>
         </div>
         <div class="step-highlight">
@@ -1398,10 +1421,10 @@
             </div>
           </div>
           <p id="postFillTotalsHint" class="panel-note" hidden>Differences are often caused by unexpected shipping prices on Cardmarket.</p>
-          <p id="postFillSummary" class="panel-note">Fill cart first. Then disable sellers with non-standard delivery fees and re-optimize.</p>
           <p id="postFillMemoryNote" class="panel-note"></p>
           <p id="postFillEmptyState" class="subtle">No filled-cart sellers available yet.</p>
           <div id="postFillSellerList" class="items"></div>
+          <p id="postFillSummary" class="panel-note">Fill cart first. Then debug your shopping cart and re-optimize if needed.</p>
           <div class="actions">
             <button id="postFillReoptimize" class="secondary mini-button" disabled>Re-optimize</button>
           </div>

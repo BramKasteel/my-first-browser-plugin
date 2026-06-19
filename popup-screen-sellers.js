@@ -548,13 +548,18 @@ async function resolveItemExpansionRequestFilter({ item, requestContext, request
 
 function getBargainSellerCountryIds({ preferredCountryIds, availableSellerFilters }) {
   const excludedIds = new Set((preferredCountryIds || []).filter(Boolean));
+  const supportedIds = new Set(getShippingRouteSupportedCountryIds());
   const sellerCountryOptions = Array.isArray(availableSellerFilters?.sellerCountry)
     ? availableSellerFilters.sellerCountry
     : [];
 
   return [...new Set(sellerCountryOptions
     .map((entry) => String(entry?.value || '').trim())
-    .filter((value) => /^\d+$/.test(value) && !excludedIds.has(value)))];
+    .filter((value) => /^\d+$/.test(value) && supportedIds.has(value) && !excludedIds.has(value)))];
+}
+
+function isRelevantSellerFilterFieldName(name) {
+  return /^(sellerCountry(?:\[[^\]]*\])?|sellerType(?:\[[^\]]*\])?|sellerReputation(?:\[[^\]]*\])?|maxShippingTime(?:\[[^\]]*\])?|idExpansion(?:\[[^\]]*\])?|language(?:\[[^\]]*\])?|minCondition(?:\[[^\]]*\])?|extra\[[^\]]+\]|apply)$/i.test(name || '');
 }
 
 async function executeSellerScopeScrape({
@@ -1059,10 +1064,9 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
 
   function inspectAvailableSellerFiltersInDocument(doc, currentUrl) {
     const textValue = (value) => String(value || '').trim().replace(/\s+/g, ' ');
-    const relevantFieldPattern = /^(sellerCountry|sellerType|sellerReputation|maxShippingTime|idExpansion(?:\[.+\])?|language|minCondition|extra\[.+\]|apply)$/i;
     const filterForm = doc.querySelector('form[action*="Product_Filter_FilterMetacard"], form[action*="FilterMetacard"]');
     const nodes = [...doc.querySelectorAll('input[name], select[name], textarea[name]')]
-      .filter((node) => relevantFieldPattern.test(node.name || ''));
+      .filter((node) => isRelevantSellerFilterFieldName(node.name || ''));
     const filters = {};
 
     for (const node of nodes) {
@@ -1108,7 +1112,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
       const url = new URL(urlValue, origin);
       const values = {};
       url.searchParams.forEach((value, key) => {
-        if (!relevantFieldPattern.test(key)) return;
+        if (!isRelevantSellerFilterFieldName(key)) return;
         if (!values[key]) values[key] = [];
         values[key].push(value);
       });
@@ -1120,7 +1124,7 @@ async function scrapeSingleWantItemSellers({ item, delay, previewLimit, requestF
       if (!form) return values;
       for (const field of form.querySelectorAll('input[name], select[name], textarea[name]')) {
         const rawName = field.name || '';
-        if (!relevantFieldPattern.test(rawName) || field.disabled) continue;
+        if (!isRelevantSellerFilterFieldName(rawName) || field.disabled) continue;
         if ((field.type === 'checkbox' || field.type === 'radio') && !field.checked) continue;
         if (!values[rawName]) values[rawName] = [];
         values[rawName].push(field.value || '');

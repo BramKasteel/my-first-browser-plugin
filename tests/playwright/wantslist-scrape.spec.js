@@ -3,6 +3,7 @@ const {
   expect,
   assertNoExtensionErrors,
   openDetachedPopupForCardmarketPage,
+  openExtensionPopup,
   readPopupSnapshot,
   readPopupStorage,
 } = require('./fixtures/extension');
@@ -344,6 +345,27 @@ async function waitForScrapeStart(popupPage) {
 }
 
 test.describe('Want list scraping flow', () => {
+  test('accepts bracketed seller-country field names for bargain-country discovery', async ({ page, extensionId, extensionErrors }) => {
+    await openExtensionPopup(page, extensionId, { e2e: 1 });
+    await page.waitForFunction(() => !!window.__cmOptimizerTestApi, null, { timeout: 15_000 });
+
+    const matchState = await page.evaluate(() => ({
+      exact: isRelevantSellerFilterFieldName('sellerCountry'),
+      bracketed: isRelevantSellerFilterFieldName('sellerCountry[12]'),
+      multiValue: isRelevantSellerFilterFieldName('sellerCountry[]'),
+      unrelated: isRelevantSellerFilterFieldName('totallyDifferentField[12]'),
+    }));
+
+    expect(matchState).toEqual({
+      exact: true,
+      bracketed: true,
+      multiValue: true,
+      unrelated: false,
+    });
+
+    assertNoExtensionErrors(extensionErrors);
+  });
+
   test.skip(
     !hasCardmarketCredentials(),
     'Set CARDMARKET_USERNAME and CARDMARKET_PASSWORD in .env.playwright.local before running live Cardmarket tests.',

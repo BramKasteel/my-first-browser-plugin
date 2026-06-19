@@ -59,6 +59,8 @@ const optimizerWaitingTextEl = document.getElementById('optimizerWaitingText');
 const optimizerWaitingDetailEl = document.getElementById('optimizerWaitingDetail');
 const refillWarningEl = document.getElementById('refillWarning');
 const fillCartPostingPillEl = document.getElementById('fillCartPostingPill');
+const fillCartSuccessCardEl = document.getElementById('fillCartSuccessCard');
+const fillCartDebugButtonEl = document.getElementById('fillCartDebugButton');
 const postFillSummaryEl = document.getElementById('postFillSummary');
 const postFillSellerListEl = document.getElementById('postFillSellerList');
 const postFillEmptyStateEl = document.getElementById('postFillEmptyState');
@@ -139,8 +141,8 @@ const WORKFLOW_META = {
     hint: 'Push chosen Cardmarket offers into your cart after reviewing optimized result.',
   },
   'post-fill': {
-    title: 'Disable Sellers',
-    hint: 'Disable sellers with non-standard delivery fees, then re-optimize.',
+    title: 'Debug',
+    hint: 'Debug your shopping cart, then re-optimize if needed.',
   },
 };
 const SELLER_COUNTRY_OPTIONS = [
@@ -150,7 +152,7 @@ const SELLER_COUNTRY_OPTIONS = [
   // 'Canada', // No shipping routes in optimizer dataset.
   'Croatia',
   'Cyprus',
-  // 'Czechia', // No shipping routes in optimizer dataset.
+  'Czechia',
   'Denmark',
   'Estonia',
   'Finland',
@@ -341,6 +343,7 @@ function setPostFillSellerChoicesFromCart(cartSellers) {
 function clearPostFillSessionState() {
   latestFillResult = null;
   postFillSellerChoices = [];
+  syncRefillWarning();
   if (typeof renderPostFillScreen === 'function') {
     renderPostFillScreen();
   }
@@ -1144,6 +1147,10 @@ function getCardmarketCountryId(value) {
 
 function getCardmarketCountryIdsFromCountries(values) {
   return [...new Set((values || []).map((value) => getCardmarketCountryId(value)).filter(Boolean))];
+}
+
+function getShippingRouteSupportedCountryIds() {
+  return getCardmarketCountryIdsFromCountries(SELLER_COUNTRY_OPTIONS);
 }
 
 function getCountryNameById(countryId) {

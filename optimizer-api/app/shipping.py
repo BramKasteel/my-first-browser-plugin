@@ -35,7 +35,11 @@ def max_cards_based_on_weight(max_weight_grams: int) -> int:
 
 
 def normalize_country_name(country: str) -> str:
-    return country.strip().casefold()
+    normalized = country.strip().casefold()
+    aliases = {
+        "czech republic": "czechia",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def parse_eur_to_cents(amount: str) -> int:

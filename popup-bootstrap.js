@@ -55,6 +55,9 @@ confirmWantListButton?.addEventListener('click', () => {
 });
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 fillCartButton.addEventListener('click', handleFillCart);
+fillCartDebugButtonEl?.addEventListener('click', () => {
+  setActiveWorkflowStep('post-fill', { force: true });
+});
 postFillReoptimizeButton?.addEventListener('click', () => {
   handlePostFillReoptimize().catch((error) => {
     appendStatus(error.message, 'bad');

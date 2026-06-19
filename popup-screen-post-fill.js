@@ -441,10 +441,10 @@ function hasPostFillSelectionChanged() {
 function syncPostFillReoptimizeButton(isBusy = false) {
   if (!postFillReoptimizeButton) return;
 
-  const hasChoices = getPostFillSellerChoices().length > 0;
-  postFillReoptimizeButton.disabled = isBusy || !hasChoices || !hasPostFillSelectionChanged();
+  const hasOptimizerPayload = !!buildReoptimizePayload(getMergedPostFillDisabledSellerIds());
+  postFillReoptimizeButton.disabled = isBusy || !hasOptimizerPayload;
   postFillReoptimizeButton.classList.toggle('is-busy', isBusy);
-  postFillReoptimizeButton.classList.toggle('secondary', !hasChoices || !hasPostFillSelectionChanged());
+  postFillReoptimizeButton.classList.toggle('secondary', !hasOptimizerPayload);
 }
 
 function renderPostFillScreen() {
@@ -464,7 +464,7 @@ function renderPostFillScreen() {
     postFillEmptyStateEl.hidden = false;
     postFillEmptyStateEl.textContent = hasFilledCartSession()
       ? 'No seller list available from current cart result. Re-open after a successful fill or re-optimization with a feasible cart.'
-      : 'Fill cart first. Then this screen can disable sellers and re-optimize.';
+      : 'Fill cart first. Then this screen can help debug your shopping cart and re-optimize.';
     postFillSummaryEl.textContent = 'Expected shipping shown below once seller list exists. Actual shipping scrape not implemented yet.';
     postFillMemoryNoteEl.hidden = hiddenRememberedCount === 0;
     postFillMemoryNoteEl.textContent = hiddenRememberedCount
@@ -477,7 +477,7 @@ function renderPostFillScreen() {
   refreshPostFillTotalsIfNeeded();
 
   postFillEmptyStateEl.hidden = true;
-  postFillSummaryEl.textContent = 'Any sellers that apply different shipping than expected? You can disable these sellers here and run again.';
+  postFillSummaryEl.textContent = 'Was the optimized order more expensive than Cardmarket? Sometimes reoptimizing helps!';
   postFillMemoryNoteEl.hidden = hiddenRememberedCount === 0;
   postFillMemoryNoteEl.textContent = hiddenRememberedCount
     ? `${hiddenRememberedCount} seller${hiddenRememberedCount === 1 ? '' : 's'} seller(s) were disabled earlier.`
@@ -487,11 +487,19 @@ function renderPostFillScreen() {
     const row = document.createElement('label');
     row.className = 'item checkbox-row';
 
+    const toggle = document.createElement('span');
+    toggle.className = 'toggle-row';
+
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.checked = rememberedSellerIds.has(seller.seller_id);
     checkbox.disabled = isUiBusy;
     checkbox.setAttribute('data-post-fill-seller-id', seller.seller_id);
+
+    const toggleLabel = document.createElement('span');
+    toggleLabel.textContent = 'disable';
+
+    toggle.append(checkbox, toggleLabel);
 
     const body = document.createElement('div');
 
@@ -513,7 +521,7 @@ function renderPostFillScreen() {
     ].filter(Boolean).join(' | ');
 
     body.append(title, meta);
-    row.append(checkbox, body);
+    row.append(toggle, body);
     postFillSellerListEl.appendChild(row);
   });
 

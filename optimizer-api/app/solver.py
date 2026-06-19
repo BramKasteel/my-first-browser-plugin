@@ -226,6 +226,18 @@ def _selected_seller_shipping_costs_cents(
     return seller_shipping_costs
 
 
+def _fallback_missing_route_tier(
+    *,
+    seller_value_upper_bound: int,
+    seller_unit_upper_bound: int,
+) -> shipping.ShippingTier:
+    return shipping.ShippingTier(
+        max_value_cents=max(1, seller_value_upper_bound),
+        max_units=max(1, seller_unit_upper_bound),
+        total_price_cents=MISSING_ROUTE_DATA_PENALTY_CENTS,
+    )
+
+
 def _solve_exact_shipping_order(
     *,
     cp_model,
@@ -293,6 +305,15 @@ def _solve_exact_shipping_order(
             seller_value_upper_bound=seller_value_upper_bounds[seller_id],
             seller_unit_upper_bound=seller_unit_upper_bounds[seller_id],
         )
+        if not route_tiers.tiers:
+            route_tiers = shipping.ShippingRouteTiers(
+                tiers=(
+                    _fallback_missing_route_tier(
+                        seller_value_upper_bound=seller_value_upper_bounds[seller_id],
+                        seller_unit_upper_bound=seller_unit_upper_bounds[seller_id],
+                    ),
+                )
+            )
 
         seller_active_vars[seller_id] = model.NewBoolVar(f"seller_active_{seller_id}")
 

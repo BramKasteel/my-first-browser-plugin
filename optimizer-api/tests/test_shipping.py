@@ -8,6 +8,7 @@ from app.shipping import (
     _load_shipping_route_book,
     _normalize_route_tiers,
     max_cards_based_on_weight,
+    normalize_country_name,
     parse_eur_to_cents,
     prune_route_tiers_for_order_bounds,
 )
@@ -25,6 +26,11 @@ def test_method_card_capacity_uses_letter_breakpoints() -> None:
     assert max_cards_based_on_weight(50) == 17
     assert max_cards_based_on_weight(100) == 40
     assert max_cards_based_on_weight(250) == 100
+
+
+def test_normalize_country_name_maps_czech_republic_to_czechia() -> None:
+    assert normalize_country_name("Czech Republic") == "czechia"
+    assert normalize_country_name("Czechia") == "czechia"
 
 
 def test_normalize_route_tiers_uses_card_capacity_for_letters() -> None:
