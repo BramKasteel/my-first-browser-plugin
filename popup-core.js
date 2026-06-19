@@ -58,8 +58,7 @@ const optimizerWaitingEl = document.getElementById('optimizerWaiting');
 const optimizerWaitingTextEl = document.getElementById('optimizerWaitingText');
 const optimizerWaitingDetailEl = document.getElementById('optimizerWaitingDetail');
 const refillWarningEl = document.getElementById('refillWarning');
-const fillCartNonEmptyConfirmRowEl = document.getElementById('fillCartNonEmptyConfirmRow');
-const fillCartNonEmptyConfirmCheckboxEl = document.getElementById('fillCartNonEmptyConfirm');
+const fillCartPostingPillEl = document.getElementById('fillCartPostingPill');
 const postFillSummaryEl = document.getElementById('postFillSummary');
 const postFillSellerListEl = document.getElementById('postFillSellerList');
 const postFillEmptyStateEl = document.getElementById('postFillEmptyState');
@@ -198,7 +197,6 @@ function setBusy(isBusy) {
   isUiBusy = isBusy;
   fillCartButton.disabled = isBusy;
   fillCartButton.classList.toggle('is-busy', isBusy);
-  if (fillCartNonEmptyConfirmCheckboxEl) fillCartNonEmptyConfirmCheckboxEl.disabled = isBusy;
   buyerCountrySelectEl.disabled = isBusy;
   sellerReputationFilterEl.disabled = isBusy;
   sellerDeliveryTimeFilterEl.disabled = isBusy;

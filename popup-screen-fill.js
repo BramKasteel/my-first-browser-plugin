@@ -9,16 +9,14 @@ let fillCartInspectionState = {
   isLoading: false,
   fetchedAt: 0,
   hasItems: null,
-  acknowledgedNonEmpty: false,
 };
-let fillCartAwaitingStability = false;
+let isFillCartPosting = false;
 
 function resetFillCartInspectionState() {
   fillCartInspectionState = {
     isLoading: false,
     fetchedAt: 0,
     hasItems: null,
-    acknowledgedNonEmpty: false,
   };
 }
 
@@ -89,107 +87,18 @@ async function fetchCurrentShoppingCartItemCount() {
   return itemCount;
 }
 
-function isFillBlockedByNonEmptyCart() {
-  return fillCartInspectionState.hasItems === true && !fillCartInspectionState.acknowledgedNonEmpty;
-}
-
 function renderFillCartGuardState() {
   const hasCart = hasOptimizedCart();
   const cartKnownNonEmpty = fillCartInspectionState.hasItems === true;
   const showGuard = hasCart && !fillCartInspectionState.isLoading && cartKnownNonEmpty;
 
   if (refillWarningEl) {
-    refillWarningEl.hidden = true;
+    refillWarningEl.hidden = !showGuard;
   }
 
-  if (fillCartNonEmptyConfirmRowEl) {
-    fillCartNonEmptyConfirmRowEl.hidden = !showGuard;
+  if (fillCartPostingPillEl) {
+    fillCartPostingPillEl.hidden = !isFillCartPosting;
   }
-
-  if (fillCartNonEmptyConfirmCheckboxEl) {
-    fillCartNonEmptyConfirmCheckboxEl.checked = !!fillCartInspectionState.acknowledgedNonEmpty;
-    fillCartNonEmptyConfirmCheckboxEl.disabled = isUiBusy || !showGuard || fillCartAwaitingStability;
-  }
-}
-
-async function waitForShoppingCartTabStable(timeoutMs = 8000, pollIntervalMs = 250) {
-  const tab = await ensureCardmarketTab();
-  const tabUrl = textOf(tab?.url || '');
-
-  if (!/\/ShoppingCart(?:[/?#]|$)/i.test(tabUrl)) {
-    return true;
-  }
-
-  if (tab.status === 'complete') {
-    return true;
-  }
-
-  console.log('[fill-cart-scrape] waiting for ShoppingCart tab stability before accepting warning checkbox', {
-    tabId: tab.id,
-    tabUrl,
-    timeoutMs,
-  });
-
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-
-    const check = () => {
-      chrome.tabs.get(tab.id).then((currentTab) => {
-        if (currentTab?.status === 'complete') {
-          clearInterval(intervalHandle);
-          resolve(true);
-          return;
-        }
-
-        if ((Date.now() - startedAt) >= timeoutMs) {
-          clearInterval(intervalHandle);
-          resolve(false);
-        }
-      }).catch(() => {
-        clearInterval(intervalHandle);
-        resolve(false);
-      });
-    };
-
-    const intervalHandle = setInterval(check, pollIntervalMs);
-    check();
-  });
-}
-
-async function setFillCartNonEmptyAcknowledged(nextValue) {
-  if (!nextValue) {
-    fillCartInspectionState = {
-      ...fillCartInspectionState,
-      acknowledgedNonEmpty: false,
-    };
-    renderFillCartGuardState();
-    syncFillCartButton(isUiBusy);
-    return;
-  }
-
-  fillCartAwaitingStability = true;
-  renderFillCartGuardState();
-
-  const isStable = await waitForShoppingCartTabStable();
-  fillCartAwaitingStability = false;
-
-  if (!isStable) {
-    fillCartInspectionState = {
-      ...fillCartInspectionState,
-      acknowledgedNonEmpty: false,
-    };
-    appendStatus('Cart page still loading, retry in moment.', 'bad');
-    renderFillCartGuardState();
-    syncFillCartButton(isUiBusy);
-    return;
-  }
-
-  fillCartInspectionState = {
-    ...fillCartInspectionState,
-    acknowledgedNonEmpty: true,
-  };
-  renderFillCartGuardState();
-  syncFillCartButton(isUiBusy);
 }
 
 async function refreshFillCartInspectionIfNeeded(force = false) {
@@ -216,14 +125,12 @@ async function refreshFillCartInspectionIfNeeded(force = false) {
       force,
       itemCount,
       hasItems,
-      acknowledgedNonEmpty: fillCartInspectionState.acknowledgedNonEmpty,
     });
     fillCartInspectionState = {
       ...fillCartInspectionState,
       isLoading: false,
       fetchedAt: Date.now(),
       hasItems,
-      acknowledgedNonEmpty: hasItems ? fillCartInspectionState.acknowledgedNonEmpty : false,
     };
   } catch (error) {
     console.log('[fill-cart-scrape] refresh failed', {
@@ -235,7 +142,6 @@ async function refreshFillCartInspectionIfNeeded(force = false) {
       isLoading: false,
       fetchedAt: Date.now(),
       hasItems: null,
-      acknowledgedNonEmpty: false,
     };
   }
 
@@ -245,11 +151,10 @@ async function refreshFillCartInspectionIfNeeded(force = false) {
 
 function syncFillCartButton(isBusy = false) {
   const hasCart = hasOptimizedCart();
-  const blockedByNonEmptyCart = isFillBlockedByNonEmptyCart();
   const isCheckingCart = hasCart && fillCartInspectionState.isLoading;
-  fillCartButton.disabled = isBusy || !hasCart || isCheckingCart || blockedByNonEmptyCart;
+  fillCartButton.disabled = isBusy || !hasCart || isCheckingCart;
   fillCartButton.classList.toggle('is-busy', isBusy);
-  fillCartButton.classList.toggle('secondary', !hasCart || blockedByNonEmptyCart || isCheckingCart);
+  fillCartButton.classList.toggle('secondary', !hasCart || isCheckingCart);
 
   if (hasCart && !isBusy) {
     void refreshFillCartInspectionIfNeeded();
@@ -257,7 +162,6 @@ function syncFillCartButton(isBusy = false) {
 
   renderFillCartGuardState();
 }
-
 
 function renderCartSummary(result) {
   const summaryTargets = [
@@ -743,7 +647,10 @@ async function handleFillCart() {
   }
 
   startRun('Preparing cart fill request for Cardmarket...');
+  appendStatus('Preparing cart fill request for Cardmarket...');
   setBusy(true);
+  isFillCartPosting = true;
+  renderFillCartGuardState();
   let shouldAdvanceToPostFill = false;
   try {
     const payload = buildCartFillPayload(latestOptimizationResult);
@@ -751,6 +658,7 @@ async function handleFillCart() {
     appendStatus(`Posting ${payload.articleCount} articles and ${payload.unitCount} units to Cardmarket cart.`);
     const result = await submitOptimizedCartInTab(payload);
     startRun('Cardmarket cart fill request finished. Verifying response...');
+    appendStatus('Cardmarket cart fill request finished. Verifying response...');
     const serverRejected = textOf(result?.serverResultType) === 'error';
     const hasShortages = Array.isArray(result?.shortages) && result.shortages.length > 0;
     const missingSummaryUnits = Number(result?.missingSummaryUnits || 0);
@@ -785,7 +693,9 @@ async function handleFillCart() {
     appendStatus(error.message, 'bad');
     finishRun(error.message, 'bad');
   } finally {
+    isFillCartPosting = false;
     setBusy(false);
+    renderFillCartGuardState();
     if (shouldAdvanceToPostFill) {
       setActiveWorkflowStep('post-fill', { force: true });
     }

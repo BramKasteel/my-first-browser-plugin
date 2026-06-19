@@ -881,6 +881,34 @@
     .status-log li.good { color: var(--good); }
     .status-log li.bad { color: var(--bad); }
 
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(159, 176, 190, 0.18);
+      background: rgba(17, 22, 27, 0.54);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1;
+      font-weight: 600;
+    }
+
+    .status-pill::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #f59e0b;
+      box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.14);
+    }
+
+    .status-pill[hidden] {
+      display: none;
+    }
+
     .panel-header {
       display: flex;
       justify-content: space-between;
@@ -1341,11 +1369,8 @@
               <span id="mainCartSummaryTotalItems" class="summary-value">-</span>
             </div>
           </div>
-          <p id="refillWarning" class="inline-notice" hidden>Your shopping cart is not empty.</p>
-          <label id="fillCartNonEmptyConfirmRow" class="toggle-row checkbox-row inline-notice bad" for="fillCartNonEmptyConfirm" hidden>
-            <input id="fillCartNonEmptyConfirm" type="checkbox" />
-            <span>I am warned that my shopping cart is not empty</span>
-          </label>
+          <p id="refillWarning" class="inline-notice bad" hidden>Your shopping cart is not empty.</p>
+          <p id="fillCartPostingPill" class="status-pill" hidden>Posting items to cart</p>
           <div class="actions">
             <button id="fillCart" class="secondary mini-button" disabled>Fill cart</button>
           </div>

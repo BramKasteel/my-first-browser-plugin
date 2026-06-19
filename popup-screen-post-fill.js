@@ -480,7 +480,7 @@ function renderPostFillScreen() {
   postFillSummaryEl.textContent = 'Any sellers that apply different shipping than expected? You can disable these sellers here and run again.';
   postFillMemoryNoteEl.hidden = hiddenRememberedCount === 0;
   postFillMemoryNoteEl.textContent = hiddenRememberedCount
-    ? `${hiddenRememberedCount} seller${hiddenRememberedCount === 1 ? '' : 's'} disabled earlier no longer appear in current cart, but remain blocked.`
+    ? `${hiddenRememberedCount} seller${hiddenRememberedCount === 1 ? '' : 's'} seller(s) were disabled earlier.`
     : 'Actual shipping scrape not implemented yet. Expected shipping shown from optimizer result.';
 
   sellers.forEach((seller) => {

@@ -55,11 +55,6 @@ confirmWantListButton?.addEventListener('click', () => {
 });
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
 fillCartButton.addEventListener('click', handleFillCart);
-fillCartNonEmptyConfirmCheckboxEl?.addEventListener('change', () => {
-  setFillCartNonEmptyAcknowledged(!!fillCartNonEmptyConfirmCheckboxEl.checked).catch((error) => {
-    appendStatus(textOf(error?.message || error), 'bad');
-  });
-});
 postFillReoptimizeButton?.addEventListener('click', () => {
   handlePostFillReoptimize().catch((error) => {
     appendStatus(error.message, 'bad');
