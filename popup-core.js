@@ -211,6 +211,9 @@ function setBusy(isBusy) {
   selectedSellerCountriesEl.querySelectorAll('button').forEach((button) => {
     button.disabled = isBusy;
   });
+  if (typeof renderSellerCountryFilterList === 'function') {
+    renderSellerCountryFilterList(getSelectedSellerCountries());
+  }
   syncExtractButton(isBusy);
   syncSellerScrapeButton(isBusy);
   syncFillCartButton(isBusy);
