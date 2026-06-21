@@ -737,7 +737,12 @@ function setStepActivity(activity = null) {
 
 function renderStepActivity() {
   const isSellerScrape = activeStepActivity?.kind === 'seller-scrape';
-  sellerSettingsBodyEl.hidden = isSellerScrape;
+  const isOptimizerRequest = activeStepActivity?.kind === 'optimizer-request';
+  const shouldHideSellerSettings = isSellerScrape
+    || isOptimizerRequest
+    || (isUiBusy && isRunActive && activeWorkflowStep === 'sellers');
+
+  sellerSettingsBodyEl.hidden = shouldHideSellerSettings;
   sellerScrapeProgressEl.hidden = !isSellerScrape;
 
   if (isSellerScrape) {
@@ -755,7 +760,6 @@ function renderStepActivity() {
     sellerProgressBarEl.style.width = '0%';
   }
 
-  const isOptimizerRequest = activeStepActivity?.kind === 'optimizer-request';
   optimizerSettingsBodyEl.hidden = isOptimizerRequest;
   optimizerWaitingEl.hidden = !isOptimizerRequest;
 

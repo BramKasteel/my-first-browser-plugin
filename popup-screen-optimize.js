@@ -201,20 +201,19 @@ async function submitOptimizationRequest(endpoint, { payloadOverride = null, kic
   }
 
   syncOptimizerApiUrlInput();
-  await saveSellerSettings();
-
-  if (typeof revealOptimizationActivityUi === 'function') {
-    revealOptimizationActivityUi();
-  }
-
-  if (kickoffMessage) {
-    appendStatus(kickoffMessage, kickoffTone);
-  }
-
   startRun('Waiting for optimizer reply...');
   setBusy(true);
   try {
     setOptimizationRequestStage('warmup', requestPayload);
+    if (typeof revealOptimizationActivityUi === 'function') {
+      revealOptimizationActivityUi();
+    }
+    await saveSellerSettings();
+
+    if (kickoffMessage) {
+      appendStatus(kickoffMessage, kickoffTone);
+    }
+
     await warmOptimizerApi(endpoint, { reason: 'before optimize', force: true });
     const requestBody = JSON.stringify(requestPayload);
     setOptimizationRequestStage('posting', requestPayload);
