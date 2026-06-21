@@ -760,7 +760,6 @@ function renderStepActivity() {
     sellerProgressBarEl.style.width = '0%';
   }
 
-  optimizerSettingsBodyEl.hidden = isOptimizerRequest;
   optimizerWaitingEl.hidden = !isOptimizerRequest;
 
   if (isOptimizerRequest) {
