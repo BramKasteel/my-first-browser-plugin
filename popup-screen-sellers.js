@@ -558,6 +558,8 @@ function getBargainSellerCountryIds({ preferredCountryIds, availableSellerFilter
     .filter((value) => /^\d+$/.test(value) && supportedIds.has(value) && !excludedIds.has(value)))];
 }
 
+const BARGAIN_MIN_PREFERRED_PRICE_EUR = 5;
+
 function isRelevantSellerFilterFieldName(name) {
   return /^(sellerCountry(?:\[[^\]]*\])?|sellerType(?:\[[^\]]*\])?|sellerReputation(?:\[[^\]]*\])?|maxShippingTime(?:\[[^\]]*\])?|idExpansion(?:\[[^\]]*\])?|language(?:\[[^\]]*\])?|minCondition(?:\[[^\]]*\])?|extra\[[^\]]+\]|apply)$/i.test(name || '');
 }
@@ -653,30 +655,36 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, onScope
 
   let result = preferredResult;
   if (getIncludeBargainsFromOtherCountries()) {
-    const bargainCountryIds = getBargainSellerCountryIds({
-      preferredCountryIds: requestCountryIds,
-      availableSellerFilters: preferredResult.availableSellerFilters,
-    });
-    if (bargainCountryIds.length) {
-      const bargainResult = await executeSellerScopeScrape({
-        item,
-        delayMs,
-        maxSellerPages,
-        previewLimit: 12,
-        requestContext,
-        requestLanguageId,
-        expansionIds: baseRequestFilters.expansionIds,
-        sellerCountryIds: bargainCountryIds,
-        sellerReputationId,
-        maxShippingTimeId,
-        sellerTypeId,
-        partitionLabel: 'bargain-countries',
-        onScopeStart,
+    const cheapestPreferredOfferPrice = getCheapestSellerOfferPrice(preferredResult.sellers);
+    if (cheapestPreferredOfferPrice !== null && cheapestPreferredOfferPrice >= BARGAIN_MIN_PREFERRED_PRICE_EUR) {
+      const bargainCountryIds = getBargainSellerCountryIds({
+        preferredCountryIds: requestCountryIds,
+        availableSellerFilters: preferredResult.availableSellerFilters,
       });
-      if (bargainResult) {
-        bargainResult.partitionLabel = 'bargains';
-        result = mergeSellerScopeResults(preferredResult, [bargainResult]);
+      if (bargainCountryIds.length) {
+        const bargainResult = await executeSellerScopeScrape({
+          item,
+          delayMs,
+          maxSellerPages,
+          previewLimit: 12,
+          requestContext,
+          requestLanguageId,
+          expansionIds: baseRequestFilters.expansionIds,
+          sellerCountryIds: bargainCountryIds,
+          sellerReputationId,
+          maxShippingTimeId,
+          sellerTypeId,
+          partitionLabel: 'bargain-countries',
+          onScopeStart,
+        });
+        if (bargainResult) {
+          bargainResult.partitionLabel = 'bargains';
+          result = mergeSellerScopeResults(preferredResult, [bargainResult]);
+        }
       }
+    } else if (cheapestPreferredOfferPrice !== null) {
+      const itemLabel = textOf(item?.productName) || textOf(item?.idProduct) || 'wanted item';
+      appendStatus(`Skipping bargain-country scrape for ${itemLabel}. Cheapest preferred-country offer is ${formatCurrencyAmount(cheapestPreferredOfferPrice)}.`, 'good');
     }
   }
 
@@ -1352,6 +1360,9 @@ async function handleScrapeAllItems() {
       current: 0,
       total: latestExtractedItems.length,
     });
+    if (typeof focusLiveActivityPanel === 'function') {
+      focusLiveActivityPanel();
+    }
 
     const requestContext = await resolveSellerRequestContext(latestExtractedItems.find((item) => item?.productUrl) || latestExtractedItems[0]);
     const delayMs = sellerRequestDelayMs;
@@ -1413,9 +1424,7 @@ async function handleScrapeAllItems() {
           item,
           delayMs,
           onScopeStart: ({ partitionLabel, sellerCountryIds }) => {
-            const scopeName = partitionLabel
-              || (sellerCountryIds?.length === 1 ? getCountryNameById(sellerCountryIds[0]) : '')
-              || 'All countries';
+            const scopeName = describeSellerScopeLabel({ partitionLabel, sellerCountryIds });
             setStepActivity({
               kind: 'seller-scrape',
               label: `${itemLabel} (${scopeName})`,
@@ -1565,8 +1574,10 @@ async function handleScrapeAllItems() {
         `Optimizer payload ready: ${optimizerPayload.items.length} items, ${optimizerPayload.sellers.length} sellers, ${optimizerPayload.offers.length} offers.`,
         'good'
       );
-      appendStatus('Seller scrape complete. Sending payload to optimizer.', 'good');
-      await submitOptimizationRequest(DEFAULT_OPTIMIZER_API_URL, { payloadOverride: optimizerPayload });
+      await submitOptimizationRequest(DEFAULT_OPTIMIZER_API_URL, {
+        payloadOverride: optimizerPayload,
+        kickoffMessage: 'Seller scrape complete. Sending payload to optimizer.',
+      });
       return;
     } else if (optimizerPayload) {
       appendStatus('Seller scrape produced partial data. Optimization skipped until all items scrape cleanly.', 'bad');
@@ -1722,6 +1733,17 @@ function describeSellerScope({ sellerCountryIds, sellerTypeId }) {
   if (normalizedSellerType) parts.push(`${normalizedSellerType} sellers`);
 
   return parts.join(', ');
+}
+
+function describeSellerScopeLabel({ partitionLabel, sellerCountryIds }) {
+  if (partitionLabel) return partitionLabel;
+
+  const countries = [...new Set((sellerCountryIds || []).filter(Boolean))]
+    .map((countryId) => getCountryNameById(countryId) || `country:${countryId}`);
+
+  if (!countries.length) return 'All countries';
+  if (countries.length === 1) return countries[0];
+  return countries.join(', ');
 }
 
 

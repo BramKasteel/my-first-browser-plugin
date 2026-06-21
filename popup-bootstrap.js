@@ -54,6 +54,11 @@ confirmWantListButton?.addEventListener('click', () => {
   setActiveWorkflowStep('sellers', { force: true });
 });
 scrapeAllItemsButton.addEventListener('click', handleScrapeAllItems);
+fillCartReoptimizeButton?.addEventListener('click', () => {
+  handlePostFillReoptimize().catch((error) => {
+    appendStatus(error.message, 'bad');
+  });
+});
 fillCartButton.addEventListener('click', handleFillCart);
 fillCartDebugButtonEl?.addEventListener('click', () => {
   setActiveWorkflowStep('post-fill', { force: true });

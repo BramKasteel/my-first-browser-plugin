@@ -1,5 +1,6 @@
 const extractItemsButton = document.getElementById('extractItems');
 const scrapeAllItemsButton = document.getElementById('scrapeAllItems');
+const fillCartReoptimizeButton = document.getElementById('fillCartReoptimize');
 const fillCartButton = document.getElementById('fillCart');
 const postFillReoptimizeButton = document.getElementById('postFillReoptimize');
 const optimizerApiUrlInput = document.getElementById('optimizerApiUrl');
@@ -58,6 +59,7 @@ const optimizerWaitingEl = document.getElementById('optimizerWaiting');
 const optimizerWaitingTextEl = document.getElementById('optimizerWaitingText');
 const optimizerWaitingDetailEl = document.getElementById('optimizerWaitingDetail');
 const refillWarningEl = document.getElementById('refillWarning');
+const optimizationResultPillEl = document.getElementById('optimizationResultPill');
 const fillCartPostingPillEl = document.getElementById('fillCartPostingPill');
 const fillCartSuccessCardEl = document.getElementById('fillCartSuccessCard');
 const fillCartDebugButtonEl = document.getElementById('fillCartDebugButton');
@@ -768,6 +770,20 @@ function setResultPanelExpanded(expanded) {
   resultPanelEl?.setAttribute('data-panel-expanded', isResultPanelExpanded ? 'true' : 'false');
   resultPanelToggleButton?.setAttribute('aria-expanded', isResultPanelExpanded ? 'true' : 'false');
   resultPanelToggleButton?.setAttribute('aria-label', isResultPanelExpanded ? 'Hide results and activity' : 'Show results and activity');
+}
+
+function focusLiveActivityPanel() {
+  const scrollTarget = !sellerScrapeProgressEl?.hidden
+    ? sellerScrapeProgressEl
+    : !optimizerWaitingEl?.hidden
+      ? optimizerWaitingEl
+      : sellerSettingsBodyEl?.closest('.step-panel');
+  scrollTarget?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function revealOptimizationActivityUi() {
+  setActiveWorkflowStep('sellers', { force: true });
+  focusLiveActivityPanel();
 }
 
 function renderWorkflow() {

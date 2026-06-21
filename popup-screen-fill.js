@@ -19,6 +19,10 @@ function resetFillCartSuccessState() {
   renderFillCartGuardState();
 }
 
+function shouldShowFillCartReoptimizeButton() {
+  return textOf(latestOptimizationResult?.status).toLowerCase() === 'feasible' && !hasCompletedFillCart;
+}
+
 function resetFillCartInspectionState() {
   fillCartInspectionState = {
     isLoading: false,
@@ -99,6 +103,9 @@ function renderFillCartGuardState() {
   const showSuccessCard = hasCompletedFillCart && !isFillCartPosting;
   const cartKnownNonEmpty = fillCartInspectionState.hasItems === true;
   const showGuard = hasCart && !showSuccessCard && !fillCartInspectionState.isLoading && cartKnownNonEmpty;
+  const showFillCartReoptimize = shouldShowFillCartReoptimizeButton();
+
+  renderOptimizationResultPill(latestOptimizationResult);
 
   if (refillWarningEl) {
     refillWarningEl.hidden = !showGuard;
@@ -118,6 +125,10 @@ function renderFillCartGuardState() {
 
   if (fillCartButton) {
     fillCartButton.hidden = showSuccessCard;
+  }
+
+  if (fillCartReoptimizeButton) {
+    fillCartReoptimizeButton.hidden = !showFillCartReoptimize;
   }
 }
 
@@ -176,11 +187,48 @@ function syncFillCartButton(isBusy = false) {
   fillCartButton.classList.toggle('is-busy', isBusy);
   fillCartButton.classList.toggle('secondary', !hasCart || isCheckingCart);
 
+  if (fillCartReoptimizeButton) {
+    const canReoptimize = shouldShowFillCartReoptimizeButton() && !!buildReoptimizePayload(getMergedPostFillDisabledSellerIds());
+    fillCartReoptimizeButton.disabled = isBusy || !canReoptimize;
+    fillCartReoptimizeButton.classList.toggle('is-busy', isBusy);
+    fillCartReoptimizeButton.classList.toggle('secondary', !canReoptimize);
+  }
+
   if (hasCart && !isBusy) {
     void refreshFillCartInspectionIfNeeded();
   }
 
   renderFillCartGuardState();
+}
+
+function renderOptimizationResultPill(result) {
+  if (!optimizationResultPillEl) return;
+
+  const status = textOf(result?.status).toLowerCase();
+  optimizationResultPillEl.classList.remove('is-optimal', 'is-feasible');
+
+  if (isFillCartPosting) {
+    optimizationResultPillEl.hidden = true;
+    optimizationResultPillEl.textContent = '';
+    return;
+  }
+
+  if (status === 'optimal') {
+    optimizationResultPillEl.hidden = false;
+    optimizationResultPillEl.classList.add('is-optimal');
+    optimizationResultPillEl.textContent = 'Optimal result achieved! There is no (10 cents) cheaper combination of cards possible under current settings.';
+    return;
+  }
+
+  if (status === 'feasible') {
+    optimizationResultPillEl.hidden = false;
+    optimizationResultPillEl.classList.add('is-feasible');
+    optimizationResultPillEl.textContent = 'Cheap result achieved. The order was too big (our servers too small) to achieve optimality. Possibly re-optimizing might give a better result.';
+    return;
+  }
+
+  optimizationResultPillEl.hidden = true;
+  optimizationResultPillEl.textContent = '';
 }
 
 function renderCartSummary(result) {
@@ -201,6 +249,7 @@ function renderCartSummary(result) {
 
   if (!result) {
     resetFillCartInspectionState();
+    renderOptimizationResultPill(null);
     renderFillCartGuardState();
     summaryTargets.forEach(({ container, totalEl, itemsEl }) => {
       container.hidden = true;
@@ -212,6 +261,7 @@ function renderCartSummary(result) {
 
   const grandTotalText = formatCurrencyAmount(result?.totals?.grand_total || 0, result?.currency || 'EUR');
   const totalItemsText = String(result?.cart?.total_units || 0);
+  renderOptimizationResultPill(result);
 
   summaryTargets.forEach(({ container, totalEl, itemsEl }) => {
     container.hidden = false;

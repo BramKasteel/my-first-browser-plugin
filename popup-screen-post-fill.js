@@ -406,7 +406,7 @@ function renderPostFillTotalsSummary() {
   if (postFillTotalsState.isLoading) {
     postFillTotalsHintEl.textContent = 'Loading Cardmarket total order price from ShoppingCart...';
   } else {
-    postFillTotalsHintEl.textContent = 'Large differences are often because: either your shopping cart contained previous items, or a seller uses non-standard delivery fees.';
+    postFillTotalsHintEl.textContent = 'Large differences are often because: either your shopping cart contained previous items, or a seller uses non-standard delivery fees. Here you can disable sellers that ship too expensive, and optimize again.';
   }
 }
 
@@ -538,8 +538,10 @@ async function handlePostFillReoptimize() {
   }
 
   await persistRememberedDisabledSellerIds(disabledSellerIds);
-  appendStatus(`Re-optimizing with ${disabledSellerIds.length} disabled seller${disabledSellerIds.length === 1 ? '' : 's'}.`, 'good');
-  await submitOptimizationRequest(DEFAULT_OPTIMIZER_API_URL, { payloadOverride: payload });
+  await submitOptimizationRequest(DEFAULT_OPTIMIZER_API_URL, {
+    payloadOverride: payload,
+    kickoffMessage: `Re-optimizing with ${disabledSellerIds.length} disabled seller${disabledSellerIds.length === 1 ? '' : 's'}.`,
+  });
 }
 
 postFillSellerListEl?.addEventListener('change', () => {

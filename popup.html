@@ -924,6 +924,69 @@
       display: none;
     }
 
+    .status-pill.is-optimal,
+    .status-pill.is-feasible {
+      position: relative;
+      overflow: hidden;
+      border-width: 1px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+      animation: result-pill-glow 1.8s ease-in-out infinite;
+    }
+
+    .status-pill.is-optimal {
+      border-color: rgba(52, 211, 153, 0.45);
+      background: linear-gradient(135deg, rgba(12, 62, 45, 0.96), rgba(20, 112, 82, 0.9));
+      color: #ecfff7;
+    }
+
+    .status-pill.is-optimal::before {
+      background: #6ee7b7;
+      box-shadow: 0 0 0 6px rgba(52, 211, 153, 0.2);
+    }
+
+    .status-pill.is-feasible {
+      border-color: rgba(245, 158, 11, 0.45);
+      background: linear-gradient(135deg, rgba(101, 55, 8, 0.96), rgba(180, 95, 10, 0.88));
+      color: #fff5df;
+    }
+
+    .status-pill.is-feasible::before {
+      background: #fbbf24;
+      box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.18);
+    }
+
+    .status-pill.is-optimal::after,
+    .status-pill.is-feasible::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.08) 45%, transparent 70%);
+      transform: translateX(-130%);
+      animation: result-pill-sheen 2.6s linear infinite;
+      pointer-events: none;
+    }
+
+    @keyframes result-pill-glow {
+      0%,
+      100% {
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+      }
+
+      50% {
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22), 0 0 0 4px rgba(255, 255, 255, 0.04);
+      }
+    }
+
+    @keyframes result-pill-sheen {
+      from {
+        transform: translateX(-130%);
+      }
+
+      to {
+        transform: translateX(130%);
+      }
+    }
+
     .panel-header {
       display: flex;
       justify-content: space-between;
@@ -1202,7 +1265,7 @@
         <div class="hero-action-row hero-support-row">
           <button id="heroDonateButton" type="button" class="hero-support-button">Donate via PayPal</button>
           <button id="heroBankDonateButton" type="button" class="hero-support-button">Donate via Ideal</button>
-          <p class="hero-action-note">Donations help me convince my wife I need to maintain this app. I need to cover cloud costs at least!</p>
+          <p class="hero-action-note">Donations help me convince my wife I need to maintain this app, plus it helps cover cloud costs.</p>
         </div>
       </div>
     </section>
@@ -1384,6 +1447,7 @@
               <span id="mainCartSummaryTotalItems" class="summary-value">-</span>
             </div>
           </div>
+          <p id="optimizationResultPill" class="status-pill" hidden></p>
           <p id="refillWarning" class="inline-notice bad" hidden>Your shopping cart is not empty.</p>
           <p id="fillCartPostingPill" class="status-pill" hidden>Posting items to cart</p>
           <div id="fillCartSuccessCard" class="step-card" hidden>
@@ -1395,6 +1459,7 @@
             </div>
           </div>
           <div class="actions">
+            <button id="fillCartReoptimize" class="secondary mini-button" type="button" hidden>Re-optimize</button>
             <button id="fillCart" class="secondary mini-button" disabled>Fill cart</button>
           </div>
         </div>

@@ -123,9 +123,6 @@ async function warmOptimizerApi(endpoint, { reason = '', force = false } = {}) {
   }
   lastOptimizerWarmupAt = now;
 
-  const reasonSuffix = reason ? ` (${reason})` : '';
-  appendStatus(`Warming optimizer API${reasonSuffix}.`);
-
   try {
     const response = await fetch(healthUrl, {
       method: 'GET',
@@ -146,7 +143,40 @@ async function warmOptimizerApi(endpoint, { reason = '', force = false } = {}) {
   }
 }
 
-async function submitOptimizationRequest(endpoint, { payloadOverride = null } = {}) {
+function setOptimizationRequestStage(stage, requestPayload) {
+  if (stage === 'warmup') {
+    setStepActivity({
+      kind: 'optimizer-request',
+      label: 'Warming optimizer API.',
+      detail: 'Sending health check request before posting optimization payload.',
+      indeterminate: true,
+    });
+    startRun('Warming optimizer API before optimization request...');
+    appendStatus('Warming optimizer API.');
+    return;
+  }
+
+  if (stage === 'posting') {
+    setStepActivity({
+      kind: 'optimizer-request',
+      label: 'Posting payload to optimizer API.',
+      detail: `Sending ${requestPayload.items.length} items, ${requestPayload.sellers.length} sellers, and ${requestPayload.offers.length} offers to optimizer.`,
+      indeterminate: true,
+    });
+    startRun('Sending payload to optimizer API...');
+    appendStatus('Posting payload to optimizer API.');
+    return;
+  }
+
+  setStepActivity({
+    kind: 'optimizer-request',
+    label: 'Optimizer request sent. Waiting for reply.',
+    detail: 'Solver is evaluating item price and shipping tradeoffs.',
+    indeterminate: true,
+  });
+}
+
+async function submitOptimizationRequest(endpoint, { payloadOverride = null, kickoffMessage = '', kickoffTone = 'good' } = {}) {
   const requestPayload = await buildOptimizationRequestPayload(payloadOverride || latestExtractPayload);
 
   if (!requestPayload) {
@@ -173,26 +203,21 @@ async function submitOptimizationRequest(endpoint, { payloadOverride = null } = 
   syncOptimizerApiUrlInput();
   await saveSellerSettings();
 
+  if (typeof revealOptimizationActivityUi === 'function') {
+    revealOptimizationActivityUi();
+  }
+
+  if (kickoffMessage) {
+    appendStatus(kickoffMessage, kickoffTone);
+  }
+
   startRun('Waiting for optimizer reply...');
   setBusy(true);
   try {
-    setStepActivity({
-      kind: 'optimizer-request',
-      label: 'Warming optimizer API.',
-      detail: 'Sending health check request before posting optimization payload.',
-      indeterminate: true,
-    });
-    startRun('Warming optimizer API before optimization request...');
+    setOptimizationRequestStage('warmup', requestPayload);
     await warmOptimizerApi(endpoint, { reason: 'before optimize', force: true });
-    startRun('Sending payload to optimizer API...');
     const requestBody = JSON.stringify(requestPayload);
-    setStepActivity({
-      kind: 'optimizer-request',
-      label: 'Posting payload to optimizer API.',
-      detail: `Sending ${requestPayload.items.length} items, ${requestPayload.sellers.length} sellers, and ${requestPayload.offers.length} offers to optimizer.`,
-      indeterminate: true,
-    });
-    appendStatus('Posting optimizer payload to optimizer.');
+    setOptimizationRequestStage('posting', requestPayload);
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -201,12 +226,7 @@ async function submitOptimizationRequest(endpoint, { payloadOverride = null } = 
       body: requestBody,
     });
 
-    setStepActivity({
-      kind: 'optimizer-request',
-      label: 'Optimizer request sent. Waiting for reply.',
-      detail: 'Solver is evaluating item price and shipping tradeoffs.',
-      indeterminate: true,
-    });
+    setOptimizationRequestStage('waiting', requestPayload);
 
     let responseText = '';
     let responseBody = null;
