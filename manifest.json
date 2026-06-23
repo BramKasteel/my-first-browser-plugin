@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Cardmarket Optimizer",
-  "version": "0.0.0.1",
-  "description": "Order you wanted cards for the lowest possible price: this plugin computes the optimal order for you.",
+  "version": "0.1.0.2",
+  "description": "Save some money on your next Magic cards: this plugin computes the optimal order for you.",
   "permissions": ["scripting", "tabs", "storage"],
   "host_permissions": [
     "https://cardmarket.com/*",
