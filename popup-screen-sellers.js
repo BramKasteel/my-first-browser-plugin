@@ -122,6 +122,9 @@ function renderSellerCountryFilterList(selectedCountries = DEFAULT_SELLER_COUNTR
 
   if (sellerCountryFilterInputEl) {
     sellerCountryFilterInputEl.disabled = isPickerDisabled || maxCountriesReached;
+    sellerCountryFilterInputEl.placeholder = maxCountriesReached
+      ? "Two seller countries is the max."
+      : 'Type seller country, ex. Ger';
     sellerCountryFilterInputEl.setAttribute('aria-expanded', String(!hideOtherCountries));
   }
   sellerLocationFilterListEl.hidden = hideOtherCountries;

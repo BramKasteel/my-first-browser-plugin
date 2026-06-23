@@ -406,7 +406,7 @@ function renderPostFillTotalsSummary() {
   if (postFillTotalsState.isLoading) {
     postFillTotalsHintEl.textContent = 'Loading Cardmarket total order price from ShoppingCart...';
   } else {
-    postFillTotalsHintEl.textContent = 'Large differences are often because: either your shopping cart contained previous items, or a seller uses non-standard delivery fees. Here you can disable sellers that ship too expensive, and optimize again.';
+    postFillTotalsHintEl.textContent = 'Large differences are often because: either your shopping cart contained previous items, or a seller uses non-standard delivery fees. Here you can disable sellers that ship expensively, and optimize again.';
   }
 }
 

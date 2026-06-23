@@ -624,6 +624,7 @@ test.describe('Want list scraping flow', () => {
   await expect(popupPage.locator('#scrapeAllItems')).toBeEnabled();
     await selectSellerCountry(popupPage, 'Netherlands');
     await waitForSelectedCountries(popupPage, ['Germany', 'Netherlands']);
+    await expect(popupPage.locator('#sellerCountryFilterInput')).toHaveAttribute('placeholder', "Two seller countries selected, that's the max.");
     await expect(popupPage.locator('#sellerLocationFilterList')).toBeHidden();
 
     await selectWantListAndWaitForLoad(popupPage, {
@@ -662,6 +663,7 @@ test.describe('Want list scraping flow', () => {
     await expect(popupPage.locator('#sellerCountryFilterInput')).toBeEnabled();
     await selectSellerCountry(popupPage, 'Netherlands');
     await waitForSelectedCountries(popupPage, ['Germany', 'Netherlands']);
+    await expect(popupPage.locator('#sellerCountryFilterInput')).toHaveAttribute('placeholder', "Two seller countries selected, that's the max.");
     await expect(popupPage.locator('#sellerCountryFilterInput')).toBeDisabled();
 
     await selectWantListAndWaitForLoad(popupPage, {
