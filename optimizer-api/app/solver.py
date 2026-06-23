@@ -28,6 +28,8 @@ MISSING_ROUTE_DATA_PENALTY_CENTS = 10_000
 MAX_TIME_SECONDS = 15
 SOLVER_ABSOLUTE_GAP_LIMIT = 10
 SOLVER_NUM_SEARCH_WORKERS = 8
+SOLVER_LINEARIZATION_LEVEL = 2
+SOLVER_PROBING_LEVEL = 2
 MAX_OFFERS_PER_ITEM = 150
 
 
@@ -63,6 +65,8 @@ def _new_solver(
         solver.parameters.random_seed = random_seed
     solver.parameters.absolute_gap_limit = SOLVER_ABSOLUTE_GAP_LIMIT
     solver.parameters.num_search_workers = SOLVER_NUM_SEARCH_WORKERS
+    solver.parameters.linearization_level = SOLVER_LINEARIZATION_LEVEL
+    solver.parameters.cp_model_probing_level = SOLVER_PROBING_LEVEL
     solver.parameters.log_search_progress = True
     if log_callback is not None:
         solver.log_callback = log_callback
@@ -259,11 +263,16 @@ def _solve_exact_shipping_order(
     seller_unit_upper_bounds = {}
 
     seller_offers = defaultdict(list)
+    offers_by_item = defaultdict(list)
+    offer_capped_quantity = {}
     for offer in usable_offers:
         seller_offers[offer.seller_id].append(offer)
+        offers_by_item[offer.item_id].append(offer)
+        capped_quantity = _capped_offer_quantity(offer, item_map)
+        offer_capped_quantity[offer.offer_id] = capped_quantity
         offer_vars[offer.offer_id] = _new_quantity_var(
             model,
-            upper_bound=_capped_offer_quantity(offer, item_map),
+            upper_bound=capped_quantity,
             name=f"qty_{offer.offer_id}",
         )
 
@@ -343,14 +352,15 @@ def _solve_exact_shipping_order(
         seller_tier_candidates[seller_id] = tier_candidates
 
     for item in request.items:
-        model.Add(
-            sum(
-                offer_vars[offer.offer_id]
-                for offer in usable_offers
-                if offer.item_id == item.item_id
-            )
-            == item.quantity
-        )
+        item_offer_vars = [
+            offer_vars[offer.offer_id] for offer in offers_by_item[item.item_id]
+        ]
+        if item.quantity == 1:
+            # All offers for a unit-demand item are booleans, so exactly-one is
+            # a tighter, natively-propagated form than a linear equality.
+            model.AddExactlyOne(item_offer_vars)
+        else:
+            model.Add(sum(item_offer_vars) == item.quantity)
 
     objective_terms = [
         offer.unit_price_cents * offer_vars[offer.offer_id] for offer in usable_offers
@@ -418,7 +428,13 @@ def _solve_exact_shipping_order(
 
         # When seller is inactive, every quantity for seller must be zero.
         for offer in offers:
-            model.Add(offer_vars[offer.offer_id] == 0).OnlyEnforceIf(inactive_literals)
+            offer_var = offer_vars[offer.offer_id]
+            if offer_capped_quantity[offer.offer_id] == 1:
+                # Boolean offer: a binary implication propagates in the SAT core
+                # far more cheaply than a reified linear indicator.
+                model.AddImplication(offer_var, active)
+            else:
+                model.Add(offer_var == 0).OnlyEnforceIf(inactive_literals)
 
         # Any active seller choice must buy at least one unit.
         if seller_id in seller_shipping_tier_choice_vars:
