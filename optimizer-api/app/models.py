@@ -140,6 +140,15 @@ class OptimizationRequest(BaseModel):
     def item_map(self) -> dict[BoundedId, WantedItem]:
         return {item.item_id: item for item in self.items}
 
+    def offers_from_enabled_sellers(self) -> list[Offer]:
+        blocked_seller_ids = set(self.preferences.blocked_seller_ids)
+        if not blocked_seller_ids:
+            return self.offers
+
+        return [
+            offer for offer in self.offers if offer.seller_id not in blocked_seller_ids
+        ]
+
     @model_validator(mode="after")
     def validate_references(self) -> "OptimizationRequest":
         duplicate_item_ids = _find_duplicates([item.item_id for item in self.items])
