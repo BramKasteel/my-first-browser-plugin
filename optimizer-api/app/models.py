@@ -131,7 +131,11 @@ class OptimizationRequest(BaseModel):
     )
 
     def seller_map(self) -> dict[BoundedId, Seller]:
-        return {seller.seller_id: seller for seller in self.sellers}
+        return {
+            seller.seller_id: seller
+            for seller in self.sellers
+            if seller.seller_id not in set(self.preferences.blocked_seller_ids)
+        }
 
     def item_map(self) -> dict[BoundedId, WantedItem]:
         return {item.item_id: item for item in self.items}

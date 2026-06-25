@@ -534,18 +534,6 @@ def _prune_top_offers_per_item_by_price(offers: list[Offer]) -> list[Offer]:
     return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
 
 
-def _filtered_seller_map(request: OptimizationRequest) -> dict[str, object]:
-    blocked_seller_ids = set(request.preferences.blocked_seller_ids)
-    if not blocked_seller_ids:
-        return request.seller_map()
-
-    return {
-        seller_id: seller
-        for seller_id, seller in request.seller_map().items()
-        if seller_id not in blocked_seller_ids
-    }
-
-
 def _filtered_request_offers(request: OptimizationRequest) -> list[Offer]:
     blocked_seller_ids = set(request.preferences.blocked_seller_ids)
     if not blocked_seller_ids:
@@ -583,7 +571,7 @@ def _previous_offer_quantities(
 
 
 def prune_all(request: OptimizationRequest):
-    seller_map = _filtered_seller_map(request)
+    seller_map = request.seller_map()
     item_map = request.item_map()
     candidate_offers = _filtered_request_offers(request)
 
@@ -613,7 +601,7 @@ def optimize_order(
 ) -> OptimizationResponse:
     usable_offers = prune_all(request)
     item_map = request.item_map()
-    seller_map = _filtered_seller_map(request)
+    seller_map = request.seller_map()
     previous_offer_quantities = _previous_offer_quantities(
         request=request,
         usable_offers=usable_offers,
