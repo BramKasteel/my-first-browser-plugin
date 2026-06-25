@@ -17,7 +17,6 @@ from app.shipping import (
 from app.solver import (
     MAX_OFFERS_PER_ITEM,
     MISSING_ROUTE_DATA_PENALTY_CENTS,
-    _item_offer_price_stats,
     _prune_dominated_offers_per_seller,
     _prune_expensive_country_offers,
     _prune_small_nonbest_sellers,
@@ -601,54 +600,6 @@ def test_prune_dominated_offers_keeps_all_options_when_wanted_quantity_exceeds_b
     assert [offer.offer_id for offer in pruned] == ["offer-1", "offer-2"]
 
 
-def test_item_offer_price_stats_computes_min_and_median_per_item() -> None:
-    offers = [
-        Offer(
-            offer_id="offer-1",
-            item_id="item-1",
-            seller_id="seller-1",
-            unit_price=1.0,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-2",
-            item_id="item-1",
-            seller_id="seller-2",
-            unit_price=3.0,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-3",
-            item_id="item-1",
-            seller_id="seller-3",
-            unit_price=5.0,
-            available_quantity=1,
-        ),
-        Offer(
-            offer_id="offer-4",
-            item_id="item-2",
-            seller_id="seller-4",
-            unit_price=2.5,
-            available_quantity=1,
-        ),
-    ]
-
-    stats = _item_offer_price_stats(offers)
-
-    assert stats["item-1"] == {
-        "offer_count": 3,
-        "min_unit_price": 1.0,
-        "min_unit_price_cents": 100,
-        "median_unit_price": 3.0,
-    }
-    assert stats["item-2"] == {
-        "offer_count": 1,
-        "min_unit_price": 2.5,
-        "min_unit_price_cents": 250,
-        "median_unit_price": 2.5,
-    }
-
-
 def test_prune_expensive_country_offers_drops_same_country_prices_above_threshold() -> (
     None
 ):
@@ -823,10 +774,14 @@ def test_prune_small_nonbest_sellers_drops_seller_with_three_or_fewer_items() ->
     ]
 
 
-def test_prune_small_nonbest_sellers_keeps_small_seller_with_best_price_offer_in_country() -> None:
+def test_prune_small_nonbest_sellers_keeps_small_seller_with_best_price_offer_in_country() -> (
+    None
+):
     seller_map = {
         "seller-1": Seller(seller_id="seller-1", name="Seller 1", country="Germany"),
-        "seller-2": Seller(seller_id="seller-2", name="Seller 2", country="Netherlands"),
+        "seller-2": Seller(
+            seller_id="seller-2", name="Seller 2", country="Netherlands"
+        ),
         "seller-3": Seller(seller_id="seller-3", name="Seller 3", country="Germany"),
     }
     item_map = {
@@ -900,11 +855,11 @@ def test_optimize_constrains_nl_seller_in_dead_zone_to_tier_0_max(
     monkeypatch,
 ) -> None:
     """Test that a NL→NL seller with qty in dead zone (5–7 cards) is constrained to tier-0-max (4 cards).
-    
+
     Tier-0: 4 cards @ €1.70 = €0.425/card
     Tier-1: 8 cards @ €3.10 = €0.3875/card
     Dead zone: 5–7 cards (cost/card > €0.425)
-    
+
     Seller offers 7 items, cost €15 (< €25 limit) → seller in dead zone → optimizer should buy max 4 cards.
     """
     route_book = ShippingRouteBook(
@@ -946,11 +901,11 @@ def test_optimize_constrains_nl_seller_in_dead_zone_to_tier_0_max(
 
 def test_optimize_constrains_de_to_nl_seller_in_dead_zone(monkeypatch) -> None:
     """Test DE→NL seller in dead zone with larger tier bounds.
-    
+
     Tier-0: 10 cards @ €2.50 = €0.25/card
     Tier-1: 20 cards @ €3.50 = €0.175/card
     Dead zone: 11–13 cards (cost/card > €0.25 at qty 11–13)
-    
+
     Seller offers 12 items, cost €20 → in dead zone → optimizer should buy max 10 cards.
     """
     route_book = ShippingRouteBook(
@@ -992,11 +947,11 @@ def test_optimize_constrains_de_to_nl_seller_in_dead_zone(monkeypatch) -> None:
 
 def test_optimize_mixes_constrained_and_unconstrained_sellers(monkeypatch) -> None:
     """Test that only sellers in dead zones are constrained, others use all tiers.
-    
+
     Two sellers on NL→NL:
     - Seller 1 (in dead zone): offers 6 items → constrained to 4
     - Seller 2 (not in dead zone): offers 2 items → no constraint, all tiers available
-    
+
     Buyer needs 8 cards total. Should buy 4 from seller-1, 4 from seller-2.
     """
     route_book = ShippingRouteBook(
@@ -1015,7 +970,9 @@ def test_optimize_mixes_constrained_and_unconstrained_sellers(monkeypatch) -> No
         buyer_country="Netherlands",
         items=[WantedItem(item_id="item-1", name="Card", quantity=8)],
         sellers=[
-            Seller(seller_id="seller-1", name="Dead Zone Seller", country="Netherlands"),
+            Seller(
+                seller_id="seller-1", name="Dead Zone Seller", country="Netherlands"
+            ),
             Seller(seller_id="seller-2", name="Normal Seller", country="Netherlands"),
         ],
         offers=[
@@ -1028,7 +985,8 @@ def test_optimize_mixes_constrained_and_unconstrained_sellers(monkeypatch) -> No
                 available_quantity=1,
             )
             for i in range(1, 7)
-        ] + [
+        ]
+        + [
             # Seller 2: offers 4 items (not in dead zone), slightly more expensive
             Offer(
                 offer_id=f"offer-2-{i}",
@@ -1086,9 +1044,7 @@ def test_optimize_dead_zone_uses_cheapest_tier_when_route_tiers_unsorted(
     request = OptimizationRequest(
         buyer_country="Netherlands",
         items=[WantedItem(item_id="item-1", name="Card", quantity=6)],
-        sellers=[
-            Seller(seller_id="seller-1", name="NL Seller", country="Netherlands")
-        ],
+        sellers=[Seller(seller_id="seller-1", name="NL Seller", country="Netherlands")],
         offers=[
             Offer(
                 offer_id=f"offer-{i}",
@@ -1136,7 +1092,7 @@ def test_optimize_no_constraint_when_seller_cost_exceeds_tier_0_value_limit(
     monkeypatch,
 ) -> None:
     """Test that no dead zone constraint is applied when seller cost exceeds tier-0 value limit.
-    
+
     Even though qty is in dead zone, if items cost more than tier-0 max value,
     tier-0 can't be used anyway, so no constraint applies.
     """

@@ -5,7 +5,6 @@ import random
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from statistics import median
 from typing import Callable
 
 from ortools.sat.python import cp_model
@@ -89,27 +88,6 @@ def _offer_prune_rank(offer: Offer) -> tuple[float, int, str]:
         -offer.available_quantity,
         offer.offer_id,
     )
-
-
-def _item_offer_price_stats(
-    offers: list[Offer],
-) -> dict[str, dict[str, float | int]]:
-    offers_by_item: dict[str, list[Offer]] = defaultdict(list)
-    for offer in offers:
-        offers_by_item[offer.item_id].append(offer)
-
-    stats_by_item: dict[str, dict[str, float | int]] = {}
-    for item_id, item_offers in offers_by_item.items():
-        prices = sorted(offer.unit_price for offer in item_offers)
-        price_cents = sorted(offer.unit_price_cents for offer in item_offers)
-        stats_by_item[item_id] = {
-            "offer_count": len(item_offers),
-            "min_unit_price": prices[0],
-            "min_unit_price_cents": price_cents[0],
-            "median_unit_price": float(median(prices)),
-        }
-
-    return stats_by_item
 
 
 def _selected_offer_price_ranks(
@@ -407,14 +385,12 @@ def _solve_exact_shipping_order(
             )
             continue
 
-        raise ValueError('No tier for seller')
+        raise ValueError("No tier for seller")
 
     for seller_id, offers in seller_offers.items():
         active = seller_active_vars[seller_id]
         inactive_literals = seller_inactive_literals[seller_id]
-        total_units = sum(
-            offer_vars[offer.offer_id] for offer in offers
-        )
+        total_units = sum(offer_vars[offer.offer_id] for offer in offers)
 
         # When seller is inactive, every quantity for seller must be zero.
         for offer in offers:
@@ -518,7 +494,6 @@ def _prune_expensive_country_offers(
     buyer_country: str,
     route_book: shipping.ShippingRouteBook,
 ) -> list[Offer]:
-    _ = _item_offer_price_stats(offers)
 
     offers_by_bucket: dict[tuple[str, str], list[Offer]] = defaultdict(list)
     for offer in offers:
@@ -737,7 +712,9 @@ def optimize_order(
                 unit_price=offer.unit_price,
                 line_total=_from_cents(line_total),
                 price_rank=selected_offer_ranks.get(offer.offer_id, (None, None))[0],
-                price_rank_total=selected_offer_ranks.get(offer.offer_id, (None, None))[1],
+                price_rank_total=selected_offer_ranks.get(offer.offer_id, (None, None))[
+                    1
+                ],
                 condition=offer.condition,
                 language=offer.language,
             )
