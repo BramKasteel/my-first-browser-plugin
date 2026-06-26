@@ -262,6 +262,20 @@ function normalizeSellerRequestBaseUrl(urlValue, originValue = 'https://cardmark
   return url;
 }
 
+function getCardmarketMinConditionId(value) {
+  const normalized = normalizeCardCondition(value);
+  const ids = {
+    MT: '1',
+    NM: '2',
+    EX: '3',
+    GD: '4',
+    LP: '5',
+    PL: '6',
+    PO: '7',
+  };
+  return ids[normalized] || '';
+}
+
 function buildSellerRequestUrl(urlValue, activeFilters = {}, originValue = 'https://cardmarket.com') {
   const url = normalizeSellerRequestBaseUrl(urlValue, originValue);
   if (activeFilters.expansionIds) {
@@ -269,6 +283,9 @@ function buildSellerRequestUrl(urlValue, activeFilters = {}, originValue = 'http
   }
   if (activeFilters.languageId) {
     url.searchParams.set('language', activeFilters.languageId);
+  }
+  if (activeFilters.minConditionId) {
+    url.searchParams.set('minCondition', activeFilters.minConditionId);
   }
   if (activeFilters.isFoil != null) {
     url.searchParams.set('isFoil', activeFilters.isFoil ? 'Y' : 'N');
@@ -583,8 +600,10 @@ async function executeSellerScopeScrape({
   onScopeStart,
 }) {
   const requestIsFoil = typeof item?.isFoil === 'boolean' ? item.isFoil : null;
+  const requestMinConditionId = getCardmarketMinConditionId(item?.minCondition);
   const requestFilters = {
     languageId: requestLanguageId,
+    minConditionId: requestMinConditionId,
     isFoil: requestIsFoil,
     expansionIds,
     sellerCountryIds,
@@ -610,6 +629,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, onScope
 
   const requestLanguageId = getCardmarketLanguageId(getSingleItemLanguage(item));
   const requestIsFoil = typeof item?.isFoil === 'boolean' ? item.isFoil : null;
+  const requestMinConditionId = getCardmarketMinConditionId(item?.minCondition);
   const requestCountryIds = getCardmarketCountryIdsFromCountries(getSelectedSellerCountries());
   const sellerReputationId = getCardmarketSellerReputationId(sellerReputationFilterEl.value);
   const maxShippingTimeId = getCardmarketMaxShippingTimeId(sellerDeliveryTimeFilterEl.value);
@@ -617,6 +637,7 @@ async function scrapeWantItemSellerData({ requestContext, item, delayMs, onScope
   const maxSellerPages = getSellerPagesPerCountry();
   const baseRequestFilters = {
     languageId: requestLanguageId,
+    minConditionId: requestMinConditionId,
     isFoil: requestIsFoil,
     sellerCountryIds: requestCountryIds,
     sellerReputationId,

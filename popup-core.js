@@ -1076,6 +1076,7 @@ function normalizeCardCondition(value) {
   const normalized = textOf(value).toLowerCase();
   if (!normalized) return '';
   if (/near mint|nm/.test(normalized)) return 'NM';
+  if (/^mint$|^mt$/.test(normalized)) return 'MT';
   if (/excellent|ex/.test(normalized)) return 'EX';
   if (/good|gd/.test(normalized)) return 'GD';
   if (/light played|lp/.test(normalized)) return 'LP';
