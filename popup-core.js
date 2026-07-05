@@ -74,6 +74,8 @@ const postFillTotalDifferenceEl = document.getElementById('postFillTotalDifferen
 const postFillTotalsHintEl = document.getElementById('postFillTotalsHint');
 const heroFeedbackButton = document.getElementById('heroFeedbackButton');
 const heroFeedbackRevealEl = document.getElementById('heroFeedbackReveal');
+const heroFeedbackRevealRowEl = document.getElementById('heroFeedbackRevealRow');
+const heroFeedbackCopyButton = document.getElementById('heroFeedbackCopyButton');
 const heroDonateButton = document.getElementById('heroDonateButton');
 const heroBankDonateButton = document.getElementById('heroBankDonateButton');
 

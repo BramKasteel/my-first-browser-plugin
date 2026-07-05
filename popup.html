@@ -137,7 +137,22 @@
       overflow-wrap: anywhere;
     }
 
+    .hero-feedback-reveal-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .hero-feedback-copy-button {
+      padding: 8px 11px;
+    }
+
     .hero-feedback-reveal[hidden] {
+      display: none;
+    }
+
+    .hero-feedback-reveal-row[hidden] {
       display: none;
     }
 
@@ -1260,7 +1275,10 @@
           <button id="heroFeedbackButton" type="button" class="hero-support-button">Send feedback</button>
           <p class="hero-action-note">We are in Beta: always double-check your cart items and final price.<br>Found a bug or have an idea? I would be very happy to learn!</p>
         </div>
-        <p id="heroFeedbackReveal" class="hero-feedback-reveal" hidden></p>
+        <div id="heroFeedbackRevealRow" class="hero-feedback-reveal-row" hidden>
+          <p id="heroFeedbackReveal" class="hero-feedback-reveal"></p>
+          <button id="heroFeedbackCopyButton" type="button" class="hero-support-button hero-feedback-copy-button">Copy</button>
+        </div>
         <div class="hero-action-row hero-support-row">
           <button id="heroDonateButton" type="button" class="hero-support-button">Donate via PayPal</button>
           <button id="heroBankDonateButton" type="button" class="hero-support-button">Donate via Ideal</button>

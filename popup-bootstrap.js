@@ -1,9 +1,33 @@
 extractItemsButton.addEventListener('click', handleExtractItems);
+
+let feedbackCopyResetTimer = null;
+
+function copyTextToClipboard(value) {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(value);
+  }
+
+  const textArea = document.createElement('textarea');
+  textArea.value = value;
+  textArea.setAttribute('readonly', '');
+  textArea.style.position = 'absolute';
+  textArea.style.left = '-9999px';
+  document.body.appendChild(textArea);
+  textArea.select();
+
+  try {
+    const didCopy = document.execCommand('copy');
+    if (!didCopy) {
+      throw new Error('Clipboard unavailable');
+    }
+    return Promise.resolve();
+  } finally {
+    textArea.remove();
+  }
+}
+
 heroFeedbackButton?.addEventListener('click', () => {
-  const codes = Array.isArray(window.APP_CONFIG?.feedbackEmailCharCodes)
-    ? window.APP_CONFIG.feedbackEmailCharCodes
-    : [];
-  const emailAddress = codes.map((code) => String.fromCharCode(code)).join('');
+  const emailAddress = textOf(window.APP_CONFIG?.feedbackEmail);
   if (!emailAddress) {
     appendStatus('Feedback address missing from config.', 'bad');
     return;
@@ -11,13 +35,40 @@ heroFeedbackButton?.addEventListener('click', () => {
 
   if (heroFeedbackRevealEl) {
     heroFeedbackRevealEl.textContent = emailAddress;
-    heroFeedbackRevealEl.hidden = false;
+    heroFeedbackRevealRowEl ? heroFeedbackRevealRowEl.hidden = false : heroFeedbackRevealEl.hidden = false;
     heroFeedbackButton.hidden = true;
     appendStatus('Feedback address revealed in popup.', 'good');
     return;
   }
 
   appendStatus('Feedback address available: ' + emailAddress, 'good');
+});
+heroFeedbackCopyButton?.addEventListener('click', () => {
+  const emailAddress = textOf(window.APP_CONFIG?.feedbackEmail);
+  if (!emailAddress) {
+    appendStatus('Feedback address missing from config.', 'bad');
+    return;
+  }
+
+  copyTextToClipboard(emailAddress)
+    .then(() => {
+      if (heroFeedbackCopyButton) {
+        heroFeedbackCopyButton.textContent = '✓ Copied';
+        heroFeedbackCopyButton.disabled = true;
+        if (feedbackCopyResetTimer) {
+          clearTimeout(feedbackCopyResetTimer);
+        }
+        feedbackCopyResetTimer = window.setTimeout(() => {
+          heroFeedbackCopyButton.textContent = 'Copy';
+          heroFeedbackCopyButton.disabled = false;
+          feedbackCopyResetTimer = null;
+        }, 2000);
+      }
+      appendStatus('Feedback address copied to clipboard.', 'good');
+    })
+    .catch(() => {
+      appendStatus('Could not copy feedback address.', 'bad');
+    });
 });
 heroDonateButton?.addEventListener('click', () => {
   const donationUrl = textOf(window.APP_CONFIG?.donationUrl);
