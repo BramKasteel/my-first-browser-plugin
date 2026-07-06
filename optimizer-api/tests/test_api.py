@@ -16,6 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_REQUESTS_DIR = ROOT / "tests" / "fixtures" / "requests"
 
 EXPECTED_FIXTURE_RESULTS = {
+    "igor_peasant": {
+        "allowed_statuses": {"optimal", "feasible"},
+    },
     "ob_nixilis_improvements": {
         "allowed_statuses": {"optimal", "feasible"},
         "grand_total": 15.17,
@@ -92,21 +95,12 @@ def test_pruning_sellers_with_single_item(fixture_path: Path) -> None:
     request = OptimizationRequest.model_validate(payload)
 
     usable_offers = prune_all(request=request)
-    inspect = defaultdict(lambda: defaultdict(int))
+    inspect = defaultdict(int)
     for offer in usable_offers:
-        inspect[offer.seller_id][offer.item_id] += offer.available_quantity
+        inspect[offer.item_id] += offer.available_quantity
 
     for wanted_item in request.items:
-        if wanted_item.quantity == 1:
-            n_single_item_sellers = sum(
-                [
-                    1
-                    for seller, items in inspect.items()
-                    if len(items) == 1 and items[wanted_item.item_id] > 0
-                ]
-            )
-
-            assert n_single_item_sellers <= 1
+        assert inspect[wanted_item.item_id] >= wanted_item.quantity
 
 
 @pytest.mark.parametrize(

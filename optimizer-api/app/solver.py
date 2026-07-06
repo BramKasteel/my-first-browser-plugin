@@ -407,14 +407,12 @@ def _solve_exact_shipping_order(
             )
             continue
 
-        raise ValueError('No tier for seller')
+        raise ValueError("No tier for seller")
 
     for seller_id, offers in seller_offers.items():
         active = seller_active_vars[seller_id]
         inactive_literals = seller_inactive_literals[seller_id]
-        total_units = sum(
-            offer_vars[offer.offer_id] for offer in offers
-        )
+        total_units = sum(offer_vars[offer.offer_id] for offer in offers)
 
         # When seller is inactive, every quantity for seller must be zero.
         for offer in offers:
@@ -474,46 +472,28 @@ def _prune_dominated_offers_per_seller(
     return [offer for offer in offers if offer.offer_id in chosen_offer_ids]
 
 
-def _prune_small_nonbest_sellers(
+def _threshold_offer_for_required_quantity(
+    bucket_offers: list[Offer],
     *,
-    offers: list[Offer],
-    item_map: dict[str, WantedItem],
-    seller_map: dict[str, object],
-) -> list[Offer]:
-    seller_item_ids: dict[str, set[str]] = defaultdict(set)
-    best_price_by_item_country: dict[tuple[str, str], int] = {}
+    requested_quantity: int,
+) -> Offer:
+    capped_sorted_offers = sorted(bucket_offers, key=_offer_prune_rank)
 
-    for offer in offers:
-        if offer.item_id not in item_map:
-            continue
-        seller_item_ids[offer.seller_id].add(offer.item_id)
-        seller_country = seller_map[offer.seller_id].country
-        bucket = (offer.item_id, seller_country)
-        current_best = best_price_by_item_country.get(bucket)
-        if current_best is None or offer.unit_price_cents < current_best:
-            best_price_by_item_country[bucket] = offer.unit_price_cents
+    covered_quantity = 0
+    threshold_offer = capped_sorted_offers[-1]
+    for offer in capped_sorted_offers:
+        covered_quantity += min(offer.available_quantity, requested_quantity)
+        threshold_offer = offer
+        if covered_quantity >= requested_quantity:
+            break
 
-    seller_has_best_price_offer: set[str] = set()
-    for offer in offers:
-        if offer.item_id not in item_map:
-            continue
-        seller_country = seller_map[offer.seller_id].country
-        bucket = (offer.item_id, seller_country)
-        if offer.unit_price_cents == best_price_by_item_country.get(bucket):
-            seller_has_best_price_offer.add(offer.seller_id)
-
-    drop_seller_ids = {
-        seller_id
-        for seller_id, item_ids in seller_item_ids.items()
-        if len(item_ids) <= 3 and seller_id not in seller_has_best_price_offer
-    }
-
-    return [offer for offer in offers if offer.seller_id not in drop_seller_ids]
+    return threshold_offer
 
 
 def _prune_expensive_country_offers(
     *,
     offers: list[Offer],
+    item_map: dict[str, WantedItem],
     seller_map: dict[str, object],
     buyer_country: str,
     route_book: shipping.ShippingRouteBook,
@@ -526,19 +506,22 @@ def _prune_expensive_country_offers(
         offers_by_bucket[(offer.item_id, seller.country)].append(offer)
 
     chosen_offer_ids: set[str] = set()
-    for (_, seller_country), bucket_offers in offers_by_bucket.items():
-        cheapest_offer = min(bucket_offers, key=_offer_prune_rank)
+    for (item_id, seller_country), bucket_offers in offers_by_bucket.items():
+        threshold_offer = _threshold_offer_for_required_quantity(
+            bucket_offers,
+            requested_quantity=item_map[item_id].quantity,
+        )
         shipping_cost_cents = _selection_shipping_cost_cents(
             seller_country=seller_country,
             buyer_country=buyer_country,
-            selections=[(cheapest_offer, 1)],
+            selections=[(threshold_offer, 1)],
             route_book=route_book,
         )
         if shipping_cost_cents is None:
             chosen_offer_ids.update(offer.offer_id for offer in bucket_offers)
             continue
 
-        threshold_cents = cheapest_offer.unit_price_cents + shipping_cost_cents
+        threshold_cents = threshold_offer.unit_price_cents + shipping_cost_cents
         for offer in bucket_offers:
             if offer.unit_price_cents <= threshold_cents:
                 chosen_offer_ids.add(offer.offer_id)
@@ -618,14 +601,10 @@ def prune_all(request: OptimizationRequest):
     route_book = shipping.load_shipping_route_book()
     usable_offers = _prune_expensive_country_offers(
         offers=usable_offers,
+        item_map=item_map,
         seller_map=seller_map,
         buyer_country=request.buyer_country,
         route_book=route_book,
-    )
-    usable_offers = _prune_small_nonbest_sellers(
-        offers=usable_offers,
-        item_map=item_map,
-        seller_map=seller_map,
     )
     return usable_offers
 
@@ -737,7 +716,9 @@ def optimize_order(
                 unit_price=offer.unit_price,
                 line_total=_from_cents(line_total),
                 price_rank=selected_offer_ranks.get(offer.offer_id, (None, None))[0],
-                price_rank_total=selected_offer_ranks.get(offer.offer_id, (None, None))[1],
+                price_rank_total=selected_offer_ranks.get(offer.offer_id, (None, None))[
+                    1
+                ],
                 condition=offer.condition,
                 language=offer.language,
             )
