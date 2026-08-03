@@ -1,5 +1,5 @@
-- If infeasible -- plugin should give message about this and cancel further scraping
-- Change colors
-- Should be able to fill cart again, user might have deleted
 - Create tips bar
 - Backend should set some content -- like tikkie code and tips
+- Permanent payment options
+- Change colors
+- Should be able to fill cart again, user might have deleted

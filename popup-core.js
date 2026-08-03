@@ -69,6 +69,7 @@ const optimizationResultPillEl = document.getElementById('optimizationResultPill
 const fillCartPostingPillEl = document.getElementById('fillCartPostingPill');
 const fillCartSuccessCardEl = document.getElementById('fillCartSuccessCard');
 const fillCartDebugButtonEl = document.getElementById('fillCartDebugButton');
+const fillCartRefillButtonEl = document.getElementById('fillCartRefillButton');
 const postFillSummaryEl = document.getElementById('postFillSummary');
 const postFillSellerListEl = document.getElementById('postFillSellerList');
 const postFillEmptyStateEl = document.getElementById('postFillEmptyState');

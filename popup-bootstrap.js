@@ -114,6 +114,11 @@ fillCartButton.addEventListener('click', handleFillCart);
 fillCartDebugButtonEl?.addEventListener('click', () => {
   setActiveWorkflowStep('post-fill', { force: true });
 });
+fillCartRefillButtonEl?.addEventListener('click', () => {
+  handleFillCart().catch((error) => {
+    appendStatus(error.message, 'bad');
+  });
+});
 postFillReoptimizeButton?.addEventListener('click', () => {
   handlePostFillReoptimize().catch((error) => {
     appendStatus(error.message, 'bad');

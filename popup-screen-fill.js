@@ -123,6 +123,10 @@ function renderFillCartGuardState() {
     fillCartDebugButtonEl.disabled = isUiBusy || !showSuccessCard;
   }
 
+  if (fillCartRefillButtonEl) {
+    fillCartRefillButtonEl.disabled = isUiBusy || !showSuccessCard || !hasCart;
+  }
+
   if (fillCartButton) {
     fillCartButton.hidden = showSuccessCard;
   }
