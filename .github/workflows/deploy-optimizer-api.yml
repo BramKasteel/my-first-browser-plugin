@@ -85,5 +85,5 @@ jobs:
             -c allowedOrigins=* \
             -c apiThrottleBurstLimit=${API_THROTTLE_BURST_LIMIT} \
             -c apiThrottleRateLimit=${API_THROTTLE_RATE_LIMIT} \
-            -c lambdaMemorySize=3008 \
+            -c lambdaMemorySize=10240 \
             -c lambdaTimeoutSeconds=45
