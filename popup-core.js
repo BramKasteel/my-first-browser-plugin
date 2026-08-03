@@ -15,6 +15,8 @@ const sellerBargainsCheckboxEl = document.getElementById('includeBargainsFromOth
 const sellerCountryLargeListWarningEl = document.getElementById('sellerCountryLargeListWarning');
 const sellerCountryLimitHintEl = document.getElementById('sellerCountryLimitHint');
 const sellerSettingsBodyEl = document.getElementById('sellerSettingsBody');
+const sellerTipsEl = document.getElementById('sellerTips');
+const sellerTipTextEl = document.getElementById('sellerTipText');
 const sellerScrapeProgressEl = document.getElementById('sellerScrapeProgress');
 const sellerProgressLabelEl = document.getElementById('sellerProgressLabel');
 const sellerProgressCurrentEl = document.getElementById('sellerProgressCurrent');
@@ -125,6 +127,8 @@ let rememberedDisabledSellerIds = [];
 let postFillSellerChoices = [];
 let boundSourceTabId = Number.isInteger(forcedTabId) ? forcedTabId : null;
 let availableSourceTabs = [];
+let sellerTipRotationTimer = null;
+let activeSellerTip = '';
 
 const SELLER_SETTINGS_KEY = 'sellerScrapeSettings';
 const DETACHED_BATCH_STATE_KEY = 'detachedBatchState';
@@ -139,7 +143,16 @@ const DEFAULT_SELLER_COUNTRIES = [];
 const MAX_WANT_LIST_ITEMS = 100;
 const MAX_SELLER_COUNTRIES = 2;
 const DEFAULT_OPTIMIZER_API_URL = textOf(window.APP_CONFIG?.optimizerApiUrl);
+const SELLER_TIP_ROTATION_MS = 10000;
 const WORKFLOW_STEPS = ['source', 'sellers', 'fill', 'post-fill'];
+const SELLER_SCRAPE_TIPS = [
+  'If the shopping cart is more expensive than we said, use the debug option!',
+  'For very common cards like treasure or food tokens, you will get cheaper results by specifying specific versions. Be careful to inspect the cart when ordering tokens!',
+  'You can select two seller countries. Choose them wisely! Select countries with lots of sellers and cheap shipping.',
+  'If the optimizer has not returned an optimal result, hitting the re-optimize button might save some more money. Do not overdo it, each hit increases my cloud bill :D',
+  'Including bargains from other countries searches whole Europe. We only include the cheapest 50 items outside preferred countries, and only for cards worth over five euros.',
+  'I receive no feedback whatsoever on this plugin. I would love to get some, even if you do not really have anything to say! Click the send feedback button above.',
+];
 const WORKFLOW_META = {
   source: {
     title: 'Select Cards',
@@ -808,6 +821,33 @@ function setStepActivity(activity = null) {
   renderStepActivity();
 }
 
+function pickRandomSellerTip() {
+  const pool = SELLER_SCRAPE_TIPS.filter((tip) => tip !== activeSellerTip);
+  const candidates = pool.length ? pool : SELLER_SCRAPE_TIPS;
+  return candidates[Math.floor(Math.random() * candidates.length)] || '';
+}
+
+function rotateSellerTip() {
+  activeSellerTip = pickRandomSellerTip();
+  if (sellerTipTextEl) {
+    sellerTipTextEl.textContent = activeSellerTip;
+  }
+}
+
+function startSellerTipRotation() {
+  if (sellerTipRotationTimer) return;
+  rotateSellerTip();
+  sellerTipRotationTimer = window.setInterval(rotateSellerTip, SELLER_TIP_ROTATION_MS);
+}
+
+function stopSellerTipRotation() {
+  if (sellerTipRotationTimer) {
+    window.clearInterval(sellerTipRotationTimer);
+    sellerTipRotationTimer = null;
+  }
+  activeSellerTip = '';
+}
+
 function renderStepActivity() {
   const isSellerScrape = activeStepActivity?.kind === 'seller-scrape';
   const isOptimizerRequest = activeStepActivity?.kind === 'optimizer-request';
@@ -818,8 +858,15 @@ function renderStepActivity() {
     || (isUiBusy && isRunActive && activeWorkflowStep === 'sellers');
 
   sellerSettingsBodyEl.hidden = shouldHideSellerSettings;
+  sellerTipsEl.hidden = !isSellerScrape;
   sellerScrapeProgressEl.hidden = !isSellerScrape;
   renderMissingSellerDecision();
+
+  if (isSellerScrape) {
+    startSellerTipRotation();
+  } else {
+    stopSellerTipRotation();
+  }
 
   if (isSellerScrape) {
     const total = Math.max(0, activeStepActivity.total || 0);
