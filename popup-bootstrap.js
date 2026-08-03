@@ -119,6 +119,12 @@ postFillReoptimizeButton?.addEventListener('click', () => {
     appendStatus(error.message, 'bad');
   });
 });
+missingSellerAbortButton?.addEventListener('click', () => {
+  resolvePendingMissingSellerDecision('abort');
+});
+missingSellerContinueButton?.addEventListener('click', () => {
+  resolvePendingMissingSellerDecision('continue');
+});
 refreshSourceTabsButton?.addEventListener('click', () => {
   refreshSourceTabOptions({ announce: false }).catch((error) => {
     renderSourceTabStatus(error.message, 'bad');

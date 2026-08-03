@@ -355,7 +355,8 @@
     }
 
     .step-progress[hidden],
-    .config-block[hidden] {
+    .config-block[hidden],
+    .step-highlight[hidden] {
       display: none;
     }
 
@@ -1445,6 +1446,18 @@
             <div class="progress-fill indeterminate"></div>
           </div>
           <p id="optimizerWaitingDetail" class="step-progress-note">Optimizer can take moment while it balances price against shipping.</p>
+        </section>
+        <section id="missingSellerDecision" class="step-highlight" aria-live="polite" hidden>
+          <div class="panel-header">
+            <h3 id="missingSellerDecisionTitle" class="panel-title">Missing seller data</h3>
+            <span class="step-pill">Decision needed</span>
+          </div>
+          <p id="missingSellerDecisionDetail" class="panel-note">Some wanted cards did not have any sellers under current filters.</p>
+          <div id="missingSellerDecisionList"></div>
+          <div class="inline-action-row">
+            <button id="missingSellerAbortButton" type="button" class="secondary">Abort optimization</button>
+            <button id="missingSellerContinueButton" type="button">Optimize without these cards</button>
+          </div>
         </section>
       </section>
 

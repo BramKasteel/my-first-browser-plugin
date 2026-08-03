@@ -1,5 +1,8 @@
 function renderPayload(payload) {
   const payloadChanged = latestExtractPayload !== payload;
+  if (payloadChanged && hasPendingMissingSellerDecision()) {
+    cancelPendingMissingSellerDecision();
+  }
   latestExtractPayload = payload;
   if (payloadChanged) {
     clearPostFillSessionState();

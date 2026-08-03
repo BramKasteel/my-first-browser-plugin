@@ -58,6 +58,12 @@ const mainCartSummaryTotalItemsEl = document.getElementById('mainCartSummaryTota
 const optimizerWaitingEl = document.getElementById('optimizerWaiting');
 const optimizerWaitingTextEl = document.getElementById('optimizerWaitingText');
 const optimizerWaitingDetailEl = document.getElementById('optimizerWaitingDetail');
+const missingSellerDecisionEl = document.getElementById('missingSellerDecision');
+const missingSellerDecisionTitleEl = document.getElementById('missingSellerDecisionTitle');
+const missingSellerDecisionDetailEl = document.getElementById('missingSellerDecisionDetail');
+const missingSellerDecisionListEl = document.getElementById('missingSellerDecisionList');
+const missingSellerAbortButton = document.getElementById('missingSellerAbortButton');
+const missingSellerContinueButton = document.getElementById('missingSellerContinueButton');
 const refillWarningEl = document.getElementById('refillWarning');
 const optimizationResultPillEl = document.getElementById('optimizationResultPill');
 const fillCartPostingPillEl = document.getElementById('fillCartPostingPill');
@@ -108,6 +114,7 @@ let activeResultTab = 'overview';
 let workflowHistory = [];
 let isResultPanelExpanded = false;
 let activeStepActivity = null;
+let pendingMissingSellerDecision = null;
 let lastOptimizerWarmupAt = 0;
 let wantListRetryTimer = null;
 let sellerRequestDelayMs = 250;
@@ -248,6 +255,68 @@ function startRun(message) {
 
 function finishRun(message, tone = '') {
   setRunState({ active: false, message, tone });
+}
+
+function hasPendingMissingSellerDecision() {
+  return !!pendingMissingSellerDecision;
+}
+
+function renderMissingSellerDecision() {
+  if (!missingSellerDecisionEl || !missingSellerDecisionListEl) return;
+
+  const decision = pendingMissingSellerDecision;
+  missingSellerDecisionEl.hidden = !decision;
+  missingSellerDecisionListEl.replaceChildren();
+
+  if (!decision) return;
+
+  if (missingSellerDecisionTitleEl) {
+    missingSellerDecisionTitleEl.textContent = 'Missing seller data';
+  }
+  if (missingSellerDecisionDetailEl) {
+    missingSellerDecisionDetailEl.textContent = `${decision.items.length} wanted card${decision.items.length === 1 ? '' : 's'} did not have any sellers under current filters.`;
+  }
+
+  const intro = document.createElement('p');
+  intro.className = 'panel-note';
+  intro.textContent = 'Abort to return to card selection, or continue and optimize without these cards.';
+  missingSellerDecisionListEl.appendChild(intro);
+
+  const list = document.createElement('ul');
+  decision.items.forEach((entry) => {
+    const item = document.createElement('li');
+    item.textContent = entry.name;
+    list.appendChild(item);
+  });
+  missingSellerDecisionListEl.appendChild(list);
+}
+
+function resolvePendingMissingSellerDecision(choice) {
+  if (!pendingMissingSellerDecision) return;
+
+  const { resolve } = pendingMissingSellerDecision;
+  pendingMissingSellerDecision = null;
+  renderWorkflow();
+  resolve(choice);
+}
+
+function cancelPendingMissingSellerDecision() {
+  resolvePendingMissingSellerDecision('abort');
+}
+
+function promptForMissingSellerDecision(missingItems) {
+  cancelPendingMissingSellerDecision();
+
+  return new Promise((resolve) => {
+    pendingMissingSellerDecision = {
+      items: missingItems,
+      resolve,
+    };
+    setActiveWorkflowStep('sellers', { force: true });
+    setActiveResultTab('activity');
+    renderWorkflow();
+    missingSellerDecisionEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 }
 
 function getRunStatusTone() {
@@ -740,12 +809,15 @@ function setStepActivity(activity = null) {
 function renderStepActivity() {
   const isSellerScrape = activeStepActivity?.kind === 'seller-scrape';
   const isOptimizerRequest = activeStepActivity?.kind === 'optimizer-request';
-  const shouldHideSellerSettings = isSellerScrape
+  const isMissingSellerDecision = hasPendingMissingSellerDecision();
+  const shouldHideSellerSettings = isMissingSellerDecision
+    || isSellerScrape
     || isOptimizerRequest
     || (isUiBusy && isRunActive && activeWorkflowStep === 'sellers');
 
   sellerSettingsBodyEl.hidden = shouldHideSellerSettings;
   sellerScrapeProgressEl.hidden = !isSellerScrape;
+  renderMissingSellerDecision();
 
   if (isSellerScrape) {
     const total = Math.max(0, activeStepActivity.total || 0);
@@ -762,7 +834,7 @@ function renderStepActivity() {
     sellerProgressBarEl.style.width = '0%';
   }
 
-  optimizerWaitingEl.hidden = !isOptimizerRequest;
+  optimizerWaitingEl.hidden = isMissingSellerDecision || !isOptimizerRequest;
 
   if (isOptimizerRequest) {
     optimizerWaitingTextEl.textContent = activeStepActivity.label || 'Request sent. Waiting for reply.';
@@ -778,7 +850,9 @@ function setResultPanelExpanded(expanded) {
 }
 
 function focusLiveActivityPanel() {
-  const scrollTarget = !sellerScrapeProgressEl?.hidden
+  const scrollTarget = !missingSellerDecisionEl?.hidden
+    ? missingSellerDecisionEl
+    : !sellerScrapeProgressEl?.hidden
     ? sellerScrapeProgressEl
     : !optimizerWaitingEl?.hidden
       ? optimizerWaitingEl
@@ -816,7 +890,7 @@ function renderWorkflow() {
 
     button.dataset.state = stepState;
     button.classList.toggle('active', isActive);
-    button.disabled = isUiBusy || !isAccessible;
+    button.disabled = isUiBusy || hasPendingMissingSellerDecision() || !isAccessible;
     button.setAttribute('aria-selected', isActive ? 'true' : 'false');
   });
 
@@ -1301,6 +1375,59 @@ function buildOptimizerSellerId(seller) {
   const namePart = slugifyValue(seller?.sellerName, 'seller');
   const countryPart = slugifyValue(normalizeCountryName(seller?.location) || seller?.location, 'unknown');
   return `${namePart}-${countryPart}`;
+}
+
+function getWantItemDisplayName(item, fallbackIndex = 0) {
+  return textOf(item?.productName)
+    || textOf(item?.name)
+    || textOf(item?.item_id)
+    || `Item ${fallbackIndex + 1}`;
+}
+
+function collectMissingSellerItems(batchResult) {
+  if (!batchResult || batchResult.kind !== 'seller-scrape-batch') return [];
+
+  return (batchResult.results || [])
+    .map((result, index) => {
+      const sellerRows = Array.isArray(result?.sellers) ? result.sellers : [];
+      if (sellerRows.length) return null;
+
+      return {
+        index,
+        item: result?.item || null,
+        name: getWantItemDisplayName(result?.item, index),
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildFilteredBatchResultWithoutMissingSellerItems(batchResult) {
+  if (!batchResult || batchResult.kind !== 'seller-scrape-batch') return batchResult;
+
+  const filteredResults = (batchResult.results || []).filter((result) => {
+    const sellerRows = Array.isArray(result?.sellers) ? result.sellers : [];
+    return sellerRows.length > 0;
+  });
+
+  const totalSellerRows = filteredResults.reduce((sum, result) => {
+    const sellerRows = Array.isArray(result?.sellers) ? result.sellers.length : 0;
+    return sum + sellerRows;
+  }, 0);
+
+  const previousTotals = batchResult.totals || {};
+  const previousResultCount = Array.isArray(batchResult.results) ? batchResult.results.length : 0;
+  const missingCount = Math.max(0, previousResultCount - filteredResults.length);
+
+  return {
+    ...batchResult,
+    totals: {
+      ...previousTotals,
+      successCount: Math.max(0, parseIntegerOrFallback(previousTotals.successCount, filteredResults.length) - missingCount),
+      skippedCount: parseIntegerOrFallback(previousTotals.skippedCount, 0) + missingCount,
+      totalSellerRows,
+    },
+    results: filteredResults,
+  };
 }
 
 function buildOptimizerPayload(batchResult) {

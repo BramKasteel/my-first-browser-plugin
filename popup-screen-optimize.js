@@ -176,8 +176,50 @@ function setOptimizationRequestStage(stage, requestPayload) {
   });
 }
 
-async function submitOptimizationRequest(endpoint, { payloadOverride = null, kickoffMessage = '', kickoffTone = 'good' } = {}) {
-  const requestPayload = await buildOptimizationRequestPayload(payloadOverride || latestExtractPayload);
+async function resolveOptimizationPayloadForMissingSellerItems({ payloadOverride = null, frontendPayloadOverride = null } = {}) {
+  const currentPayload = payloadOverride || latestExtractPayload;
+  const batchPayload = frontendPayloadOverride?.kind === 'seller-scrape-batch'
+    ? frontendPayloadOverride
+    : (latestFrontendPayload?.kind === 'seller-scrape-batch' ? latestFrontendPayload : null);
+
+  if (!batchPayload) {
+    return { requestPayload: currentPayload, didAbort: false };
+  }
+
+  const missingItems = collectMissingSellerItems(batchPayload);
+  if (!missingItems.length) {
+    return { requestPayload: currentPayload, didAbort: false };
+  }
+
+  const filteredBatchPayload = buildFilteredBatchResultWithoutMissingSellerItems(batchPayload);
+  const filteredOptimizerPayload = buildOptimizerPayload(filteredBatchPayload);
+  if (!filteredOptimizerPayload) {
+    throw new Error('No seller rows found for any wanted card under current filters. Adjust filters and scrape again.');
+  }
+
+  appendStatus(`Decision needed: ${missingItems.length} wanted card${missingItems.length === 1 ? '' : 's'} had no sellers under current filters.`, 'bad');
+  const decision = await promptForMissingSellerDecision(missingItems);
+  if (decision !== 'continue') {
+    setActiveWorkflowStep('source', { force: true, recordHistory: false });
+    setActiveResultTab('overview');
+    appendStatus(`Optimization aborted. ${missingItems.length} wanted card${missingItems.length === 1 ? '' : 's'} had no sellers under current filters.`, 'bad');
+    finishRun('Optimization aborted. Returned to source screen.', 'bad');
+    return { requestPayload: null, didAbort: true };
+  }
+
+  renderFrontendPayload(filteredBatchPayload);
+  renderPayload(filteredOptimizerPayload);
+  appendStatus(`Continuing without ${missingItems.length} wanted card${missingItems.length === 1 ? '' : 's'} that had no sellers under current filters.`, 'bad');
+  return { requestPayload: filteredOptimizerPayload, didAbort: false };
+}
+
+async function submitOptimizationRequest(endpoint, { payloadOverride = null, frontendPayloadOverride = null, kickoffMessage = '', kickoffTone = 'good' } = {}) {
+  const resolution = await resolveOptimizationPayloadForMissingSellerItems({ payloadOverride, frontendPayloadOverride });
+  if (resolution.didAbort) {
+    return false;
+  }
+
+  const requestPayload = await buildOptimizationRequestPayload(resolution.requestPayload);
 
   if (!requestPayload) {
     const message = 'No optimizer payload ready yet. Scrape sellers first.';

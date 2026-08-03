@@ -1600,6 +1600,7 @@ async function handleScrapeAllItems() {
       );
       await submitOptimizationRequest(DEFAULT_OPTIMIZER_API_URL, {
         payloadOverride: optimizerPayload,
+        frontendPayloadOverride: batchPayload,
         kickoffMessage: 'Seller scrape complete. Sending payload to optimizer.',
       });
       return;
