@@ -227,7 +227,7 @@ function renderOptimizationResultPill(result) {
   if (status === 'feasible') {
     optimizationResultPillEl.hidden = false;
     optimizationResultPillEl.classList.add('is-feasible');
-    optimizationResultPillEl.textContent = 'Cheap result achieved. The order was too big (our servers too small) to achieve optimality. Possibly re-optimizing might give a better result.';
+    optimizationResultPillEl.textContent = 'Optimizer finished! Alas we cannot guarantee optimality. Consider re-optimizing or donating for bigger servers!';
     return;
   }
 
