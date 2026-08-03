@@ -86,19 +86,14 @@ heroDonateButton?.addEventListener('click', () => {
   window.open(donationUrl, '_blank', 'noopener');
 });
 heroBankDonateButton?.addEventListener('click', () => {
-  const bankDonationUrl = textOf(window.APP_CONFIG?.bankDonationUrl);
-  if (!bankDonationUrl) {
-    appendStatus('Bank donation link missing from config.', 'bad');
+  if (!heroBankDonateRevealRowEl) {
+    appendStatus('Bank transfer QR missing from popup.', 'bad');
     return;
   }
 
-  appendStatus('Opening bank donation page in new tab.', 'good');
-  if (globalThis.chrome?.tabs?.create) {
-    globalThis.chrome.tabs.create({ url: bankDonationUrl });
-    return;
-  }
-
-  window.open(bankDonationUrl, '_blank', 'noopener');
+  heroBankDonateRevealRowEl.hidden = false;
+  heroBankDonateButton.hidden = true;
+  appendStatus('Bank transfer QR revealed in popup.', 'good');
 });
 confirmWantListButton?.addEventListener('click', () => {
   if (!hasLoadedWantItems() || getWantListSelectionPolicy().isBlocked) return;

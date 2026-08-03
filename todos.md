@@ -1,5 +1,2 @@
 - Create tips bar
-- Backend should set some content -- like tikkie code and tips
-- Permanent payment options
 - Change colors
-- Should be able to fill cart again, user might have deleted

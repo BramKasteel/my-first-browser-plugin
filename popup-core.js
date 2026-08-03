@@ -85,6 +85,7 @@ const heroFeedbackRevealRowEl = document.getElementById('heroFeedbackRevealRow')
 const heroFeedbackCopyButton = document.getElementById('heroFeedbackCopyButton');
 const heroDonateButton = document.getElementById('heroDonateButton');
 const heroBankDonateButton = document.getElementById('heroBankDonateButton');
+const heroBankDonateRevealRowEl = document.getElementById('heroBankDonateRevealRow');
 
 const urlParams = new URLSearchParams(window.location.search);
 const isWorkspace = urlParams.get('workspace') === '1' || urlParams.get('detached') === '1';

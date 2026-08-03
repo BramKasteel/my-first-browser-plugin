@@ -156,6 +156,38 @@
       display: none;
     }
 
+    .hero-bank-qr-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(159, 176, 190, 0.18);
+      background: rgba(17, 22, 27, 0.82);
+    }
+
+    .hero-bank-qr-row[hidden] {
+      display: none;
+    }
+
+    .hero-bank-qr-message {
+      margin: 0;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.45;
+    }
+
+    .hero-bank-qr-art {
+      width: 144px;
+      height: 144px;
+      padding: 8px;
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+    }
+
     .hero-support-row {
       justify-content: flex-start;
     }
@@ -1282,8 +1314,12 @@
         </div>
         <div class="hero-action-row hero-support-row">
           <button id="heroDonateButton" type="button" class="hero-support-button">Donate via PayPal</button>
-          <button id="heroBankDonateButton" type="button" class="hero-support-button">Donate via Ideal</button>
+          <button id="heroBankDonateButton" type="button" class="hero-support-button">Betaalverzoek</button>
           <p class="hero-action-note">Donations help me convince my wife I need to maintain this app, plus it helps cover cloud costs.</p>
+        </div>
+        <div id="heroBankDonateRevealRow" class="hero-bank-qr-row" hidden>
+          <p class="hero-bank-qr-message">Scan with banking app</p>
+          <img class="hero-bank-qr-art" src="icons/bank-transfer-qr.svg" alt="Bank transfer QR code" width="144" height="144">
         </div>
       </div>
     </section>
