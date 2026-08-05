@@ -13,3 +13,4 @@ npx cdk deploy OptimizerServiceStack \
 
 - Betaalverzoek should get a x to close
 - Change colors
+- Update delivery fee table from https://help.cardmarket.com/en/ShippingCosts
