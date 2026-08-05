@@ -16,3 +16,4 @@ npx cdk deploy OptimizerServiceStack \
 - Update delivery fee table from https://help.cardmarket.com/en/ShippingCosts
 
 - Optimizer improvement idea: split cards into two piles based on cost. Shipping dominated and item dominated pricing!
+- add licence
