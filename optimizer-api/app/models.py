@@ -40,6 +40,7 @@ MAX_OFFERS = 50_000
 MAX_LANGUAGE_PREFERENCES = 20
 MAX_ALLOWED_COUNTRIES = 100
 MAX_BLOCKED_SELLERS = 5_000
+MAX_SEARCH_FILTER_FLAGS = 50
 
 
 def _find_duplicates(values: list[str]) -> list[str]:
@@ -108,6 +109,45 @@ class OptimizationPreferences(BaseModel):
     return_alternatives: int = Field(default=0, ge=0, le=0)
 
 
+class SearchWantedItemMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    item_id: BoundedId | None = None
+    name: BoundedName
+    quantity: int = Field(ge=1, le=1_000)
+    language: BoundedDescriptor | None = None
+    min_condition: BoundedDescriptor | None = None
+    expansion: BoundedName | None = None
+    is_foil: bool | None = None
+
+
+class SearchFiltersMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    buyer_country: BoundedCountry | None = None
+    seller_countries: list[BoundedCountry] = Field(
+        default_factory=list, max_length=MAX_ALLOWED_COUNTRIES
+    )
+    seller_type: BoundedDescriptor | None = None
+    delivery_type: BoundedDescriptor | None = None
+    seller_reputation: BoundedDescriptor | None = None
+    include_bargain_countries: bool | None = None
+    additional_filters: list[BoundedDescriptor] = Field(
+        default_factory=list, max_length=MAX_SEARCH_FILTER_FLAGS
+    )
+
+
+class SearchMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    username: BoundedName | None = None
+    want_list_id: BoundedId | None = None
+    wanted_items: list[SearchWantedItemMetadata] = Field(
+        default_factory=list, max_length=MAX_ITEMS
+    )
+    filters: SearchFiltersMetadata = Field(default_factory=SearchFiltersMetadata)
+
+
 class PreviousAllocation(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -129,6 +169,7 @@ class OptimizationRequest(BaseModel):
     preferences: OptimizationPreferences = Field(
         default_factory=OptimizationPreferences
     )
+    search_metadata: SearchMetadata | None = None
 
     def seller_map(self) -> dict[BoundedId, Seller]:
         return {seller.seller_id: seller for seller in self.sellers}

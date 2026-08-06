@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from statistics import median
@@ -29,6 +30,28 @@ MAX_TIME_SECONDS = 15
 SOLVER_ABSOLUTE_GAP_LIMIT = 10
 SOLVER_NUM_SEARCH_WORKERS = 8
 MAX_OFFERS_PER_ITEM = 150
+
+
+@dataclass(frozen=True)
+class SolverDiagnostics:
+    solver_status: str
+    wall_time_seconds: float
+    objective_value: float | None = None
+    best_objective_bound: float | None = None
+    num_conflicts: int | None = None
+    num_branches: int | None = None
+
+
+@dataclass(frozen=True)
+class OptimizationRunResult:
+    response: OptimizationResponse
+    diagnostics: SolverDiagnostics
+
+
+@dataclass(frozen=True)
+class ExactShippingSolveResult:
+    diagnostics: SolverDiagnostics
+    selected_offer_quantities: dict[str, int]
 
 
 def _to_cents(amount: float) -> int:
@@ -63,10 +86,45 @@ def _new_solver(
         solver.parameters.random_seed = random_seed
     solver.parameters.absolute_gap_limit = SOLVER_ABSOLUTE_GAP_LIMIT
     solver.parameters.num_search_workers = SOLVER_NUM_SEARCH_WORKERS
-    solver.parameters.log_search_progress = True
+    solver.parameters.log_search_progress = log_callback is not None
     if log_callback is not None:
         solver.log_callback = log_callback
     return solver
+
+
+def _safe_solver_float_metric(metric_getter: Callable[[], float]) -> float | None:
+    try:
+        value = metric_getter()
+    except Exception:
+        return None
+    return float(value) if value is not None else None
+
+
+def _safe_solver_int_metric(metric_getter: Callable[[], int]) -> int | None:
+    try:
+        value = metric_getter()
+    except Exception:
+        return None
+    return int(value) if value is not None else None
+
+
+def _collect_solver_diagnostics(cp_model, solver, status: int) -> SolverDiagnostics:
+    solver_status = _cp_sat_status_name(cp_model, status)
+    has_solution = status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    return SolverDiagnostics(
+        solver_status=solver_status,
+        wall_time_seconds=_safe_solver_float_metric(solver.WallTime) or 0.0,
+        objective_value=(
+            _safe_solver_float_metric(solver.ObjectiveValue) if has_solution else None
+        ),
+        best_objective_bound=(
+            _safe_solver_float_metric(solver.BestObjectiveBound)
+            if has_solution
+            else None
+        ),
+        num_conflicts=_safe_solver_int_metric(solver.NumConflicts),
+        num_branches=_safe_solver_int_metric(solver.NumBranches),
+    )
 
 
 def _cp_sat_status_name(cp_model, status: int) -> str:
@@ -249,7 +307,7 @@ def _solve_exact_shipping_order(
     previous_offer_quantities: dict[str, int] | None = None,
     solver_random_seed: int | None = None,
     solver_log_callback: Callable[[str], None] | None = None,
-) -> tuple[str, dict[str, int]] | None:
+) -> ExactShippingSolveResult | None:
     model = cp_model.CpModel()
 
     offer_vars = {}
@@ -437,17 +495,23 @@ def _solve_exact_shipping_order(
         log_callback=solver_log_callback,
     )
     status = solver.Solve(model)
+    diagnostics = _collect_solver_diagnostics(cp_model, solver, status)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return None
+        return ExactShippingSolveResult(
+            diagnostics=diagnostics,
+            selected_offer_quantities={},
+        )
 
-    solution_status = "optimal" if status == cp_model.OPTIMAL else "feasible"
     selected_offer_quantities = {
         offer.offer_id: solver.Value(offer_vars[offer.offer_id])
         for offer in usable_offers
         if solver.Value(offer_vars[offer.offer_id]) > 0
     }
-    return solution_status, selected_offer_quantities
+    return ExactShippingSolveResult(
+        diagnostics=diagnostics,
+        selected_offer_quantities=selected_offer_quantities,
+    )
 
 
 def _prune_dominated_offers_per_seller(
@@ -609,12 +673,12 @@ def prune_all(request: OptimizationRequest):
     return usable_offers
 
 
-def optimize_order(
+def optimize_order_with_diagnostics(
     request: OptimizationRequest,
     *,
     solver_random_seed: int | None = None,
     solver_log_callback: Callable[[str], None] | None = None,
-) -> OptimizationResponse:
+) -> OptimizationRunResult:
     usable_offers = prune_all(request)
     item_map = request.item_map()
     seller_map = _filtered_seller_map(request)
@@ -636,12 +700,20 @@ def optimize_order(
             "No feasible solution under current seller filters.",
             f"Uncovered items: {', '.join(uncovered_items)}",
         ]
-        return OptimizationResponse(
-            status="infeasible",
-            currency=request.currency,
-            totals=OptimizationTotals(item_subtotal=0, shipping_total=0, grand_total=0),
-            cart=OptimizationCart(),
-            notes=notes,
+        return OptimizationRunResult(
+            response=OptimizationResponse(
+                status="infeasible",
+                currency=request.currency,
+                totals=OptimizationTotals(
+                    item_subtotal=0, shipping_total=0, grand_total=0
+                ),
+                cart=OptimizationCart(),
+                notes=notes,
+            ),
+            diagnostics=SolverDiagnostics(
+                solver_status="precheck_infeasible",
+                wall_time_seconds=0.0,
+            ),
         )
 
     route_book = shipping.load_shipping_route_book()
@@ -657,16 +729,30 @@ def optimize_order(
         solver_random_seed=solver_random_seed,
         solver_log_callback=solver_log_callback,
     )
-    if solution is None:
-        return OptimizationResponse(
-            status="infeasible",
-            currency=request.currency,
-            totals=OptimizationTotals(item_subtotal=0, shipping_total=0, grand_total=0),
-            cart=OptimizationCart(),
-            notes=["Solver found no feasible solution."],
+    if solution is None or not solution.selected_offer_quantities:
+        solver_status = "unknown"
+        diagnostics = SolverDiagnostics(
+            solver_status=solver_status, wall_time_seconds=0.0
+        )
+        if solution is not None:
+            diagnostics = solution.diagnostics
+        return OptimizationRunResult(
+            response=OptimizationResponse(
+                status="infeasible",
+                currency=request.currency,
+                totals=OptimizationTotals(
+                    item_subtotal=0, shipping_total=0, grand_total=0
+                ),
+                cart=OptimizationCart(),
+                notes=["Solver found no feasible solution."],
+            ),
+            diagnostics=diagnostics,
         )
 
-    solution_status, selected_offer_quantities = solution
+    solution_status = (
+        "optimal" if solution.diagnostics.solver_status == "optimal" else "feasible"
+    )
+    selected_offer_quantities = solution.selected_offer_quantities
     selected_offer_ranks = _selected_offer_price_ranks(
         request.offers,
         set(selected_offer_quantities),
@@ -774,30 +860,46 @@ def optimize_order(
             "Solver hit time limit before proving optimality. Returning best known order."
         )
 
-    return OptimizationResponse(
-        status=solution_status,
-        currency=request.currency,
-        totals=OptimizationTotals(
-            item_subtotal=_from_cents(item_subtotal),
-            shipping_total=_from_cents(shipping_total),
-            grand_total=_from_cents(grand_total),
-        ),
-        chosen_sellers=sorted(chosen_sellers, key=lambda seller: seller.seller_id),
-        allocations=sorted(
-            allocations,
-            key=lambda allocation: (
-                allocation.item_id,
-                allocation.seller_id,
-                allocation.offer_id,
+    return OptimizationRunResult(
+        response=OptimizationResponse(
+            status=solution_status,
+            currency=request.currency,
+            totals=OptimizationTotals(
+                item_subtotal=_from_cents(item_subtotal),
+                shipping_total=_from_cents(shipping_total),
+                grand_total=_from_cents(grand_total),
             ),
+            chosen_sellers=sorted(chosen_sellers, key=lambda seller: seller.seller_id),
+            allocations=sorted(
+                allocations,
+                key=lambda allocation: (
+                    allocation.item_id,
+                    allocation.seller_id,
+                    allocation.offer_id,
+                ),
+            ),
+            cart=OptimizationCart(
+                sellers=sorted(cart_sellers, key=lambda seller: seller.seller_id),
+                total_sellers=len(cart_sellers),
+                total_units=total_units,
+            ),
+            notes=notes,
         ),
-        cart=OptimizationCart(
-            sellers=sorted(cart_sellers, key=lambda seller: seller.seller_id),
-            total_sellers=len(cart_sellers),
-            total_units=total_units,
-        ),
-        notes=notes,
+        diagnostics=solution.diagnostics,
     )
+
+
+def optimize_order(
+    request: OptimizationRequest,
+    *,
+    solver_random_seed: int | None = None,
+    solver_log_callback: Callable[[str], None] | None = None,
+) -> OptimizationResponse:
+    return optimize_order_with_diagnostics(
+        request,
+        solver_random_seed=solver_random_seed,
+        solver_log_callback=solver_log_callback,
+    ).response
 
 
 def _make_file_log_callback(log_file) -> Callable[[str], None]:

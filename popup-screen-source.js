@@ -280,6 +280,7 @@ async function handleExtractItems() {
     renderSummary([
       { label: 'Source', value: result.wantListName || 'Selected want list', tone: 'good' },
       { label: 'Want list id', value: result.wantListId || '-' },
+      { label: 'Username', value: result.username || 'anonymous' },
       { label: 'Items loaded', value: String(result.totalVisible), tone: result.totalVisible ? 'good' : 'bad' },
       { label: 'Pages loaded', value: String(result.pagesScanned || 0), tone: result.pagesScanned ? 'good' : 'bad' },
       { label: 'Preview returned', value: String(Math.min(result.items.length, 8)) },
@@ -287,6 +288,7 @@ async function handleExtractItems() {
       { label: 'Rows parsed', value: String(result.debug.parsedItems || 0) },
     ]);
     latestExtractedItems = result.items;
+    latestCardmarketUsername = textOf(result.username);
     const wantListPolicy = enforceWantListSelectionPolicy({ persist: true, announce: true });
     syncExtractButton();
     syncSellerScrapeButton();
@@ -307,6 +309,7 @@ async function handleExtractItems() {
     confirmWantListButton?.focus();
   } catch (error) {
     latestExtractedItems = [];
+    latestCardmarketUsername = '';
     syncExtractButton();
     syncSellerScrapeButton();
     renderPayload(null);

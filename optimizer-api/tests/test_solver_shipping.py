@@ -812,13 +812,14 @@ def test_prune_expensive_country_offers_keeps_enough_quantity_for_requested_item
 def test_optimize_constrains_nl_seller_in_dead_zone_to_tier_0_max(
     monkeypatch,
 ) -> None:
-    """Test that a NL→NL seller with qty in dead zone (5–7 cards) is constrained to tier-0-max (4 cards).
+    """Test that a required NL→NL seller is not over-pruned into infeasibility.
 
     Tier-0: 4 cards @ €1.70 = €0.425/card
     Tier-1: 8 cards @ €3.10 = €0.3875/card
     Dead zone: 5–7 cards (cost/card > €0.425)
 
-    Seller offers 7 items, cost €15 (< €25 limit) → seller in dead zone → optimizer should buy max 4 cards.
+    Seller offers 7 items, cost €15 (< €25 limit), but seller is the only source for
+    all requested units. Exact-demand solve must keep tier-1 available and buy all 7.
     """
     route_book = ShippingRouteBook(
         country_ids={"netherlands": 23},
@@ -852,19 +853,86 @@ def test_optimize_constrains_nl_seller_in_dead_zone_to_tier_0_max(
     response = optimize_order(request)
 
     assert response.status == "optimal"
-    # Optimizer should only buy 4 cards due to dead zone constraint
-    assert response.totals.total_units == 4
-    assert response.totals.shipping_total == 1.70
+    assert response.cart.total_units == 7
+    assert response.totals.shipping_total == 3.10
+
+
+def test_optimize_prunes_nl_seller_dead_zone_when_alternative_supply_exists(
+    monkeypatch,
+) -> None:
+    """A dead-zone seller should be capped at tier-0 when other sellers can cover the rest.
+
+    Seller 1 is cheaper but offers 7 units on an NL→NL route with a 5–7 dead zone.
+    Seller 2 can supply the remaining 3 units, so the optimizer should prune seller 1
+    down to tier-0 max instead of paying seller 1's tier-1 shipping.
+    """
+    route_book = ShippingRouteBook(
+        country_ids={"netherlands": 23},
+        tiers_by_route={
+            ("netherlands", "netherlands"): _tiers(
+                values=[(170, 2500, 4), (310, 50000, 8)]
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[WantedItem(item_id="item-1", name="Card", quantity=7)],
+        sellers=[
+            Seller(
+                seller_id="seller-1", name="Dead Zone Seller", country="Netherlands"
+            ),
+            Seller(seller_id="seller-2", name="Backup Seller", country="Netherlands"),
+        ],
+        offers=[
+            Offer(
+                offer_id=f"offer-1-{i}",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=2.0,
+                available_quantity=1,
+            )
+            for i in range(1, 8)
+        ]
+        + [
+            Offer(
+                offer_id=f"offer-2-{i}",
+                item_id="item-1",
+                seller_id="seller-2",
+                unit_price=2.05,
+                available_quantity=1,
+            )
+            for i in range(1, 4)
+        ],
+        preferences=OptimizationPreferences(),
+    )
+
+    response = optimize_order(request)
+
+    assert response.status == "optimal"
+    assert response.cart.total_units == 7
+    assert response.cart.total_sellers == 2
+    assert response.totals.shipping_total == 3.40
+
+    seller_unit_totals = {
+        seller.seller_id: sum(item.quantity for item in seller.items)
+        for seller in response.cart.sellers
+    }
+    assert seller_unit_totals == {"seller-1": 4, "seller-2": 3}
 
 
 def test_optimize_constrains_de_to_nl_seller_in_dead_zone(monkeypatch) -> None:
-    """Test DE→NL seller in dead zone with larger tier bounds.
+    """Test DE→NL required seller is not over-pruned into infeasibility.
 
     Tier-0: 10 cards @ €2.50 = €0.25/card
     Tier-1: 20 cards @ €3.50 = €0.175/card
     Dead zone: 11–13 cards (cost/card > €0.25 at qty 11–13)
 
-    Seller offers 12 items, cost €20 → in dead zone → optimizer should buy max 10 cards.
+    Seller offers 12 items, cost €20, but seller is the only source for all 12.
+    Exact-demand solve must keep tier-1 available and buy all 12.
     """
     route_book = ShippingRouteBook(
         country_ids={"netherlands": 23, "germany": 7},
@@ -898,9 +966,68 @@ def test_optimize_constrains_de_to_nl_seller_in_dead_zone(monkeypatch) -> None:
     response = optimize_order(request)
 
     assert response.status == "optimal"
-    # Optimizer should only buy 10 cards due to dead zone constraint
-    assert response.totals.total_units == 10
-    assert response.totals.shipping_total == 2.50
+    assert response.cart.total_units == 12
+    assert response.totals.shipping_total == 3.50
+
+
+def test_optimize_prunes_de_to_nl_dead_zone_when_alternative_supply_exists(
+    monkeypatch,
+) -> None:
+    """A DE→NL dead-zone seller should be capped when another seller covers remaining demand."""
+    route_book = ShippingRouteBook(
+        country_ids={"netherlands": 23, "germany": 7},
+        tiers_by_route={
+            ("germany", "netherlands"): _tiers(
+                values=[(250, 5000, 10), (350, 50000, 20)]
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "app.solver.shipping.load_shipping_route_book", lambda: route_book
+    )
+
+    request = OptimizationRequest(
+        buyer_country="Netherlands",
+        items=[WantedItem(item_id="item-1", name="Card", quantity=12)],
+        sellers=[
+            Seller(seller_id="seller-1", name="Dead Zone Seller", country="Germany"),
+            Seller(seller_id="seller-2", name="Backup Seller", country="Germany"),
+        ],
+        offers=[
+            Offer(
+                offer_id=f"offer-1-{i}",
+                item_id="item-1",
+                seller_id="seller-1",
+                unit_price=1.66,
+                available_quantity=1,
+            )
+            for i in range(1, 13)
+        ]
+        + [
+            Offer(
+                offer_id=f"offer-2-{i}",
+                item_id="item-1",
+                seller_id="seller-2",
+                unit_price=1.70,
+                available_quantity=1,
+            )
+            for i in range(1, 3)
+        ],
+        preferences=OptimizationPreferences(),
+    )
+
+    response = optimize_order(request)
+
+    assert response.status == "optimal"
+    assert response.cart.total_units == 12
+    assert response.cart.total_sellers == 2
+    assert response.totals.shipping_total == 5.0
+
+    seller_unit_totals = {
+        seller.seller_id: sum(item.quantity for item in seller.items)
+        for seller in response.cart.sellers
+    }
+    assert seller_unit_totals == {"seller-1": 10, "seller-2": 2}
 
 
 def test_optimize_mixes_constrained_and_unconstrained_sellers(monkeypatch) -> None:
@@ -961,7 +1088,7 @@ def test_optimize_mixes_constrained_and_unconstrained_sellers(monkeypatch) -> No
     response = optimize_order(request)
 
     assert response.status == "optimal"
-    assert response.totals.total_units == 8
+    assert response.cart.total_units == 8
     # Seller 1 should contribute at most 4 cards (dead zone constraint)
     seller_1_units = sum(
         item.quantity
@@ -983,6 +1110,11 @@ def test_optimize_mixes_constrained_and_unconstrained_sellers(monkeypatch) -> No
 def test_optimize_dead_zone_uses_cheapest_tier_when_route_tiers_unsorted(
     monkeypatch,
 ) -> None:
+    """Unsorted route tiers should not accidentally trigger infeasible dead-zone pruning.
+
+    With a single required seller and demand above tier-0 capacity, exact-demand solve must
+    keep the cheaper valid higher tier available even when the source ordering is unsorted.
+    """
     route_book = ShippingRouteBook(
         country_ids={"netherlands": 23},
         tiers_by_route={
@@ -1019,8 +1151,8 @@ def test_optimize_dead_zone_uses_cheapest_tier_when_route_tiers_unsorted(
     response = optimize_order(request)
 
     assert response.status == "optimal"
-    assert response.cart.total_units == 4
-    assert response.totals.shipping_total == 1.70
+    assert response.cart.total_units == 6
+    assert response.totals.shipping_total == 3.10
 
 
 def test_optimize_dead_zone_pruning_keeps_feasibility_when_seller_is_required(
@@ -1088,5 +1220,5 @@ def test_optimize_no_constraint_when_seller_cost_exceeds_tier_0_value_limit(
     assert response.status == "optimal"
     # No constraint applies, optimizer can use all tiers, but here picks tier-1 as tier-0 doesn't fit value
     # Optimizer should buy all 7 if profitable with tier-1 shipping
-    assert response.totals.total_units == 7
+    assert response.cart.total_units == 7
     assert response.totals.shipping_total == 3.10

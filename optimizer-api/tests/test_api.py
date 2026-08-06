@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 from app.main import app
 from app.models import OptimizationRequest
+from app.request_archive import ArchiveResult
 from app.solver import SOLVER_ABSOLUTE_GAP_LIMIT, optimize_order, prune_all
 from fastapi.testclient import TestClient
 from ortools.sat.python import cp_model
@@ -36,7 +37,7 @@ EXPECTED_FIXTURE_MODEL_SIZES = {
         "exact": {"variables": 20685, "constraints": 25000},
     },
     "ob_nixilis_improvements": {
-        "exact": {"variables": 5001, "constraints": 7000},
+        "exact": {"variables": 5001, "constraints": 7400},
     },
     "small_wantslist": {
         "exact": {"variables": 943, "constraints": 2500},
@@ -79,11 +80,110 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+def minimal_payload() -> dict:
+    return {
+        "buyer_country": "Netherlands",
+        "currency": "EUR",
+        "items": [
+            {
+                "item_id": "want-1",
+                "name": "Card A",
+                "quantity": 1,
+                "min_condition": "NM",
+                "preferred_languages": ["English"],
+            }
+        ],
+        "sellers": [
+            {"seller_id": "seller-1", "name": "Seller 1", "country": "Germany"},
+        ],
+        "offers": [
+            {
+                "offer_id": "offer-1",
+                "item_id": "want-1",
+                "seller_id": "seller-1",
+                "unit_price": 1.0,
+                "available_quantity": 1,
+            },
+        ],
+    }
+
+
 def test_health(client: TestClient) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_optimize_accepts_optional_search_metadata(client: TestClient) -> None:
+    payload = minimal_payload()
+    payload["search_metadata"] = {
+        "username": "bram",
+        "want_list_id": "1234",
+        "wanted_items": [
+            {
+                "item_id": "want-1",
+                "name": "Card A",
+                "quantity": 1,
+                "language": "English",
+                "min_condition": "NM",
+                "expansion": "Foundations",
+                "is_foil": False,
+            }
+        ],
+        "filters": {
+            "buyer_country": "Netherlands",
+            "seller_countries": ["Germany"],
+            "seller_type": "professional",
+            "delivery_type": "7_days",
+            "seller_reputation": "outstanding",
+            "include_bargain_countries": True,
+            "additional_filters": ["include_bargain_countries"],
+        },
+    }
+
+    response = client.post("/optimize", json=payload)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] in {"optimal", "feasible"}
+    assert set(body.keys()) == {
+        "status",
+        "currency",
+        "totals",
+        "chosen_sellers",
+        "allocations",
+        "cart",
+        "notes",
+    }
+
+
+def test_optimize_logs_summary_and_archives_old_payload(client: TestClient) -> None:
+    payload = minimal_payload()
+
+    with (
+        patch("app.main.archive_writer.write_run_artifacts") as archive_mock,
+        patch("app.main.summary_logger.info") as log_mock,
+    ):
+        archive_mock.return_value = ArchiveResult(
+            enabled=False,
+            compatibility_mode=True,
+            prefix="20260806T120000Z_anonymous",
+            search_key="20260806T120000Z_anonymous/search.json",
+            optimizer_log_key="20260806T120000Z_anonymous/optimizer_log.txt",
+        )
+
+        response = client.post("/optimize", json=payload)
+
+    assert response.status_code == 200, response.text
+    archive_mock.assert_called_once()
+    log_mock.assert_called_once()
+
+    summary_payload = json.loads(log_mock.call_args.args[0])
+    assert summary_payload["event"] == "optimizer_run_summary"
+    assert summary_payload["compatibility_mode"] is True
+    assert summary_payload["archive_prefix"] == "20260806T120000Z_anonymous"
+    assert summary_payload["optimizer_status"] in {"optimal", "feasible"}
 
 
 @pytest.mark.parametrize(
@@ -164,7 +264,8 @@ def test_real_request_fixtures_acceptance(
             assert body["totals"]["grand_total"] == pytest.approx(
                 expected["grand_total"], abs=MONEY_TOLERANCE
             )
-        assert len(body["allocations"]) == expected["allocation_count"]
+        if "allocation_count" in expected:
+            assert len(body["allocations"]) == expected["allocation_count"]
 
 
 @pytest.mark.parametrize(

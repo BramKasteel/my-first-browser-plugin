@@ -221,6 +221,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
   let pagesScanned = 0;
   let parserSource = 'fetched-pages';
   let previousPageSignature = '';
+  let username = detectCurrentUsernameLocal(document);
   const normalizedWantListPath = normalizeWantListPathLocal(wantListPath);
 
   for (let page = 1; page <= 100; page += 1) {
@@ -252,6 +253,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
     if (!html) break;
 
     const doc = new DOMParser().parseFromString(html, 'text/html');
+    username = username || detectCurrentUsernameLocal(doc);
     const parsed = parseWantItemsFromDocumentLocal(doc, `${location.origin}${responseUrl}`);
     const pageSignature = parsed.items.map((item) => buildWantListItemKeyLocal(item)).join('|');
     parserSource = parsed.debug.source || parserSource;
@@ -276,6 +278,7 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
     kind: 'selected-want-list',
     wantListId: normalizedWantListId,
     wantListName: textOf(wantListName) || `Want list ${normalizedWantListId}`,
+    username,
     totalVisible: aggregatedItems.length,
     pagesScanned,
     items: aggregatedItems,
@@ -620,6 +623,47 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
       const el = doc.createElement('textarea');
       el.innerHTML = value;
       return textOf(el.value);
+    }
+  }
+
+  function detectCurrentUsernameLocal(doc) {
+    const headerContainers = [
+      doc.querySelector('header'),
+      doc.querySelector('nav'),
+      ...doc.querySelectorAll('[class*="header" i], [class*="nav" i], [class*="account" i], [class*="profile" i], [class*="user" i]'),
+    ].filter(Boolean);
+
+    const containerSelectors = [
+      'a[href*="/Users/"]',
+      'a[href*="/Account/"]',
+    ];
+
+    for (const container of headerContainers) {
+      for (const selector of containerSelectors) {
+        const anchor = container.querySelector(selector);
+        const usernameValue = usernameFromAnchor(anchor);
+        if (usernameValue) return usernameValue;
+      }
+    }
+
+    const logoutLink = doc.querySelector('a[href*="logout" i], a[href*="signout" i], a[href*="logoff" i]');
+    const logoutContainer = logoutLink?.closest('header, nav, [class*="header" i], [class*="nav" i], [class*="account" i], [class*="profile" i], [class*="user" i]');
+    if (logoutContainer) {
+      const anchor = logoutContainer.querySelector('a[href*="/Users/"]');
+      const usernameValue = usernameFromAnchor(anchor);
+      if (usernameValue) return usernameValue;
+    }
+
+    return '';
+
+    function usernameFromAnchor(anchor) {
+      if (!anchor) return '';
+      const href = anchor.getAttribute('href') || '';
+      const hrefMatch = href.match(/\/Users\/([^/?#]+)/i);
+      if (hrefMatch?.[1]) return decodeURIComponent(hrefMatch[1]);
+      const textValue = textOf(anchor.textContent);
+      if (textValue && !/^(account|profile|my account)$/i.test(textValue)) return textValue;
+      return '';
     }
   }
 }

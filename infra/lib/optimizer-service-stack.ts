@@ -4,6 +4,7 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 
 export interface OptimizerServiceStackProps extends cdk.StackProps {
@@ -126,6 +127,53 @@ export class OptimizerServiceStack extends cdk.Stack {
             return_alternatives: { type: apigateway.JsonSchemaType.INTEGER, minimum: 0, maximum: 0 },
           },
         },
+        search_metadata: {
+          type: apigateway.JsonSchemaType.OBJECT,
+          additionalProperties: false,
+          properties: {
+            username: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 256 },
+            want_list_id: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 128 },
+            wanted_items: {
+              type: apigateway.JsonSchemaType.ARRAY,
+              maxItems: 500,
+              items: {
+                type: apigateway.JsonSchemaType.OBJECT,
+                additionalProperties: false,
+                required: ['name', 'quantity'],
+                properties: {
+                  item_id: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 128 },
+                  name: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 256 },
+                  quantity: { type: apigateway.JsonSchemaType.INTEGER, minimum: 1, maximum: 1000 },
+                  language: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 64 },
+                  min_condition: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 64 },
+                  expansion: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 256 },
+                  is_foil: { type: apigateway.JsonSchemaType.BOOLEAN },
+                },
+              },
+            },
+            filters: {
+              type: apigateway.JsonSchemaType.OBJECT,
+              additionalProperties: false,
+              properties: {
+                buyer_country: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 64 },
+                seller_countries: {
+                  type: apigateway.JsonSchemaType.ARRAY,
+                  maxItems: 100,
+                  items: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 64 },
+                },
+                seller_type: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 64 },
+                delivery_type: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 64 },
+                seller_reputation: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 64 },
+                include_bargain_countries: { type: apigateway.JsonSchemaType.BOOLEAN },
+                additional_filters: {
+                  type: apigateway.JsonSchemaType.ARRAY,
+                  maxItems: 50,
+                  items: { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 64 },
+                },
+              },
+            },
+          },
+        },
       },
     };
 
@@ -138,6 +186,14 @@ export class OptimizerServiceStack extends cdk.Stack {
       ],
     });
 
+    const archiveBucket = new s3.Bucket(this, 'OptimizerArchiveBucket', {
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+    });
+
+    archiveBucket.grantPut(lambdaExecutionRole);
+
     const optimizerFunction = new lambda.Function(this, 'OptimizerFunction', {
       functionName: 'cardmarket-optimizer-api',
       description: 'Containerized FastAPI optimizer service behind API Gateway.',
@@ -149,6 +205,9 @@ export class OptimizerServiceStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(props.lambdaTimeoutSeconds),
       role: lambdaExecutionRole,
       logRetention: logs.RetentionDays.ONE_MONTH,
+      environment: {
+        OPTIMIZER_ARCHIVE_BUCKET: archiveBucket.bucketName,
+      },
     });
 
     const api = new apigateway.RestApi(this, 'OptimizerRestApi', {
@@ -204,6 +263,10 @@ export class OptimizerServiceStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'OptimizerHealthUrl', {
       value: `${api.url}health`,
+    });
+
+    new cdk.CfnOutput(this, 'OptimizerArchiveBucketName', {
+      value: archiveBucket.bucketName,
     });
   }
 }

@@ -105,6 +105,7 @@ let latestExtractPayload = null;
 let latestFrontendPayload = null;
 let latestOptimizationResult = null;
 let latestExtractedItems = [];
+let latestCardmarketUsername = '';
 let latestFillResult = null;
 let isRunActive = false;
 let isUiBusy = false;
@@ -492,6 +493,70 @@ function buildPreviousAllocationsPayload(result) {
 
 function normalizeBlockedSellerIds(sellerIds) {
   return [...new Set((sellerIds || []).map((sellerId) => textOf(sellerId)).filter(Boolean))];
+}
+
+function stripNullishProperties(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripNullishProperties(entry));
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  return Object.fromEntries(Object.entries(value)
+    .filter(([, entry]) => entry !== null && entry !== undefined)
+    .map(([key, entry]) => [key, stripNullishProperties(entry)]));
+}
+
+function buildSearchMetadataWantedItems(batchResult) {
+  const extractedSourceItems = Array.isArray(latestExtractedItems) && latestExtractedItems.length
+    ? latestExtractedItems
+    : (Array.isArray(batchResult?.results)
+      ? batchResult.results.map((result) => result?.item || null).filter(Boolean)
+      : []);
+
+  return extractedSourceItems.map((item, index) => {
+    const expansions = Array.isArray(item?.expansions)
+      ? item.expansions.map((value) => textOf(value)).filter(Boolean)
+      : [];
+    return stripNullishProperties({
+      item_id: buildOptimizerItemId(item, index),
+      name: textOf(item?.productName) || buildOptimizerItemId(item, index),
+      quantity: parseIntegerOrFallback(item?.quantity, 1),
+      language: getSingleItemLanguage(item) || null,
+      min_condition: normalizeCardCondition(item?.minCondition) || null,
+      expansion: expansions.length ? expansions.join(' | ') : null,
+      is_foil: typeof item?.isFoil === 'boolean' ? item.isFoil : null,
+    });
+  });
+}
+
+function buildOptimizerSearchMetadata(batchResult) {
+  if (!batchResult || batchResult.kind !== 'seller-scrape-batch') return null;
+
+  const requestSettings = batchResult.requestSettings && typeof batchResult.requestSettings === 'object'
+    ? batchResult.requestSettings
+    : {};
+  const additionalFilters = [];
+  if (requestSettings.includeBargainsFromOtherCountries) {
+    additionalFilters.push('include_bargain_countries');
+  }
+
+  return stripNullishProperties({
+    username: textOf(latestCardmarketUsername) || null,
+    want_list_id: textOf(batchResult.wantListId) || textOf(latestExtractedItems[0]?.wantListId) || null,
+    wanted_items: buildSearchMetadataWantedItems(batchResult),
+    filters: {
+      buyer_country: textOf(requestSettings.buyerCountry) || getSelectedBuyerCountry() || null,
+      seller_countries: Array.isArray(requestSettings.sellerCountries)
+        ? requestSettings.sellerCountries.map((value) => textOf(value)).filter(Boolean)
+        : getSelectedSellerCountries(),
+      seller_type: textOf(requestSettings.sellerType) || null,
+      delivery_type: textOf(requestSettings.maxShippingTime) || null,
+      seller_reputation: textOf(requestSettings.sellerReputation) || null,
+      include_bargain_countries: requestSettings.includeBargainsFromOtherCountries === true,
+      additional_filters: additionalFilters,
+    },
+  });
 }
 
 async function buildOptimizationRequestPayload(payload) {
@@ -1537,6 +1602,7 @@ function buildOptimizerPayload(batchResult) {
     items: [...itemsById.values()],
     sellers: [...sellersById.values()],
     offers,
+    search_metadata: buildOptimizerSearchMetadata(batchResult),
     preferences: {
       max_sellers: null,
       allowed_countries: getSelectedSellerCountries(),

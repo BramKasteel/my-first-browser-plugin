@@ -7,5 +7,3 @@ For Python work in `optimizer-api/`, use `uv` commands (`uv run`, `uv sync`) ins
 Cardmarket is strict about scraping and can return HTTP 429 quickly because of Cloudflare protections. Rate limit requests carefully.
 
 When Cardmarket request formulation is unclear, ask user to perform website action and capture real network request instead of guessing.
-
-Write code with tests and in lint-clean style, but never run test or lint commands in this repository. Hand off all test and lint execution to user.
