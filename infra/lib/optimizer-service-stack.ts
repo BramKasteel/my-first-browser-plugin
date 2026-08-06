@@ -187,6 +187,7 @@ export class OptimizerServiceStack extends cdk.Stack {
     });
 
     const archiveBucket = new s3.Bucket(this, 'OptimizerArchiveBucket', {
+      bucketName: 'optimizerservicestack-archivebucket',
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,

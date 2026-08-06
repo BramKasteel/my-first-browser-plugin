@@ -627,43 +627,63 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
   }
 
   function detectCurrentUsernameLocal(doc) {
-    const headerContainers = [
-      doc.querySelector('header'),
-      doc.querySelector('nav'),
-      ...doc.querySelectorAll('[class*="header" i], [class*="nav" i], [class*="account" i], [class*="profile" i], [class*="user" i]'),
-    ].filter(Boolean);
-
-    const containerSelectors = [
-      'a[href*="/Users/"]',
-      'a[href*="/Account/"]',
-    ];
-
-    for (const container of headerContainers) {
-      for (const selector of containerSelectors) {
-        const anchor = container.querySelector(selector);
-        const usernameValue = usernameFromAnchor(anchor);
-        if (usernameValue) return usernameValue;
-      }
+    const usernamesFromProfileLinks = [...doc.querySelectorAll('a[href*="/Users/"]')]
+      .map((anchor) => textOf(decodeURIComponent((anchor.getAttribute('href') || '').match(/\/Users\/([^/?#]+)/i)?.[1] || '')))
+      .filter(isPlausibleUsername);
+    if (usernamesFromProfileLinks[0]) {
+      return usernamesFromProfileLinks[0];
     }
 
-    const logoutLink = doc.querySelector('a[href*="logout" i], a[href*="signout" i], a[href*="logoff" i]');
-    const logoutContainer = logoutLink?.closest('header, nav, [class*="header" i], [class*="nav" i], [class*="account" i], [class*="profile" i], [class*="user" i]');
-    if (logoutContainer) {
-      const anchor = logoutContainer.querySelector('a[href*="/Users/"]');
-      const usernameValue = usernameFromAnchor(anchor);
-      if (usernameValue) return usernameValue;
+    const accountToggle = doc.querySelector('#account-dropdown') || findAccountToggle();
+    if (!accountToggle) {
+      return '';
+    }
+
+    const accountItem = accountToggle.closest('li');
+    const candidateTexts = [
+      accountToggle.querySelector('.d-none.d-lg-block')?.textContent,
+      accountItem?.querySelector('.dropdown-header span')?.textContent,
+      accountToggle.textContent,
+      accountItem?.querySelector('.dropdown-header')?.textContent,
+    ];
+
+    for (const value of candidateTexts) {
+      const username = extractUsername(value);
+      if (username) {
+        return username;
+      }
     }
 
     return '';
 
-    function usernameFromAnchor(anchor) {
-      if (!anchor) return '';
-      const href = anchor.getAttribute('href') || '';
-      const hrefMatch = href.match(/\/Users\/([^/?#]+)/i);
-      if (hrefMatch?.[1]) return decodeURIComponent(hrefMatch[1]);
-      const textValue = textOf(anchor.textContent);
-      if (textValue && !/^(account|profile|my account)$/i.test(textValue)) return textValue;
-      return '';
+    function findAccountToggle() {
+      return [...doc.querySelectorAll('a[href="#"], button, [role="button"]')].find((node) => {
+        const combined = textOf(`${node.textContent || ''} ${node.getAttribute('aria-label') || ''} ${node.getAttribute('title') || ''}`);
+        if (/my account|private|professional/i.test(combined)) {
+          return true;
+        }
+
+        const className = textOf(node.className || '');
+        return /dropdown-toggle/i.test(className)
+          && /\d+[.,]\d{2}\s*€/i.test(combined)
+          && !/^(selling|buying|language:?\s*\w+)/i.test(combined);
+      }) || null;
+    }
+
+    function extractUsername(value) {
+      const normalized = textOf(value)
+        .replace(/\(.*?\)/g, ' ')
+        .replace(/^(my account|private|professional)\s+/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return isPlausibleUsername(normalized) ? normalized : '';
+    }
+
+    function isPlausibleUsername(value) {
+      const normalized = textOf(value);
+      if (!normalized) return false;
+      if (!/^[a-z0-9._-]{3,}$/i.test(normalized)) return false;
+      return !/^(account|profile|my-account|messages|my-messages|credit|logout|selling|buying|products|cart)$/i.test(normalized);
     }
   }
 }

@@ -23,3 +23,5 @@ npx cdk deploy OptimizerServiceStack \
 - Optimizer improvement idea: split cards into two piles based on cost. Shipping dominated and item dominated pricing!
 
 - add licence
+
+- rewrite: Connected to artifacts | Cardmarket (/en/Magic/Wants/24333708). to connected to cardmarket tab (...)
