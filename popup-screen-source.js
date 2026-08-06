@@ -85,7 +85,7 @@ async function refreshSourceTabOptions({ announce = false } = {}) {
 
   if (Number.isInteger(boundSourceTabId) && availableSourceTabs.some((tab) => tab.id === boundSourceTabId)) {
     const boundTab = availableSourceTabs.find((tab) => tab.id === boundSourceTabId) || null;
-    renderSourceTabStatus(boundTab ? `Connected to ${formatSourceTabLabel(boundTab)}.` : '', 'good');
+    renderSourceTabStatus(boundTab ? `Connected to Cardmarket tab (${formatSourceTabLabel(boundTab)}).` : '', 'good');
     return availableSourceTabs;
   }
 

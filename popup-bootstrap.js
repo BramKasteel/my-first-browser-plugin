@@ -95,6 +95,14 @@ heroBankDonateButton?.addEventListener('click', () => {
   heroBankDonateButton.hidden = true;
   appendStatus('Bank transfer QR revealed in popup.', 'good');
 });
+heroBankDonateCloseButton?.addEventListener('click', () => {
+  if (!heroBankDonateRevealRowEl) return;
+
+  heroBankDonateRevealRowEl.hidden = true;
+  if (heroBankDonateButton) {
+    heroBankDonateButton.hidden = false;
+  }
+});
 confirmWantListButton?.addEventListener('click', () => {
   if (!hasLoadedWantItems() || getWantListSelectionPolicy().isBlocked) return;
   setActiveWorkflowStep('sellers', { force: true });

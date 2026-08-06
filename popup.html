@@ -165,11 +165,34 @@
       border-radius: 12px;
       border: 1px solid rgba(159, 176, 190, 0.18);
       background: rgba(17, 22, 27, 0.82);
+        position: relative;
     }
 
     .hero-bank-qr-row[hidden] {
       display: none;
     }
+
+      .hero-bank-qr-close {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border-radius: 999px;
+        border: 1px solid rgba(159, 176, 190, 0.22);
+        background: rgba(34, 48, 60, 0.9);
+        color: var(--text);
+        font-size: 16px;
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .hero-bank-qr-close:hover:not(:disabled) {
+        background: rgba(54, 72, 88, 0.96);
+      }
 
     .hero-bank-qr-message {
       margin: 0;
@@ -1312,7 +1335,7 @@
 <body>
   <main>
     <section class="hero">
-      <p class="eyebrow">Version 0.1.0.4</p>
+      <p class="eyebrow">Version 1.0.6</p>
       <h1>Cardmarket Optimizer</h1>
       <div class="hero-copy">
         <p class="subtle">Save some money on your next Magic cards!</p>
@@ -1332,6 +1355,7 @@
           <p class="hero-action-note">Donations help me convince my wife I need to maintain this app, plus it helps cover cloud costs.</p>
         </div>
         <div id="heroBankDonateRevealRow" class="hero-bank-qr-row" hidden>
+          <button id="heroBankDonateCloseButton" type="button" class="hero-bank-qr-close" aria-label="Close bank transfer QR">&times;</button>
           <p class="hero-bank-qr-message">Scan with banking app</p>
           <img class="hero-bank-qr-art" src="icons/bank-transfer-qr.svg" alt="Bank transfer QR code" width="144" height="144">
         </div>

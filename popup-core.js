@@ -88,6 +88,7 @@ const heroFeedbackCopyButton = document.getElementById('heroFeedbackCopyButton')
 const heroDonateButton = document.getElementById('heroDonateButton');
 const heroBankDonateButton = document.getElementById('heroBankDonateButton');
 const heroBankDonateRevealRowEl = document.getElementById('heroBankDonateRevealRow');
+const heroBankDonateCloseButton = document.getElementById('heroBankDonateCloseButton');
 
 const urlParams = new URLSearchParams(window.location.search);
 const isWorkspace = urlParams.get('workspace') === '1' || urlParams.get('detached') === '1';
@@ -152,6 +153,7 @@ const SELLER_SCRAPE_TIPS = [
   'You can select two seller countries. Choose them wisely! Select countries with lots of sellers and cheap shipping.',
   'If the optimizer has not returned an optimal result, hitting the re-optimize button might save some more money. Do not overdo it, each hit increases my cloud bill :D',
   'Including bargains from other countries searches whole Europe. We only include the cheapest 50 items outside preferred countries, and only for cards worth over five euros.',
+  'Sometimes an order is missing from the filled shopping cart. This is because Cardmarket changes order numbers once in a while. Use our debug option and try to add the missing cards manually! ',
   'I receive no feedback whatsoever on this plugin. I would love to get some, even if you do not really have anything to say! Click the send feedback button above.',
 ];
 const WORKFLOW_META = {

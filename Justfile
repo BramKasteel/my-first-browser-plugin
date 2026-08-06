@@ -51,3 +51,48 @@ open-cardmarket url='https://www.cardmarket.com/en/Magic/Wants':
 
 	echo "Launching Chromium with extension from $repo_root"
 	OPEN_CARDMARKET_URL="{{url}}" REPO_ROOT="$repo_root" PROFILE_DIR="$profile_dir" node scripts/open-cardmarket.js
+
+
+release-zip version:
+	#!/usr/bin/env bash
+	set -eu -o pipefail
+
+	archive="release/cardmarket-optimizer-{{version}}.zip"
+	mkdir -p release
+
+	if [[ -e "$archive" ]]; then
+	  echo "Release archive already exists: $archive" >&2
+	  exit 1
+	fi
+
+	zip -r "$archive" \
+	  manifest.json \
+	  background.js \
+	  config.js \
+	  seller-filter-utils.js \
+	  popup.html \
+	  popup*.js \
+	  icons/icon-16.png \
+	  icons/icon-32.png \
+	  icons/icon-48.png \
+	  icons/icon-128.png \
+	  icons/icon-512.png \
+	  icons/bank-transfer-qr.svg
+
+	echo "Created $archive"
+
+
+release version:
+	#!/usr/bin/env bash
+	set -eu -o pipefail
+
+	archive="release/cardmarket-optimizer-{{version}}.zip"
+	if [[ -e "$archive" ]]; then
+	  echo "Release archive already exists: $archive" >&2
+	  exit 1
+	fi
+
+	sed -E -i 's/"version": "[^"]+"/"version": "{{version}}"/' manifest.json
+	sed -E -i 's/(<p class="eyebrow">Version )[0-9A-Za-z._-]+(<\/p>)/\1{{version}}\2/' popup.html
+
+	just release-zip {{version}}
