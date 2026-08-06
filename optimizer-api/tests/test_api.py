@@ -9,7 +9,7 @@ import pytest
 from app.main import app
 from app.models import OptimizationRequest
 from app.request_archive import ArchiveResult
-from app.solver import SOLVER_ABSOLUTE_GAP_LIMIT, optimize_order, prune_all
+from app.solver import SOLVER_ABSOLUTE_GAP_LIMIT, _new_solver, optimize_order, prune_all
 from fastapi.testclient import TestClient
 from ortools.sat.python import cp_model
 
@@ -184,6 +184,17 @@ def test_optimize_logs_summary_and_archives_old_payload(client: TestClient) -> N
     assert summary_payload["compatibility_mode"] is True
     assert summary_payload["archive_prefix"] == "20260806T120000Z_anonymous"
     assert summary_payload["optimizer_status"] in {"optimal", "feasible"}
+
+
+def test_solver_progress_logs_can_be_captured_without_stdout_streaming() -> None:
+    solver = _new_solver(
+        cp_model,
+        max_time_seconds=1,
+        log_callback=lambda message: None,
+    )
+
+    assert solver.parameters.log_search_progress is True
+    assert solver.parameters.log_to_stdout is False
 
 
 @pytest.mark.parametrize(

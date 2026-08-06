@@ -88,6 +88,7 @@ def _new_solver(
     solver.parameters.num_search_workers = SOLVER_NUM_SEARCH_WORKERS
     solver.parameters.log_search_progress = log_callback is not None
     if log_callback is not None:
+        solver.parameters.log_to_stdout = False
         solver.log_callback = log_callback
     return solver
 
