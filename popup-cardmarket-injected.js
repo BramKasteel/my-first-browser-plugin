@@ -627,23 +627,12 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
   }
 
   function detectCurrentUsernameLocal(doc) {
-    const usernamesFromProfileLinks = [...doc.querySelectorAll('a[href*="/Users/"]')]
-      .map((anchor) => textOf(decodeURIComponent((anchor.getAttribute('href') || '').match(/\/Users\/([^/?#]+)/i)?.[1] || '')))
-      .filter(isPlausibleUsername);
-    if (usernamesFromProfileLinks[0]) {
-      return usernamesFromProfileLinks[0];
-    }
-
     const accountToggle = doc.querySelector('#account-dropdown') || findAccountToggle();
-    if (!accountToggle) {
-      return '';
-    }
-
-    const accountItem = accountToggle.closest('li');
+    const accountItem = accountToggle?.closest('li') || null;
     const candidateTexts = [
-      accountToggle.querySelector('.d-none.d-lg-block')?.textContent,
+      accountToggle?.querySelector('.d-none.d-lg-block')?.textContent,
       accountItem?.querySelector('.dropdown-header span')?.textContent,
-      accountToggle.textContent,
+      accountToggle?.textContent,
       accountItem?.querySelector('.dropdown-header')?.textContent,
     ];
 
@@ -652,6 +641,14 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
       if (username) {
         return username;
       }
+    }
+
+    const accountScopedUsernames = [...doc.querySelectorAll('a[href*="/Users/"]')]
+      .filter((anchor) => isAccountScopedProfileLink(anchor))
+      .map((anchor) => textOf(decodeURIComponent((anchor.getAttribute('href') || '').match(/\/Users\/([^/?#]+)/i)?.[1] || '')))
+      .filter(isPlausibleUsername);
+    if (accountScopedUsernames[0]) {
+      return accountScopedUsernames[0];
     }
 
     return '';
@@ -677,6 +674,20 @@ async function injectedLoadWantListItemsById({ wantListId, wantListName, wantLis
         .replace(/\s+/g, ' ')
         .trim();
       return isPlausibleUsername(normalized) ? normalized : '';
+    }
+
+    function isAccountScopedProfileLink(anchor) {
+      if (!(anchor instanceof Element)) return false;
+
+      if (anchor.closest('#WantsListTable, #MobileWantsList, main, table, tbody, .accordion-item, .item-body-wrapper')) {
+        return false;
+      }
+
+      if (accountItem && accountItem.contains(anchor)) {
+        return true;
+      }
+
+      return !!anchor.closest('header, nav, .navbar, .nav, [class*="header" i], [class*="account" i], [class*="dropdown" i]');
     }
 
     function isPlausibleUsername(value) {
