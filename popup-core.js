@@ -149,6 +149,7 @@ const SELLER_TIP_ROTATION_MS = 10000;
 const WORKFLOW_STEPS = ['source', 'sellers', 'fill', 'post-fill'];
 const SELLER_SCRAPE_TIPS = [
   'If the shopping cart is more expensive than we said, use the debug option!',
+  'If you run this tool with cards in your shopping cart, those cards are reserved. Cardmarket will not show them in search, so they will not be part of the optimizer result.',
   'For very common cards like treasure or food tokens, you will get cheaper results by specifying specific versions. Be careful to inspect the cart when ordering tokens!',
   'You can select two seller countries. Choose them wisely! Select countries with lots of sellers and cheap shipping.',
   'If the optimizer has not returned an optimal result, hitting the re-optimize button might save some more money. Do not overdo it, each hit increases my cloud bill :D',
@@ -427,6 +428,13 @@ function setPostFillSellerChoicesFromCart(cartSellers) {
     shipping_cost: Number(seller?.shipping_cost || 0),
     grand_total: Number(seller?.grand_total || 0),
     total_units: Number(seller?.total_units || 0),
+    items: Array.isArray(seller?.items)
+      ? seller.items.map((item) => ({
+          item_id: textOf(item?.item_id),
+          item_name: textOf(item?.item_name || item?.item_id),
+          quantity: Number(item?.quantity || 0),
+        })).filter((item) => (item.item_name || item.item_id) && item.quantity > 0)
+      : [],
   })).filter((seller) => seller.seller_id);
 
   if (typeof renderPostFillScreen === 'function') {

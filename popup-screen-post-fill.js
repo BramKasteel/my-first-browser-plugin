@@ -2,6 +2,15 @@ function getVisiblePostFillSellerIds() {
   return getPostFillSellerChoices().map((seller) => textOf(seller?.seller_id)).filter(Boolean);
 }
 
+function buildPostFillSellerItemSummary(items) {
+  if (!Array.isArray(items) || !items.length) return [];
+
+  return items.map((item) => ({
+    name: textOf(item?.item_name || item?.item_id),
+    quantity: Number(item?.quantity || 0),
+  })).filter((item) => item.name && item.quantity > 0);
+}
+
 const POST_FILL_TOTAL_REFRESH_MS = 15000;
 const POST_FILL_TRANSIENT_RETRY_DELAY_MS = 1200;
 const POST_FILL_TRANSIENT_RETRY_MAX_ATTEMPTS = 3;
@@ -521,6 +530,26 @@ function renderPostFillScreen() {
     ].filter(Boolean).join(' | ');
 
     body.append(title, meta);
+
+    const sellerItems = buildPostFillSellerItemSummary(seller.items);
+    if (sellerItems.length) {
+      const itemSummary = document.createElement('p');
+      itemSummary.className = 'item-meta seller-card-summary';
+      itemSummary.textContent = 'expected items';
+
+      const itemList = document.createElement('div');
+      itemList.className = 'seller-card-list';
+
+      sellerItems.forEach((item) => {
+        const chip = document.createElement('span');
+        chip.className = 'seller-card-chip';
+        chip.textContent = `${item.name} (${item.quantity})`;
+        itemList.appendChild(chip);
+      });
+
+      body.append(itemSummary, itemList);
+    }
+
     row.append(toggle, body);
     postFillSellerListEl.appendChild(row);
   });

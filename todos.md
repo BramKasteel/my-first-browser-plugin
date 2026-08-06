@@ -1,8 +1,5 @@
 - get content from backend? Tips?
 
-- Debug option should include which order should come from which seller.
-
-
 - Tighten CORS. Current default is * for fast bring-up. After Chrome extension ID is stable, redeploy with stricter origin:
 ```bash
 cd infra
@@ -15,4 +12,5 @@ npx cdk deploy OptimizerServiceStack \
 - Update delivery fee table from https://help.cardmarket.com/en/ShippingCosts
 
 - Optimizer improvement idea: split cards into two piles based on cost. Shipping dominated and item dominated pricing!
+
 
